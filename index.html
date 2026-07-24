@@ -2831,6 +2831,7 @@
           <div class="settings-field">
             <label>Max Single-Award Value You Can Prime <span style="color:var(--muted);font-weight:400">(optional)</span></label>
             <input type="text" id="s_cap_maxvalue" inputmode="numeric" oninput="formatMoneyInput(this)" placeholder="e.g. $10,000,000 — leave blank for no cap"/>
+            <div id="s_cap_maxvalue_warn" style="display:none;margin-top:5px;font-size:11.5px;font-weight:600;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 9px;line-height:1.45"></div>
           </div>
           <div class="settings-field">
             <label>DCAA-Approved Accounting System <span style="color:var(--muted);font-weight:400">(needed to prime cost-reimbursement)</span></label>
@@ -3150,8 +3151,8 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // ── App version ───────────────────────────────────────────────────────────────
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
-// can confirm which build is live by searching page source for "Version 147".
-const APP_VERSION = '147';
+// can confirm which build is live by searching page source for "Version 149".
+const APP_VERSION = '149';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -3227,7 +3228,9 @@ const CLIENT_CONFIG = {
     contractVehicles:  ['GSA MAS'],                 // free-text vehicle tags HELD
     dcaaApproved:      true,                        // DCAA-approved/adequate accounting system (required to prime cost-reimbursement contracts)
     maxPrimeFTE:       20,                          // largest team size realistically primeable
-    maxPrimeValue:     '$25M',                      // $ ceiling for prime (total award value); editable in capacity profile
+    maxPrimeValue:     '$25,000,000',               // $ ceiling for prime (total award value); editable in capacity profile.
+                                                    // Spelled out rather than '$25M': a magnitude suffix is fragile in a field
+                                                    // that gets re-formatted on load.
   },
 
   // ── Primary Contact (for cover letters and doc footers) ───────────────────
@@ -10920,25 +10923,34 @@ async function marketRun(btn) {
   const clear = (document.getElementById('mktClear').value || '').trim();
   const status = document.getElementById('mktStatus'), results = document.getElementById('mktResults');
   const show = (m, err) => { status.style.display = 'block'; status.style.color = err ? 'var(--error)' : 'var(--muted)'; status.textContent = m; };
+  if (_mktRunBusy) {
+    if (typeof showStatus === 'function') showStatus('info', 'Lookup already running', 'One market-rate lookup is in flight \u2014 it will finish in a moment.');
+    return;   // #4a: without this guard a second run corrupts the first run's saved button label
+  }
   if (!role) { show('Enter a position / labor category first.', true); return; }
   if (!remote && !loc) { show('Enter a location, or check Remote / national.', true); return; }
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
   if (!apiKey) { show('Enter your Anthropic API key (top of the page) first.', true); return; }
   results.style.display = 'none'; results.innerHTML = '';
-  if (btn) { btn.disabled = true; btn._html = btn.innerHTML; btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Searching…'; }
+  const _restore = _mktSpin(btn);
+  _mktRunBusy = true;
   status.style.display = 'none';   // #24: no grey loading line; the button's spinner is the loading cue
   try {
     const _rctx = _mktRoleContext(role);
     const data = await marketFetch(apiKey, role, loc, level, clear, _rctx);
     marketRender(data, { role: role, loc: loc, profile: _rctx, level: level, clear: clear });
-    if (_mktLookupRoleId && typeof pricingModel !== 'undefined' && pricingModel && pricingModel.lcats) { const _lr = pricingModel.lcats.find(x => x.id === _mktLookupRoleId); if (_lr) _lr.evaluated = true; }
+    // #4a: hand the result's owning role forward. Null for a free-form lookup, which correctly
+    // clears any binding left over from a previous per-role lookup.
+    _mktResultRoleId = _mktLookupRoleId;
+    if (_mktResultRoleId && typeof pricingModel !== 'undefined' && pricingModel && pricingModel.lcats) { const _lr = pricingModel.lcats.find(x => x.id === _mktResultRoleId); if (_lr) _lr.evaluated = true; }
     _mktLookupRoleId = null;
     if (typeof marketRenderChecklist === 'function') marketRenderChecklist();
     status.style.display = 'none';
   } catch (e) {
     show('Lookup failed: ' + (e.message || e), true);
   } finally {
-    if (btn) { btn.disabled = false; if (btn._html) btn.innerHTML = btn._html; }
+    _mktRunBusy = false;
+    _restore();
   }
 }
 function marketRender(data, ctx) {
@@ -10993,10 +11005,54 @@ let _mktPending = null;
 // persist that role's p25/p50/p75 band. _mktCache is session-only; pricingModel survives a reload.
 let _mktLastRecord = null;
 let _mktLookupRoleId = null;   // set by marketLookupRole so a successful marketRun marks that Pricing role researched
+// #4a: the Pricing role the CURRENT result belongs to, kept alive until the next lookup so
+// "Use in Pricing" binds to that exact role instead of guessing from the echoed job title.
+// A free-form lookup from the Market Rates tab sets this back to null, so a stale binding
+// can never hijack an unrelated result.
+let _mktResultRoleId = null;
+let _mktRunBusy = false;
+
+// Spins a button and returns its restore function. The original label is captured ONCE per element
+// and parked on a data attribute: the old code did `btn._html = btn.innerHTML` at the START of every
+// run, so a second lookup begun before the first finished snapshotted the SPINNER as the "original"
+// text and both restores then put the spinner back \u2014 permanently.
+function _mktSpin(btn) {
+  if (!btn) return function () {};
+  if (btn.getAttribute && btn.getAttribute('data-mkt-label') == null) btn.setAttribute('data-mkt-label', btn.innerHTML);
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Searching\u2026';
+  return function () {
+    btn.disabled = false;
+    const lbl = btn.getAttribute ? btn.getAttribute('data-mkt-label') : null;
+    if (lbl != null) { btn.innerHTML = lbl; btn.removeAttribute('data-mkt-label'); }
+  };
+}
+
+// The binding picker renders inside the Market Rates results pane. Silence there reads as "the button
+// did nothing", which is exactly what Paul saw \u2014 so say it out loud and put it on screen.
+function _mktRevealPicker(name) {
+  const p = document.getElementById('mktBindPicker');
+  if (p) {
+    try { p.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { try { p.scrollIntoView(); } catch (e2) {} }
+    p.style.animation = 'none'; void p.offsetWidth; p.style.animation = 'pulseOnce 1.2s ease-out 1';
+    setTimeout(function () { p.style.animation = ''; }, 1500);
+  }
+  if (typeof showStatus === 'function') showStatus('warn', 'Pick the role to anchor',
+    'No role in your labor mix clearly matches \u201c' + name + '\u201d, so nothing was changed. Choose the role just under the results and the rate will bind to it.');
+}
 function marketSendToPricing(name, basis, value) {
   value = parseFloat(value);
   if (!(value > 0)) { alert('No usable figure to send for this percentile.'); return; }
   if (typeof pricingModel === 'undefined' || !pricingModel || !pricingModel.lcats) { alert('Open the Pricing tab once, then try again.'); return; }
+  // 0) #4a: if this lookup was launched FROM a Pricing role, that role is the answer \u2014 no guessing.
+  //    Name matching used to decide this, and it tied whenever two roles shared a word: a mix holding
+  //    "IDIQ Program Manager" and "Senior Program Manager / Acquisition Advisor" both score an overlap
+  //    of 2 against an echoed "Program Manager", the strict-winner test fails, and the whole thing fell
+  //    through to a picker nobody saw. That is why the rate never turned green.
+  if (_mktResultRoleId) {
+    const _direct = pricingModel.lcats.find(x => x.id === _mktResultRoleId);
+    if (_direct) { _mktBind(_direct, basis, value, _direct.name || name); return; }
+  }
   const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const target = norm(name);
   // 1) exact normalized-name match → bind directly (keeps the role's FTE + task allocation)
@@ -11007,9 +11063,16 @@ function marketSendToPricing(name, basis, value) {
     const scored = pricingModel.lcats.map(x => {
       const xt = norm(x.name).split(' ').filter(w => w.length > 2);
       const overlap = tks.filter(w => xt.includes(w)).length;
-      return { x: x, overlap: overlap, ratio: overlap / Math.max(1, Math.min(tks.length, xt.length)) };
-    }).sort((a, b) => b.overlap - a.overlap);
-    if (scored.length && scored[0].overlap >= 2 && scored[0].ratio >= 0.5 && (scored.length === 1 || scored[0].overlap > scored[1].overlap)) l = scored[0].x;
+      return { x: x, overlap: overlap, ratio: overlap / Math.max(1, Math.min(tks.length, xt.length)),
+               // #4a: how close this role's title length is to the searched one. Breaks the common tie
+               // where a short echoed title ("Program Manager") sits inside two longer role names.
+               spread: Math.abs(xt.length - tks.length) };
+    }).sort((a, b) => (b.overlap - a.overlap) || (b.ratio - a.ratio) || (a.spread - b.spread));
+    // A clear winner means it beats the runner-up on overlap, or ties there and beats it on ratio.
+    // A dead tie on both is genuine ambiguity: ask, don't guess. `spread` only orders the list.
+    const _clearWinner = scored.length === 1 || (scored[0].overlap > scored[1].overlap)
+      || (scored[0].overlap === scored[1].overlap && scored[0].ratio > scored[1].ratio);
+    if (scored.length && scored[0].overlap >= 2 && scored[0].ratio >= 0.5 && _clearWinner) l = scored[0].x;
   }
   if (l) { _mktBind(l, basis, value, name); return; }
   // 3) no confident match → do NOT spawn a floating role; let the user bind or explicitly add
@@ -11017,9 +11080,11 @@ function marketSendToPricing(name, basis, value) {
   const esc = (typeof pricingEsc === 'function') ? pricingEsc : (x => String(x == null ? '' : x));
   const picker = document.getElementById('mktBindPicker'); if (!picker) { _mktAddAsNew(); return; }
   if (!pricingModel.lcats.length) {
+    _mktRevealPicker(name);
     picker.innerHTML = `<div style="margin-top:12px;padding:11px 13px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:12px;color:#92400e">Your Pricing labor mix has no roles yet, so there is nothing to anchor. Build your labor categories in <strong>Pricing</strong> first (pull the opportunity or add them), then send this rate — it will bind to the matching role and keep its FTE and task allocation. <button onclick="_mktAddAsNew()" style="margin-left:6px;font-size:11px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;padding:5px 10px;cursor:pointer">Add "${esc(name)}" as a new role anyway</button></div>`;
   } else {
     const opts = pricingModel.lcats.map(x => `<option value="${x.id}">${esc(x.name || '(unnamed)')}</option>`).join('');
+    _mktRevealPicker(name);
     picker.innerHTML = `<div style="margin-top:12px;padding:11px 13px;background:var(--info-bg);border:1px solid var(--info-border);border-radius:8px;font-size:12px;color:var(--info-text)"><div style="margin-bottom:7px">No role in your labor mix matches <strong>"${esc(name)}"</strong>. Anchor this rate to an existing role (keeps its FTE + task split):</div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><select id="mktBindSel" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:white">${opts}</select><button onclick="_mktApplyPicker()" style="font-size:11.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 11px;cursor:pointer">Anchor selected role</button><button onclick="_mktAddAsNew()" style="font-size:11.5px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:6px 11px;cursor:pointer">Add as a new role</button></div></div>`;
   }
 }
@@ -11105,7 +11170,11 @@ async function marketLookupRole(id, btn) {
   if (locEl && stName && !locEl.value.trim()) locEl.value = stName;
   _mktLookupRoleId = id;
   const runBtn = document.getElementById('mktRunBtn');
-  if (typeof marketRun === 'function') await marketRun(runBtn || btn);
+  // #4a: marketRun spins the Market Rates tab button. If the user clicked a different button (a per-role
+  // one), spin that too \u2014 otherwise the control they actually pressed sits there looking inert.
+  const _restoreRow = (btn && btn !== runBtn) ? _mktSpin(btn) : function () {};
+  try { if (typeof marketRun === 'function') await marketRun(runBtn || btn); }
+  finally { _restoreRow(); }
   // #31: land the user ON the fresh result instead of the top of the pane \u2014 re-running a role that was
   // already looked up otherwise looks like nothing happened at all.
   setTimeout(function () {
@@ -12266,7 +12335,18 @@ function pricingRenderTasks() {
 function pricingRenderLcats() {
   const el = document.getElementById('pricingLcatsList'); if (!el) return;
   if (typeof pricingRenderRateLegend === 'function') pricingRenderRateLegend();
-  (function () { var _wb = document.getElementById('pricingWrapBanner'); if (_wb) { var _W = pricingWrapFactor(), _p = CLIENT_CONFIG.pricing || {}; var _mode = ((_p.wrapMode || 'compounded') === 'additive') ? 'additive' : 'compounded'; _wb.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px"><span>Company <strong>wrap factor ' + _W.toFixed(3) + '×</strong> <span style="color:var(--muted)">(fringe ' + (_p.fringe || 0) + '% · OH ' + (_p.overhead || 0) + '% · G&amp;A ' + (_p.ga || 0) + '% · fee ' + (_p.fee || 0) + '%, ' + _mode + ')</span> — derives fully burdened rate, salary, and gov cost from whatever you enter below.</span><button onclick="pricingGotoWrapSettings()" style="font-size:11.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;white-space:nowrap">Change wrap rate →</button></div>'; } })();
+  (function () { var _wb = document.getElementById('pricingWrapBanner'); if (_wb) { var _W = pricingWrapFactor(), _p = CLIENT_CONFIG.pricing || {}; var _mode = ((_p.wrapMode || 'compounded') === 'additive') ? 'additive' : 'compounded';
+    // #4a: the banner showed the COMPANY factor while every row applied the per-role EFFECTIVE one.
+    // Both are right; not saying which is which is what made them look inconsistent.
+    var _effs = (pricingModel.lcats || []).map(function (l) { return Math.round(pricingEffectiveWrapFactor(l) * 1000) / 1000; }).filter(function (v) { return v > 0; });
+    var _uniq = _effs.filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
+    var _effTxt = '';
+    if (_uniq.length && !(_uniq.length === 1 && Math.abs(_uniq[0] - Math.round(_W * 1000) / 1000) < 0.0005)) {
+      var _shown = (_uniq.length === 1) ? (_uniq[0].toFixed(3) + '\u00d7') : (_uniq[0].toFixed(3) + '\u2013' + _uniq[_uniq.length - 1].toFixed(3) + '\u00d7');
+      var _lo = (_uniq[0] - _W), _hi = (_uniq[_uniq.length - 1] - _W);
+      var _pts = (Math.abs(_hi - _lo) < 0.0005) ? (Math.round(_lo * 1000) / 10).toFixed(1) : ((Math.round(_lo * 1000) / 10).toFixed(1) + '\u2013' + (Math.round(_hi * 1000) / 10).toFixed(1));
+      _effTxt = ' <strong>Applied to your roles: ' + _shown + '</strong> \u2014 the base factor plus ' + _pts + ' points carried on fringe from the per-role work location (state employer payroll tax: SUTA/FUTA and workers\u2019 comp), and from SCA Health &amp; Welfare wherever it beats standard fringe. The base factor above is the company default; the applied factor is what each rate below actually uses.';
+    } _wb.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px"><span>Company <strong>wrap factor ' + _W.toFixed(3) + '×</strong> <span style="color:var(--muted)">(fringe ' + (_p.fringe || 0) + '% · OH ' + (_p.overhead || 0) + '% · G&amp;A ' + (_p.ga || 0) + '% · fee ' + (_p.fee || 0) + '%, ' + _mode + ')</span> — derives fully burdened rate, salary, and gov cost from whatever you enter below.' + _effTxt + '</span><button onclick="pricingGotoWrapSettings()" style="font-size:11.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;white-space:nowrap">Change wrap rate →</button></div>'; } })();
   if (!pricingModel.lcats.length) {
     el.innerHTML = pricingIsGsa()
       ? '<div style="font-size:12px;color:var(--muted)">No labor categories yet. Add each role you\u2019ll bill, then map it to a category on your GSA Schedule (the rate fills in automatically). <em>(AI mapping of PWS tasks to your Schedule LCATs is coming next.)</em></div>'
@@ -14998,7 +15078,12 @@ function evaluateBnaGates(opp, cap) {
   const fte = parseFloat(String(opp.fte_count || '').replace(/[^0-9.]/g, '')) || null;
   const maxFte = parseFloat(String(cap.maxPrimeFTE || '').replace(/[^0-9.]/g, '')) || null;
   if (fte && maxFte && fte > maxFte) primeBlockers.push(`${fte} FTEs exceed your prime ceiling of ${maxFte}`);
-  const val = _parseMoney(opp.estimated_value), maxVal = _parseMoney(cap.maxPrimeValue);
+  const val = _parseMoney(opp.estimated_value);
+  let maxVal = _parseMoney(cap.maxPrimeValue);
+  // Guard: a ceiling under $10,000 is a typo, not a business rule. Blocking on it makes every
+  // opportunity look un-primeable for a reason that never reaches the screen. Settings shows the
+  // warning; the verdict ignores the value rather than acting on it.
+  if (maxVal != null && maxVal > 0 && maxVal < 10000) maxVal = null;
   if (val && maxVal && val > maxVal) primeBlockers.push(`value (${opp.estimated_value}) exceeds your prime cap`);
   // DCAA-approved/adequate accounting system is required to be eligible for award of a
   // cost-reimbursement contract (FAR 16.301-3). Only block when the contract is cost-type
@@ -18750,8 +18835,36 @@ function removeVehicleTag(i) { _capVehicles.splice(i, 1); renderVehicleTags(); }
 
 // Format a text input as US dollars with commas, no decimals (e.g. "$10,000,000")
 function formatMoneyInput(el) {
-  const digits = (el.value || '').replace(/[^0-9]/g, '');
+  // Suffix-aware. The previous version stripped every non-digit, so "25M" silently became "$25" and
+  // "1.5B" became "$15" — on every keystroke AND on Settings load. That is how a $25,000,000 prime
+  // ceiling turned into twenty-five dollars and quietly vetoed every pursuit in the pipeline.
+  const raw = String(el.value || '').trim();
+  if (!raw) { el.value = ''; return; }
+  const m = raw.toLowerCase().replace(/[,\s$]/g, '').match(/^([0-9]*\.?[0-9]+)\s*([kmb])?$/);
+  if (m) {
+    let n = parseFloat(m[1]);
+    if (isFinite(n)) {
+      if (m[2] === 'k') n *= 1e3; else if (m[2] === 'm') n *= 1e6; else if (m[2] === 'b') n *= 1e9;
+      el.value = '$' + Math.round(n).toLocaleString('en-US');
+      if (typeof _capCheckMaxValue === 'function') _capCheckMaxValue(el);
+      return;
+    }
+  }
+  const digits = raw.replace(/[^0-9]/g, '');
   el.value = digits ? '$' + Number(digits).toLocaleString('en-US') : '';
+  if (typeof _capCheckMaxValue === 'function') _capCheckMaxValue(el);
+}
+
+// A prime ceiling below $10,000 is a data-entry accident, not a business rule. Say so where the user
+// can fix it, rather than letting it silently disqualify the whole pipeline.
+function _capCheckMaxValue(el) {
+  const w = document.getElementById('s_cap_maxvalue_warn'); if (!w) return;
+  const v = (typeof _parseMoney === 'function') ? _parseMoney(el && el.value) : null;
+  const bad = (v != null && v > 0 && v < 10000);
+  w.style.display = bad ? 'block' : 'none';
+  if (bad) w.textContent = '\u26a0 That reads as ' + '$' + Math.round(v).toLocaleString('en-US')
+    + '. A prime ceiling under $10,000 is almost certainly a typo, so it is being ignored for bid/no-bid'
+    + ' verdicts. Enter the full figure \u2014 you can type 25M and it will expand.';
 }
 
 // Populate the Capacity Profile inputs from a config object
