@@ -3152,8 +3152,8 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // ── App version ───────────────────────────────────────────────────────────────
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
-// can confirm which build is live by searching page source for "Version 151".
-const APP_VERSION = '151';
+// can confirm which build is live by searching page source for "Version 152".
+const APP_VERSION = '152';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -6640,6 +6640,7 @@ async function ensureBriefing(apiKey) {
     `"estimated_ftes":"the FTE / level-of-effort the solicitation REQUIRES. PRIORITY: (1) if the solicitation states an explicit FTE / level-of-effort figure, copy it EXACTLY including any decimal or fraction (e.g. 2.5, 0.5, 3.25); do NOT round. (2) ELSE if the solicitation gives an estimated-hours / workload / level-of-effort table by labor category, compute the FTEs as (sum of the BASE-YEAR hours column ONLY) divided by 1912, to two decimals; NEVER add the base-year and option-year columns together - option periods are SEPARATE performance periods, not additional concurrent staff. (3) ELSE '' or 'not specified'","workload_hours_base_year":"if the solicitation gives an estimated-hours / workload / level-of-effort table by labor category, the SUM of the BASE-YEAR hours column ONLY as an integer (e.g. 14685); sum ONLY the base-year column and do NOT add any option-year column; '' if no such table is given","workload_by_lcat":[{"lcat":"one row PER labor category from the estimated-hours / workload / level-of-effort table (base-year column ONLY); empty array if no such table is given","base_year_hours":0}],` +
     `"estimated_value":"",` +
     `"pricing_methodology":"exactly one of 'lcat','pws_task','product','simple' — how pricing must be STRUCTURED per Section L/B; '' if unstated",` +
+    `"pricing_unit_basis":"'monthly' if the solicitation requires a PER-MONTH unit price or a monthly-priced CLIN structure (e.g. a firm-fixed monthly rate, 'price per month', a monthly services CLIN, or a CLIN quantity expressed in months); 'period' if pricing is per year/lot/period; '' if not specified",` +
     `"pricing_instructions":"any cost/price-volume format instructions from Section L/B/M; '' if none",` +
     `"pws_task_areas":["list EVERY distinct PWS task/section, prefixed with the PWS's own numbering, e.g. '2.1: Credit card reconciliation'"]}\n` +
     `Be exact. Do not invent an FTE count the solicitation does not give. When a workload / level-of-effort hours table IS given, base the FTEs on the BASE-YEAR hours column ONLY - never the base and option columns added together.`;
@@ -11369,7 +11370,7 @@ function pricingSetPeriod(id, field, val) { const p = pricingModel.periods.find(
 function pricingOnMethodologyChange() { pricingModel.methodology = document.getElementById('pricingMethodology').value; pricingRenderAll(); }
 function pricingResetModel() {
   if (!confirm('Reset the entire pricing model? This clears the GSA Schedule choice, tasks, labor categories, hours, and periods for this opportunity.')) return;
-  pricingModel = { methodology: 'lcat', tasks: [], lcats: [], hours: {}, mask: {}, periods: [{ id: 'p_base', name: 'Base Year', escalation: 0, months: 12 }], perPeriodFte: false, periodFte: {}, escalationMode: 'flat', escalationFlat: 3, discountMode: 'none', discountPct: '', statedFteTotal: null, fteSource: 'estimated', statedWorkloadByLcat: [], directedLabor: false, hoursPerFte: null, gsaDecision: null, gsaDiscount: 1, gsaRateCard: [], gsaScheduleStart: '', gsaScheduleYears: 5, gsaPopStart: '', sca: { covered: null, wdNumber: '', wdRevision: '', locality: '', hw: 5.55, hwBasis: 'standard', rates: [] }, travel: { mode: 'none', method: 'lump', lumpBasis: 'perPeriod', lumpAmount: '', odcCategory: 'Travel & ODC', nte: '', travelers: '1', tripsPerYear: '', nightsPerTrip: '', airfare: '', lodgingRate: '', mieRate: '', localTransport: '', flatPerTrip: '', markup: 'passthrough', gaPct: '', notes: '' }, materials: { mode: 'none', basis: 'perPeriod', amount: '', gaPct: '', notes: '' }, clins: { enabled: false, unitBasis: 'period', farExtension: false, lines: [] } };
+  pricingModel = { methodology: 'lcat', tasks: [], lcats: [], hours: {}, mask: {}, periods: [{ id: 'p_base', name: 'Base Year', escalation: 0, months: 12 }], perPeriodFte: false, periodFte: {}, escalationMode: 'flat', escalationFlat: 3, discountMode: 'none', discountPct: '', statedFteTotal: null, fteSource: 'estimated', statedWorkloadByLcat: [], directedLabor: false, hoursPerFte: null, gsaDecision: null, gsaDiscount: 1, gsaRateCard: [], gsaScheduleStart: '', gsaScheduleYears: 5, gsaPopStart: '', sca: { covered: null, wdNumber: '', wdRevision: '', locality: '', hw: 5.55, hwBasis: 'standard', rates: [] }, travel: { mode: 'none', method: 'lump', lumpBasis: 'perPeriod', lumpAmount: '', odcCategory: 'Travel & ODC', nte: '', travelers: '1', tripsPerYear: '', nightsPerTrip: '', airfare: '', lodgingRate: '', mieRate: '', localTransport: '', flatPerTrip: '', markup: 'passthrough', gaPct: '', notes: '' }, materials: { mode: 'none', basis: 'perPeriod', amount: '', gaPct: '', notes: '' }, clins: { enabled: false, unitBasis: 'period', farExtension: false, lines: [], _basisTouched: false, _autoMonthly: false } };
   pricingGsaFiles = [];
   pricingRenderAll();
 }
@@ -12677,6 +12678,64 @@ function pricingRenderMaterials() {
 }
 function pricingSetMaterials(field, val) { const m = pricingMaterials(); m[field] = (field === 'amount') ? _pxCleanNum(val) : val; pricingRenderMaterials(); if (typeof pricingRenderClin === 'function') pricingRenderClin(); }
 
+// ═══ #6 CLIN DISCOVERABILITY (Wave 5) ════════════════════════════════════════════════════════════
+// The CLIN builder already works; nothing here changes the math. This adds three things: a signal on
+// the Step 6 header so people know the layer exists, an automatic default to monthly unit pricing when
+// the solicitation asks for it, and a one-click "one CLIN per PWS task group" generator.
+
+// Read the solicitation's own pricing-unit signal, captured by the briefing extractor. Only ever
+// used to pick a DEFAULT the user can override; it never overrides a choice already made.
+function pricingSolicitationWantsMonthly() {
+  const b = (typeof window !== 'undefined' && window._lastBnaIntel) ? window._lastBnaIntel : null;
+  // The dedicated field is an exact token from the extractor ('monthly' | 'period' | ''): trust it
+  // directly rather than pattern-matching it as prose.
+  const unit = String((b && b.pricing_unit_basis) || '').trim().toLowerCase();
+  if (unit === 'monthly') return true;
+  if (unit === 'period') return false;
+  const hay = [
+    b && b.pricing_instructions, b && b.period_of_performance,
+    (typeof cachedBriefing !== 'undefined' && cachedBriefing) ? cachedBriefing.pricing_instructions : ''
+  ].map(x => String(x == null ? '' : x).toLowerCase()).join(' ');
+  if (!hay.trim()) return false;
+  // an explicit monthly unit-price / per-month CLIN instruction
+  if (/\b(per[ -]month|monthly (?:clin|rate|pric|unit|basis|invoic|lot)|price[d]? monthly|month(?:ly)? unit price|unit of month)/.test(hay)) return true;
+  if (/\bfirm[ -]fixed[ -]price.{0,20}per[ -]month\b/.test(hay)) return true;
+  return false;
+}
+
+// Has the user made an explicit CLIN choice we should not stomp? We only auto-default the basis the
+// first time the layer is turned on for an opportunity, tracked by a flag on the model.
+function pricingClinMaybeDefaultBasis() {
+  const c = pricingClin();
+  if (c._basisTouched) return;               // user or a prior auto-default already decided
+  if (pricingSolicitationWantsMonthly()) { c.unitBasis = 'monthly'; c._autoMonthly = true; }
+  c._basisTouched = true;
+}
+
+// One CLIN per PWS task group. Replaces the labor line(s) with a task-scoped line per PWS task,
+// leaves travel/materials/custom lines alone, and preserves any titles the user already set.
+function pricingClinGenerateFromTasks() {
+  const c = pricingClin(), M = pricingModel;
+  const tasks = (M.tasks || []).filter(Boolean);
+  if (!tasks.length) { if (typeof showStatus === 'function') showStatus('warn', 'No PWS tasks', 'Add PWS tasks in Step 3 first \u2014 there is nothing to break CLINs out from.'); return; }
+  // keep the non-labor lines (travel/ODC, materials, custom); drop existing labor/tasks lines
+  const kept = (c.lines || []).filter(l => l.scope === 'travelodc' || l.scope === 'materials' || l.scope === 'custom');
+  // remember titles the user typed against a task, so regenerating doesn't wipe them
+  const priorTitle = {};
+  (c.lines || []).forEach(l => { if (l.scope === 'tasks' && (l.taskIds || []).length === 1) priorTitle[l.taskIds[0]] = l.title; });
+  const made = tasks.map(t => ({
+    id: _prId('clin_'),
+    title: priorTitle[t.id] || (String(t.code ? (t.code + ' ') : '') + (t.name || 'Task')).trim(),
+    scope: 'tasks', type: 'FFP', taskIds: [t.id]
+  }));
+  c.lines = made.concat(kept);
+  c._fromTasks = true;
+  if (typeof pricingSave === 'function') pricingSave();
+  pricingRenderClin();
+  if (typeof showStatus === 'function') showStatus('success', 'CLINs generated',
+    made.length + ' task-based CLIN line' + (made.length === 1 ? '' : 's') + ' created' + (kept.length ? (' (kept ' + kept.length + ' non-labor line' + (kept.length === 1 ? '' : 's') + ')') : '') + '. Every PWS task is covered exactly once \u2014 review and adjust below.');
+}
+
 // ── CLIN layer UI ─────────────────────────────────────────────────────────────
 function pricingRenderClin() {
   const el = document.getElementById('pricingClin');
@@ -12688,12 +12747,20 @@ function pricingRenderClin() {
     '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:700;font-size:14px">' +
     '<input type="checkbox" ' + (c.enabled ? 'checked' : '') + ' onchange="pricingToggleClin()" style="width:16px;height:16px"> Organize pricing into CLINs</label>' +
     '<div style="font-size:12px;color:var(--muted);margin-top:6px">Groups labor and travel/ODC into numbered contract line items (0001 / 1001 / 2001 ...) and builds a ready-to-submit pricing schedule. Off by default; nothing else changes when off.</div>';
+  // #6 Wave 5: surface the monthly signal on the header so the reason to turn this on is visible
+  // even while the layer is collapsed.
+  if (!c.enabled && typeof pricingSolicitationWantsMonthly === 'function' && pricingSolicitationWantsMonthly()) {
+    h += '<div style="margin-top:8px;font-size:12px;color:#3730a3;background:#eef2ff;border:1px solid #c7d2fe;border-radius:7px;padding:7px 11px">\uD83D\uDCA1 This solicitation appears to ask for <strong>per-month</strong> unit pricing. Turn on CLINs and the unit basis will default to monthly.</div>';
+  }
   if (c.enabled) {
     pricingClinEnsureLines();
+    if (typeof pricingClinMaybeDefaultBasis === 'function') pricingClinMaybeDefaultBasis();
+    const _autoMo = c._autoMonthly && c.unitBasis === 'monthly';
     h += '<div style="display:flex;gap:28px;flex-wrap:wrap;margin:14px 0 4px;padding-top:12px;border-top:1px solid var(--border)">' +
       '<div><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Unit basis</div>' +
       '<label style="font-size:13px;margin-right:14px;cursor:pointer"><input type="radio" name="clinBasis" ' + (c.unitBasis !== 'monthly' ? 'checked' : '') + ' onchange="pricingSetClinBasis(\'period\')"> Per period (Lot / Year)</label>' +
-      '<label style="font-size:13px;cursor:pointer"><input type="radio" name="clinBasis" ' + (c.unitBasis === 'monthly' ? 'checked' : '') + ' onchange="pricingSetClinBasis(\'monthly\')"> Per month</label></div>' +
+      '<label style="font-size:13px;cursor:pointer"><input type="radio" name="clinBasis" ' + (c.unitBasis === 'monthly' ? 'checked' : '') + ' onchange="pricingSetClinBasis(\'monthly\')"> Per month</label>' +
+      (_autoMo ? '<div style="font-size:11px;color:#3730a3;margin-top:3px">defaulted to monthly from the solicitation \u2014 change it if that\u2019s wrong</div>' : '') + '</div>' +
       '<div><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Option to extend</div>' +
       '<label style="font-size:13px;cursor:pointer"><input type="checkbox" ' + (c.farExtension ? 'checked' : '') + ' onchange="pricingToggleFarExt()"> Show 6-month FAR 52.217-8 extension (evaluation only, at final-year rates)</label></div></div>';
     h += '<div style="margin-top:10px"><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">CLIN line items (each repeats per period)</div>' +
@@ -12715,7 +12782,11 @@ function pricingRenderClin() {
         h += '<tr><td colspan="4" style="padding:2px 6px 8px 18px;background:#f8fafc;font-size:12px">Amount&nbsp; $ <input type="text" inputmode="decimal" value="' + _pxFmtMoney(line.amount) + '" onchange="pricingSetClinLine(\'' + line.id + '\',\'amount\',this.value)" style="width:120px;padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px"> <select onchange="pricingSetClinLine(\'' + line.id + '\',\'placement\',this.value)" style="margin-left:8px;padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px">' + placeSel + '</select> <span style="color:var(--muted);margin-left:8px">e.g. phase-in, surge, materials, separately-priced ODCs</span></td></tr>';
       }
     });
-    h += '</tbody></table><button onclick="pricingAddClinLine()" style="margin-top:8px;padding:5px 12px;font-size:12px;font-weight:600;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:6px;cursor:pointer">+ Add CLIN line</button></div>';
+    h += '</tbody></table>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">' +
+      '<button onclick="pricingAddClinLine()" style="padding:5px 12px;font-size:12px;font-weight:600;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:6px;cursor:pointer">+ Add CLIN line</button>' +
+      (M.tasks.length ? '<button onclick="pricingClinGenerateFromTasks()" title="Replace the labor line with one CLIN per PWS task, so each task group is priced on its own line. Travel/ODC, materials and custom lines are kept." style="padding:5px 12px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">\u2728 Generate CLINs from PWS task groups (' + M.tasks.length + ')</button>' : '') +
+      '</div></div>';
     const rows = pricingClinScheduleRows();
     h += '<div style="margin-top:14px;overflow-x:auto"><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Schedule preview</div>' +
       '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#f1f5f9;text-align:left">' +
@@ -12738,7 +12809,7 @@ function pricingRenderClin() {
   el.innerHTML = h;
 }
 function pricingToggleClin() { const c = pricingClin(); c.enabled = !c.enabled; if (c.enabled) pricingClinEnsureLines(); pricingRenderClin(); }
-function pricingSetClinBasis(v) { pricingClin().unitBasis = v; pricingRenderClin(); }
+function pricingSetClinBasis(v) { const c = pricingClin(); c.unitBasis = v; c._basisTouched = true; c._autoMonthly = false; pricingRenderClin(); }
 function pricingToggleFarExt() { const c = pricingClin(); c.farExtension = !c.farExtension; pricingRenderClin(); }
 function pricingAddClinLine() { pricingClin().lines.push({ id: _prId('clin_'), title: 'New CLIN', scope: 'labor', type: 'FFP', taskIds: [] }); pricingRenderClin(); }
 function pricingRemoveClinLine(id) { const c = pricingClin(); c.lines = c.lines.filter(l => l.id !== id); pricingRenderClin(); }
