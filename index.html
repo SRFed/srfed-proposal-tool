@@ -3152,8 +3152,8 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // ── App version ───────────────────────────────────────────────────────────────
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
-// can confirm which build is live by searching page source for "Version 152".
-const APP_VERSION = '152';
+// can confirm which build is live by searching page source for "Version 153".
+const APP_VERSION = '157';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -6135,6 +6135,97 @@ function _beginSegment(floor, ceil, tau) {
   if (minP)  minP.textContent  = Math.round(_currentPct) + '%';
 }
 
+// ── Proposal writing: bounded-concurrency job pool ──────────────────────────
+// The six section calls (Vol 0, Vol I x3, Vol III, Vol IV) have no cross-call
+// dependency: every prompt is built from briefingText, which is finalised before
+// any of them run. So they go through a worker pool instead of one at a time.
+// Concurrency 3 matches the market-rate pattern and keeps us well clear of rate
+// limits; at six jobs that is roughly a 3x wall-clock saving.
+const _PROP_CONCURRENCY = 3;
+
+// Same shape as _mktMapLimit: per-item {ok,value} / {ok,error}, so ONE failed
+// section can never discard the five that succeeded.
+async function _propMapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const runner = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      try { out[i] = { ok: true, value: await fn(items[i], i) }; }
+      catch (e) { out[i] = { ok: false, error: e }; }
+    }
+  };
+  await Promise.all(new Array(Math.max(1, Math.min(limit, items.length))).fill(0).map(runner));
+  return out;
+}
+
+// Progress for the writing phase. With sections running concurrently, "Volume 2
+// of 5" stops meaning anything — several are in flight at once — so the bar is
+// driven by REAL completion counts and the step list shows every section's own
+// state. That is strictly more informative than the old per-volume bands.
+let _propJobs = [];
+let _propSteps = null;          // the outer 4-step list, so we can re-render it
+let _propPhaseStart = 0;
+const _PROP_FLOOR = 30, _PROP_CEIL = 85;
+
+function _propInitJobs(jobs, allSteps) {
+  _propJobs = jobs.map(j => ({ id: j.id, label: j.label, status: 'pending' }));
+  _propSteps = allSteps || null;
+  _propPhaseStart = Date.now();
+  _propRender();
+}
+
+function _propDoneCount() {
+  return _propJobs.filter(j => j.status === 'done' || j.status === 'failed').length;
+}
+
+function _propMark(id, status) {
+  const j = _propJobs.find(x => x.id === id);
+  if (j) j.status = status;
+  _propRender();
+}
+
+function _propRender() {
+  const total = _propJobs.length || 1;
+  const done = _propDoneCount();
+  const span = _PROP_CEIL - _PROP_FLOOR;
+  // The bar sits at the completed fraction and creeps toward the next one, so it
+  // can never run ahead of work that has actually finished.
+  const floor = _PROP_FLOOR + (done / total) * span;
+  const ceil = _PROP_FLOOR + (Math.min(done + 1, total) / total) * span;
+  if (typeof _beginSegment === 'function') _beginSegment(floor, Math.max(ceil, floor + 0.5), 30);
+
+  // Adaptive ETA by WAVE, not by section: with N workers, the remaining wall
+  // clock is roughly the remaining waves times the observed seconds per wave.
+  if (done > 0 && _genStartTime) {
+    const elapsedPhase = (Date.now() - _propPhaseStart) / 1000;
+    const wavesDone = Math.max(1, Math.ceil(done / _PROP_CONCURRENCY));
+    const wavesLeft = Math.ceil((total - done) / _PROP_CONCURRENCY);
+    _totalEstSecs = ((Date.now() - _genStartTime) / 1000) + wavesLeft * (elapsedPhase / wavesDone);
+  }
+
+  // A failed section renders as a completed row carrying its own warning marker,
+  // so no shared step renderer has to learn a new status.
+  const rows = _propJobs.map(j => ({
+    text: '\u2007\u2007' + (j.status === 'failed' ? ('\u26a0 ' + j.label + ' \u2014 failed') : j.label),
+    status: j.status === 'failed' ? 'done' : j.status
+  }));
+  let steps = rows;
+  if (_propSteps) {
+    const outer = _propSteps.map(s => ({ text: s.text, status: s.status }));
+    const wi = outer.findIndex(s => /Writing proposal/i.test(s.text));
+    if (wi >= 0) {
+      outer[wi] = { text: 'Writing proposal sections \u2014 ' + done + ' of ' + total + ' done',
+                    status: outer[wi].status };
+      steps = outer.slice(0, wi + 1).concat(rows).concat(outer.slice(wi + 1));
+    } else {
+      steps = outer.concat(rows);
+    }
+  }
+  if (typeof _setSteps === 'function') _setSteps(steps);
+}
+
 function _startEtaTimer(estimatedSeconds) {
   _clearEtaTimer();
   _genStartTime   = Date.now();
@@ -8604,6 +8695,120 @@ function updateProposalPricingGate() {
   }
 }
 
+// ── WAVE B: the solicitation's own volume layout ────────────────────────────
+// Wave A extracts volume_structure; this reduces it to a decision. An EMPTY
+// differs_from_standard is treated as a MISMATCH, not a match: the extraction spec
+// tells the model to answer 'yes' when unsure, so a blank answer carries the same
+// risk as a yes. A stated count that disagrees with the volumes actually listed is
+// a mismatch too — one of the two is wrong and either way the layout needs a look.
+function volumeStructureMismatch(briefing) {
+  const vs = briefing && briefing.volume_structure;
+  if (!vs || typeof vs !== 'object') return null;
+  const listed = Array.isArray(vs.as_stated)
+    ? vs.as_stated.filter(v => v && (String(v.volume || '').trim() || String(v.title || '').trim()))
+    : [];
+  if (!listed.length) return null;
+  const flag = String(vs.differs_from_standard == null ? '' : vs.differs_from_standard).trim().toLowerCase();
+  const stated = parseInt(vs.count, 10);
+  const countKnown = isFinite(stated) && stated > 0;
+  const differs = (flag !== 'no') || (countKnown && stated !== listed.length);
+  return { differs: differs, count: countKnown ? stated : listed.length,
+           volumes: listed, note: String(vs.notes || '') };
+}
+
+// Prompt text. When the layout differs, the solicitation governs and this block is
+// declared BINDING — the tool's five containers are delivery vehicles, not an
+// argument about how the proposal should be organised.
+function buildVolumeStructureDirective(briefing, pageLimits) {
+  const mm = volumeStructureMismatch(briefing);
+  if (!mm) return '';
+  const L = [];
+  if (!mm.differs) {
+    L.push('REQUIRED VOLUME STRUCTURE (Section L):');
+    L.push('  The solicitation\'s ' + mm.count + '-volume layout matches the standard arrangement this proposal uses, so no remapping is needed. Still use the solicitation\'s own volume labels in your headings.');
+    if (mm.note) L.push('  Note: ' + mm.note);
+    return L.join('\n') + '\n\n';
+  }
+  L.push('REQUIRED VOLUME STRUCTURE (Section L) — BINDING:');
+  L.push('  This solicitation requires ' + mm.count + ' volume(s), and that layout differs from the five-volume arrangement this tool assembles by default. The solicitation governs.');
+  L.push('  Organize your content under the solicitation\'s OWN volume labels and headings, exactly as written below. Do not invent headings, do not renumber, and do not silently fold two required volumes into one. If a required volume has no natural home in the sections you are writing, say so explicitly in your output rather than dropping it.');
+  mm.volumes.forEach(v => {
+    const label = String(v.volume || '').trim();
+    const title = String(v.title || '').trim();
+    L.push('  ' + (title ? label + ' — ' + title : label));
+    const must = Array.isArray(v.must_contain) ? v.must_contain.filter(x => String(x || '').trim()) : [];
+    if (must.length) L.push('    Must contain, in this order: ' + must.join('; '));
+    const pl = String(v.page_limit || '').trim();
+    if (pl && !/not specified|unlimited|n\/a/i.test(pl)) {
+      L.push('    Page limit: ' + pl + ' — exceeding it is disqualifying.');
+    }
+    if (String(v.submitted_separately || '').trim().toLowerCase() === 'yes') {
+      L.push('    Submitted as a separate file or binder.');
+    }
+  });
+  if (mm.note) L.push('  Assembly notes: ' + mm.note);
+  return L.join('\n') + '\n\n';
+}
+
+// ── WAVE B: Section M weights actually govern the narrative budget ───────────
+// evaluation_factors was already extracted with weight + subfactors; nothing
+// consumed it. Price/cost factors are deliberately EXCLUDED from the narrative
+// allocation and the remainder renormalised: price is evaluated on its own volume,
+// so giving it a share of the technical page budget is simply wrong.
+function buildEvaluationEmphasisDirective(briefing) {
+  const raw = (briefing && Array.isArray(briefing.evaluation_factors)) ? briefing.evaluation_factors : [];
+  const facs = raw
+    .map(f => (f && typeof f === 'object') ? f : { factor: String(f == null ? '' : f) })
+    .filter(f => String(f.factor || '').trim());
+  if (!facs.length) return '';
+  const isPrice = f => /\b(price|cost|pricing)\b/i.test(String(f.factor || ''));
+  const numOf = f => {
+    const mt = String(f.weight == null ? '' : f.weight).match(/(\d+(?:\.\d+)?)/);
+    return mt ? parseFloat(mt[1]) : null;
+  };
+  const subOf = f => {
+    const s = Array.isArray(f.subfactors) ? f.subfactors.filter(x => String(x || '').trim()) : [];
+    return s.length ? ' (subfactors: ' + s.join('; ') + ')' : '';
+  };
+  const top = String((briefing && briefing.highest_weight_factor) || '').trim();
+  const anyWeightText = facs.some(f => String(f.weight || '').trim());
+  const allNumeric = facs.every(f => numOf(f) !== null);
+  const L = ['EVALUATION EMPHASIS (derived from Section M) — how to budget the narrative:'];
+
+  if (allNumeric) {
+    const sum = facs.reduce((s, f) => s + numOf(f), 0);
+    const sumsTo100 = Math.abs(sum - 100) < 1.5;
+    const npSum = facs.filter(f => !isPrice(f)).reduce((s, f) => s + numOf(f), 0);
+    L.push('  Factors by ' + (sumsTo100 ? 'stated weight' : 'relative stated weight') + ', heaviest first:');
+    facs.slice().sort((a, b) => numOf(b) - numOf(a)).forEach(f => {
+      if (isPrice(f)) {
+        L.push('    ' + f.factor + ' — stated weight ' + f.weight + '; priced separately in the price volume, so it consumes none of the technical narrative' + subOf(f));
+      } else {
+        const share = npSum > 0 ? Math.round((numOf(f) / npSum) * 100) : 0;
+        L.push('    ' + f.factor + ' — stated weight ' + f.weight + '; give it approximately ' + share + '% of the technical narrative' + subOf(f));
+      }
+    });
+    if (!sumsTo100) {
+      L.push('  The stated weights total ' + sum + ' rather than 100, so they are used as relative shares.');
+    }
+    L.push('  These percentages are computed from the weights the solicitation states, renormalised across the non-price factors only.');
+  } else if (anyWeightText) {
+    L.push('  Section M expresses importance but the weights are not numeric across all factors, so no percentage allocation is possible. The wording below is quoted verbatim — do not convert it into a number:');
+    facs.forEach(f => {
+      const w = String(f.weight || '').trim();
+      L.push('    ' + f.factor + (w ? ' — stated importance: ' + w : '') + subOf(f));
+    });
+    L.push('  Weight the narrative to match the stated relative importance, and say nothing that implies a numeric weighting the solicitation did not give.');
+  } else {
+    L.push('  Section M lists no weights at all. The order below is the order the solicitation listed the factors in. Section M conventionally lists factors in descending importance, so treat it as the likely priority — but this is an inference from listing order, not a stated weight, and it must never be presented to the customer as one.');
+    facs.forEach(f => { L.push('    ' + f.factor + subOf(f)); });
+    L.push('  Distribute the narrative broadly in that order rather than inventing a split.');
+  }
+
+  L.push('  Order of attack: lead with ' + (top || (allNumeric ? 'the heaviest factor above' : 'the first factor listed above')) + '. Its themes belong early in every volume and form the spine of the executive summary.');
+  return L.join('\n') + '\n\n';
+}
+
 async function runGeneration() {
   if (!msAccount || !isAuthorizedAccount(msAccount.username)) {
     const dom = (CLIENT_CONFIG.authorizedDomain || '').trim();
@@ -8769,6 +8974,35 @@ async function runGeneration() {
       `"period_structure":"the base + option period breakdown, e.g. '1 base year + 4 option years'; '' if unstated",` +
       `"page_limits":{"vol0":"pages or 'not specified'","vol1":"pages or 'not specified'","vol2":"pages or 'not specified'","vol3":"pages or 'not specified'","vol4":"pages or 'not specified'","notes":"any other format instructions"},` +
       `"section_l_instructions":["exact structural/format requirements from Section L: required headings, font, margins, file format, etc."],` +
+      // WAVE A: the volume layout the solicitation actually demands. The tool's own
+      // default is Exec Summary + Technical + Past Performance + Price + Contract Docs;
+      // when a solicitation prescribes anything else, that mismatch is disqualifying and
+      // nobody sees it unless it is extracted here.
+      `"volume_structure":{`  +
+        `"as_stated":[{"volume":"the volume/factor/tab label EXACTLY as the solicitation writes it — e.g. 'Volume I', 'Volume 2', 'Factor 1', 'Tab A'; copy its own numbering, do not renumber",` +
+        `"title":"the volume title exactly as written, e.g. 'Technical/Management Approach'",` +
+        `"must_contain":["each section or element this volume is REQUIRED to contain, one per item, in the order the solicitation lists them"],` +
+        `"page_limit":"the page limit for THIS volume as stated, or 'not specified'",` +
+        `"submitted_separately":"'yes' if this volume must be a separate file / binder / upload, 'no' if it is combined with another, '' if unstated"}],` +
+        `"count":"the number of volumes the solicitation actually requires, as a number; 0 if it does not prescribe volumes at all",` +
+        `"differs_from_standard":"'yes' if the required layout is NOT the five-volume Executive Summary + Technical + Past Performance + Price + Contract Documentation arrangement — a different count, a different grouping, price folded into technical, or factors instead of volumes; 'no' if it matches; '' only if the solicitation is silent. When you are unsure, answer 'yes': a structure mismatch is disqualifying and a false alarm costs nothing",` +
+        `"notes":"anything else governing assembly — volume ordering, binder or tab labelling, cross-referencing rules, whether page limits are per volume or cumulative"},` +
+      `"required_forms":[{"form":"the form identifier EXACTLY as referenced — e.g. 'SF 1449', 'SF 33', 'SF 30', 'SF 1442', 'Section K', '52.212-3'",` +
+        `"what":"what the offeror must DO with it — sign, complete in full, acknowledge, or return as-is",` +
+        `"where":"the section, block, page or attachment number where it appears",` +
+        `"mandatory":"'yes' if omitting or leaving it unsigned makes the offer NON-RESPONSIVE, 'no' if genuinely optional, '' if unclear — answer 'yes' when unsure"}],` +
+      `"reps_and_certs":"how this solicitation handles representations and certifications — exactly one of 'sam' (completed online in SAM.gov and incorporated by reference, e.g. FAR 52.204-7 / 52.212-3(b)), 'in_document' (a Section K or a full-text 52.212-3 that must be filled in and RETURNED WITH THE OFFER), 'both', or '' if not addressed. This distinction decides responsiveness: an offer missing in-document reps and certs is thrown out unread, while SAM-registered reps need nothing attached",` +
+      `"attachments_required":[{"name":"the attachment or exhibit identifier and title exactly as listed, e.g. 'Attachment 5 — Small Business Subcontracting Plan'",` +
+        `"must_return":"'yes' if the offeror must COMPLETE and SUBMIT it, 'no' if it is provided for information only (a PWS, a wage determination, a drawing), '' if unclear. Reference-only documents are the majority — do not mark them yes",` +
+        `"notes":"any format, addressee or deadline specific to this attachment that differs from the main submission"}],` +
+      `"submission_mechanics":{"method":"how the offer must be delivered — exactly one of 'portal', 'email', 'physical', 'multiple', or '' if unstated",` +
+        `"portal_or_address":"the portal name and URL, or the exact email address(es), or the physical delivery address, copied verbatim",` +
+        `"file_format":"required file format(s) and any constraints, e.g. 'PDF, searchable, no password protection; Excel for the price volume'",` +
+        `"file_naming":"any required file-naming convention, verbatim; '' if none stated",` +
+        `"size_limit":"any per-file or per-message size limit exactly as stated, e.g. '10 MB per email'; '' if none",` +
+        `"copies":"the number of copies required if the submission is physical or multi-copy, as stated; '' if not applicable",` +
+        `"questions_due":"the date written questions / Q&A are due, as YYYY-MM-DD, with local time and time zone if stated. This is a DIFFERENT date from submission_date and is usually EARLIER — never copy one into the other. If the solicitation states only a proposal due date and no separate question deadline, return '' here rather than repeating submission_date",` +
+        `"notes":"anything else that governs a VALID submission — required subject-line format, confirmation-of-receipt requirements, the stated late-offer policy"},` +
       `"evaluation_factors":[{"factor":"Technical Approach","weight":"40%","subfactors":["..."]}],` +
       `"highest_weight_factor":"name of highest-weighted eval factor",` +
       `"pws_task_areas":["task: description"],` +
@@ -8874,6 +9108,13 @@ async function runGeneration() {
       `  ${formatPageLimit('3', 'Vol III Price Narrative')}\n` +
       `  ${formatPageLimit('4', 'Vol IV Contract Docs')}\n` +
       (pageLimits.notes ? `  Notes: ${pageLimits.notes}\n` : '') + '\n' +
+
+      // WAVE B: the solicitation's own volume layout and its Section M weighting.
+      // Interpolated HERE, into briefingText, because every one of the six section
+      // prompts already includes briefingText — so this single insertion reaches
+      // all of them and no prompt body needs touching.
+      buildVolumeStructureDirective(briefing, pageLimits) +
+      buildEvaluationEmphasisDirective(briefing) +
 
       // Approved Pink Team outline — if present, use as binding section structure
       (window._approvedOutline && window._approvedOutline.volumes && window._approvedOutline.volumes.length > 0 ? (
@@ -9014,46 +9255,23 @@ Do not over-format — most content stays as prose. The goal is a document a per
     }
 
     const totalVols = genVols.length;
-    let volsDone = 0;
 
-    // ── Weighted progress bands across the volumes phase (30% → 85%) ──
-    // Volume I makes 3 separate writing calls and Volume II ingests company
-    // documents, so they take much longer than a flat per-volume average.
-    // Weighting the bands by real effort keeps the bar honest — e.g. the bar
-    // sits in Vol I's wide band while its 3 sections write, instead of racing
-    // ahead. ETA is recalibrated from the actual observed rate per weight unit.
-    const VOL_WEIGHTS = { '0': 1.0, '1': 3.0, '2': 2.0, '3': 1.0, '4': 1.0 };
-    const volWeights  = genVols.map(v => VOL_WEIGHTS[v] || 1.0);
-    const totalWeight = volWeights.reduce((a, b) => a + b, 0) || 1;
-    const volBands = [];
-    let _cw = 0;
-    for (let i = 0; i < genVols.length; i++) {
-      const floor = 30 + (_cw / totalWeight) * 55;
-      _cw += volWeights[i];
-      const ceil = 30 + (_cw / totalWeight) * 55;
-      volBands.push({ floor, ceil });
-    }
-    const _volsPhaseStart = Date.now();
+    // ── Build every writing job first, then run them concurrently ──
+    // None of these prompts depends on another section's output — they are all
+    // built from briefingText, which is complete before this point (the company
+    // profile digest and testimonial pool were folded into it above). So the
+    // section calls are gathered here and dispatched through _propMapLimit.
+    // Volume II makes no API call at all: its references were already extracted
+    // from the same company-document read, so it is filled in directly below.
+    const jobs = [];
+    const addJob = (vol, label, prompt, maxTok) => {
+      jobs.push({ id: 'j' + jobs.length, vol: vol, label: label, prompt: prompt, maxTok: maxTok });
+    };
 
     for (const vol of genVols) {
-      volsDone++;
-      const band = volBands[volsDone - 1];
-      // Adaptive ETA: rate = elapsed-in-volumes-phase ÷ weight already consumed.
-      // Falls back to ~55s/weight before we have a measurement.
-      const weightConsumed = volWeights.slice(0, volsDone - 1).reduce((a, b) => a + b, 0);
-      const weightRemaining = volWeights.slice(volsDone - 1).reduce((a, b) => a + b, 0);
-      const volsElapsed = (Date.now() - _volsPhaseStart) / 1000;
-      const ratePerWeight = (volsDone > 1 && weightConsumed > 0) ? (volsElapsed / weightConsumed) : 55;
-      _totalEstSecs = ((Date.now() - _genStartTime) / 1000) + (weightRemaining * ratePerWeight);
-      // Begin this volume's segment — the bar approaches band.ceil but won't
-      // cross it until the next volume starts. Heavier volumes get a longer tau.
-      _beginSegment(band.floor, band.ceil, 25 + volWeights[volsDone - 1] * 18);
-      let volData = {};
 
       if (vol === '0') {
-        showStatus('info', 'Writing Vol 0 — Executive Summary...', `Volume ${volsDone} of ${totalVols}`, true);
-
-        volData = await writeSection(
+        addJob('0', 'Vol 0 — Executive Summary',
           `You are writing a STANDALONE EXECUTIVE SUMMARY for a government proposal by ${CLIENT_CONFIG.companyShortName}.\n\n` +
           `This is a decision-maker document — it must stand alone and convince the Source Selection Authority to choose ${CLIENT_CONFIG.companyShortName} without reading the other volumes.\n\n` +
           `Page limit: ${(briefing.page_limits?.vol0 || 'not specified')}. Target this limit precisely.\n\n` +
@@ -9071,10 +9289,9 @@ Do not over-format — most content stays as prose. The goal is a document a per
         );
 
       } else if (vol === '1') {
-        // Vol I: 3 separate calls for quality and length
-        showStatus('info', 'Writing Volume I — Understanding & Technical Approach...', `Volume ${volsDone} of ${totalVols} (section 1/3)`, true);
-
-        const sec1 = await writeSection(
+        // Vol I is three separate calls for quality and length; they are
+        // independent of one another and merge by key when they come back.
+        addJob('1', 'Vol I — Understanding & Technical Approach',
           `You are writing the TECHNICAL APPROACH section of a government proposal for ${CLIENT_CONFIG.companyShortName}.\n\n` +
           `PAGE LIMIT: ${formatPageLimit('1', 'Vol I')} — distribute content appropriately across all three Vol I sections.\n\n` +
           `Write deeply specific, compliance-focused content that directly addresses every PWS task area and every evaluator requirement. ` +
@@ -9086,36 +9303,28 @@ Do not over-format — most content stays as prose. The goal is a document a per
           8000
         );
 
-        showStatus('info', 'Writing Volume I — Management & Methodology...', `Volume ${volsDone} of ${totalVols} (section 2/3)`, true);
-        const sec2 = await writeSection(
+        addJob('1', 'Vol I — Management & Methodology',
           `You are writing the MANAGEMENT APPROACH and METHODOLOGY sections of a government proposal for ${CLIENT_CONFIG.companyShortName}.\n\n` +
           `Return ONLY JSON:\n{"integrated_methodology": "MINIMUM 3 paragraphs. Describe the integrated execution methodology — how the team will operate day-to-day, coordinate with Government, manage quality, handle Technical Instructions, report performance, and adapt to changing requirements. Be specific to this contract's structure.", "management_approach": "MINIMUM 4 paragraphs covering: (1) organizational structure and reporting chain, (2) quality management and ISO alignment, (3) risk identification and mitigation, (4) transition-in plan with specific 30/60/90 day milestones tailored to this requirement, (5) cost control and financial governance approach."}`,
           8000
         );
 
-        showStatus('info', 'Writing Volume I — Staffing & Personnel...', `Volume ${volsDone} of ${totalVols} (section 3/3)`, true);
-        const sec3 = await writeSection(
+        addJob('1', 'Vol I — Staffing & Key Personnel',
           `You are writing the STAFFING and KEY PERSONNEL sections of a government proposal for ${CLIENT_CONFIG.companyShortName}.\n\n` +
           `Return ONLY JSON:\n{"staffing_plan": "MINIMUM 3 paragraphs. Describe the staffing approach: how personnel are selected, cleared, and onboarded; labor category alignment to PWS task areas; surge and continuity plan; subcontracting approach if any. Be specific to this requirement's FTE count and task structure.", "key_personnel_intro": "MINIMUM 3 paragraphs. Introduce the proposed key personnel, their specific qualifications relevant to THIS requirement, their relevant past experience with similar Government programs, and their availability and commitment to this contract. Reference their resumes/CVs for detailed background."}`,
           8000
         );
 
-        volData = { ...sec1, ...sec2, ...sec3 };
-
       } else if (vol === '2') {
-        showStatus('info', 'Writing Volume II — Past Performance...', `Volume ${volsDone} of ${totalVols}`, true);
-
         // References were already extracted up front, from the SAME company-document
         // read that grounds the Technical/Executive volumes — so we reuse them here
-        // and never send the documents twice.
-        volData = { references: (window._companyProfile && window._companyProfile.references) || [] };
-        if (!volData.references.length) {
+        // and never send the documents twice. No API call, so no job.
+        proposalData['volume2'] = { references: (window._companyProfile && window._companyProfile.references) || [] };
+        if (!proposalData['volume2'].references.length) {
           showStatus('warn', 'Past performance needs attention', 'No past-performance references were found in your company documents — Volume II will use [PROVIDE: ...] placeholders for you to complete.');
         }
 
       } else if (vol === '3') {
-        showStatus('info', 'Writing Volume III — Price Narrative...', `Volume ${volsDone} of ${totalVols}`, true);
-
         // If a pricing model was built on the Pricing tab, write to the real numbers;
         // otherwise fall back to placeholders the proposal manager fills in later.
         const pricingCtx = (typeof buildPricingContextForVol3 === 'function') ? buildPricingContextForVol3() : '';
@@ -9132,7 +9341,7 @@ Do not over-format — most content stays as prose. The goal is a document a per
           ? `"wrap_rate_narrative":"MINIMUM 2 paragraphs explaining the wrap-rate buildup using the ACTUAL fringe, overhead, G&A, and fee percentages and the resulting wrap factor from the pricing model. Explain DCAA compliance and audit-readiness.",`
           : `"wrap_rate_narrative":"MINIMUM 2 paragraphs explaining wrap rate components: fringe benefits, overhead, G&A, and profit/fee. Explain DCAA compliance and audit-readiness.",`;
 
-        volData = await writeSection(
+        addJob('3', 'Vol III — Price Narrative',
           `You are writing the PRICE/COST NARRATIVE volume of a government proposal for ${CLIENT_CONFIG.companyShortName}.\n\n` +
           priceGuidance +
           `Return ONLY JSON:\n{"pricing_philosophy":"MINIMUM 2 paragraphs on pricing approach, value proposition, and cost realism strategy tailored to this agency and contract type.",` +
@@ -9144,9 +9353,7 @@ Do not over-format — most content stays as prose. The goal is a document a per
         );
 
       } else if (vol === '4') {
-        showStatus('info', 'Writing Volume IV — Contract Documentation...', `Volume ${volsDone} of ${totalVols}`, true);
-
-        volData = await writeSection(
+        addJob('4', 'Vol IV — Contract Documentation',
           `You are writing the CONTRACT DOCUMENTATION volume of a government proposal for ${CLIENT_CONFIG.companyShortName}.\n\n` +
           `CRITICAL: You must explicitly acknowledge and address EVERY administrative and compliance requirement from the requirements list above. ` +
           `This includes items such as: employee conduct on government premises, prohibitions on soliciting government business, ` +
@@ -9164,8 +9371,48 @@ Do not over-format — most content stays as prose. The goal is a document a per
         );
       }
 
-    proposalData[`volume${vol}`] = volData;
   }
+
+    // ── Run every section concurrently ──
+    if (jobs.length) {
+      _propInitJobs(jobs, allSteps);
+      showStatus('info', 'Writing ' + jobs.length + ' proposal section' + (jobs.length === 1 ? '' : 's') + '...',
+        jobs.length > 1 ? ('Up to ' + Math.min(_PROP_CONCURRENCY, jobs.length) + ' at a time — progress below shows each one.') : 'This takes a couple of minutes.', true);
+
+      const results = await _propMapLimit(jobs, _PROP_CONCURRENCY, async (job) => {
+        _propMark(job.id, 'active');
+        try {
+          const data = await writeSection(job.prompt, job.maxTok);
+          _propMark(job.id, 'done');
+          return data;
+        } catch (e) {
+          _propMark(job.id, 'failed');
+          throw e;
+        }
+      });
+
+      const failed = [];
+      jobs.forEach((job, i) => {
+        const r = results[i];
+        if (!r || !r.ok) { failed.push(job); return; }
+        // Vol I's three sections share vol '1' and merge by key, exactly as the
+        // old { ...sec1, ...sec2, ...sec3 } spread did.
+        const key = 'volume' + job.vol;
+        proposalData[key] = Object.assign(proposalData[key] || {}, r.value || {});
+      });
+
+      // A single failure used to throw away every section that HAD succeeded.
+      // Now the document is still assembled, and the person is told exactly which
+      // sections need a re-run. Only a total wipe-out is fatal.
+      if (failed.length === jobs.length) {
+        throw (results[0] && results[0].error) || new Error('Every proposal section failed to write.');
+      }
+      if (failed.length) {
+        showStatus('warn', failed.length + ' section' + (failed.length === 1 ? '' : 's') + ' could not be written',
+          'The rest of the proposal is complete. These need a re-run: ' + failed.map(j => j.label).join('; ')
+          + '. Their placeholders will be left in the document — regenerate, or fill them in by hand.');
+      }
+    }
 
   // Store for revise function
   window._lastProposalData = proposalData;
@@ -10894,12 +11141,22 @@ async function marketFetchBatch(apiKey, roles, loc) {
   const parsed = await _mktCall(apiKey, prompt, Math.min(8, 3 + roles.length), 6000);
   const rows = (parsed && Array.isArray(parsed.roles)) ? parsed.roles : (Array.isArray(parsed) ? parsed : []);
   const out = new Map();
+  // The AI is told the exact count and order, so when it returns exactly as many rows as roles sent,
+  // position is authoritative and can't be thrown off by two similarly-named roles in the same batch
+  // (e.g. "Program Manager" vs "Senior Program Manager" vs "IDIQ Program Manager" \u2014 the same title
+  // collision already fixed in the single-lookup bind, but here across MULTIPLE roles at once, which is
+  // more likely to collide). Name-matching is only the repair path for the abnormal case where a row was
+  // actually dropped or merged, at which point order is no longer trustworthy and the echoed title is the
+  // best remaining signal.
+  const countsMatch = rows.length === roles.length;
   rows.forEach((row, i) => {
     if (!row || typeof row !== 'object') return;
-    // Match on the echoed title; fall back to position in the list, since order was specified.
     const byName = _mktNormName(row.position);
-    const target = roles.find(r => _mktNormName(r.name) === byName) || roles[i];
+    const target = countsMatch ? roles[i] : (roles.find(r => _mktNormName(r.name) === byName) || roles[i]);
     if (!target) return;
+    if (countsMatch && _mktNormName(target.name) !== byName) {
+      log('Batch title mismatch on position ' + (i + 1) + ': AI echoed "' + row.position + '", expected "' + target.name + '" \u2014 used positional order, not the echoed title.', 'warn');
+    }
     const rec = { position: target.name, location: loc, as_of: String(yr), currency: 'USD',
                   salary: row.salary || {}, hourly: row.hourly || {},
                   sources: (parsed && parsed.sources) || [], notes: (parsed && parsed.notes) || '',
@@ -13036,6 +13293,12 @@ function pricingBuildWorkbook() {
   const P = M.periods;
   const mult = pricingMultipliers();
   const r2 = x => Math.round((x || 0) * 100) / 100;
+  // xv = "exact value". Any cell a LIVE FORMULA recomputes must be cached at full
+  // precision or the sheet disagrees with itself the moment Excel recalculates:
+  // a rate rounded to cents, multiplied by a few thousand hours, moves the line by
+  // dollars. Number formats (pxStyle money/hours/fte) still round for DISPLAY.
+  // r2 stays for display-only cells that no formula reads.
+  const xv = x => (typeof x === 'number' && isFinite(x)) ? x : (parseFloat(x) || 0);
   const frac = i => pricingPeriodFraction(P[i]);
   const cellH = (lid, tid) => pricingCell(lid, tid);
   // Effective per-period loaded rate: GSA bakes escalation into the year's rate; build-up applies it via the period multiplier.
@@ -13052,7 +13315,7 @@ function pricingBuildWorkbook() {
     [''],
     ['Tabs in this workbook'],
     ['•  Price Summary  —  the bottom line: total evaluated price per period and overall. Start here.'],
-    ['•  Line-Item Detail (green tab)  —  the master dataset: one row per labor category × task × period, plus Travel/ODC rows. The single source for any custom breakout.'],
+    ['•  Line-Item Detail (green tab)  —  the master dataset: one row per labor category × task × period, plus Travel/ODC and Materials rows, each carrying its CLIN when the CLIN layer is on. The single source for any custom breakout.'],
     ['•  By Labor Category / By PWS Task  —  pre-built dollar rollups with per-period totals.'],
     ['•  Fully Burdened Rate Table  —  fully-burdened hourly rate per labor category, for each period.'],
     ['•  Hours by Task / FTE by Task  —  effort matrices (labor category × task).'],
@@ -13146,13 +13409,13 @@ function pricingBuildWorkbook() {
   const _odcLabel = (M.travel && M.travel.odcCategory) || 'Travel & ODC';
   const _matPer = (typeof pricingMaterialsByPeriod === 'function') ? pricingMaterialsByPeriod() : P.map(() => 0);
   const _matTot = _matPer.reduce((s, x) => s + x, 0);
-  const _laborPer = P.map((p, i) => r2(pricingPeriodCost(i)));
-  const _laborTot = r2(pricingGrandTotal());
+  const _laborPer = P.map((p, i) => xv(pricingPeriodCost(i)));
+  const _laborTot = xv(pricingGrandTotal());
   const ps = [['Price Element'].concat(pNames).concat(['Total ($)'])]; const _psCat = {};
   ps.push([(gsa ? 'Fully burdened labor (GSA ceiling less discount)' : 'Fully burdened labor')].concat(_laborPer).concat([_laborTot])); _psCat[ps.length - 1] = 'Labor';
-  if (_travTot > 0) { ps.push([_odcLabel].concat(_travPer.map(r2)).concat([r2(_travTot)])); _psCat[ps.length - 1] = _odcLabel; }
-  if (_matTot > 0) { ps.push(['Materials'].concat(_matPer.map(r2)).concat([r2(_matTot)])); _psCat[ps.length - 1] = 'Materials'; }
-  ps.push(['TOTAL EVALUATED PRICE'].concat(P.map((p, i) => r2(pricingPeriodCost(i) + (_travPer[i] || 0) + (_matPer[i] || 0)))).concat([r2(_laborTot + _travTot + _matTot)]));
+  if (_travTot > 0) { ps.push([_odcLabel].concat(_travPer.map(xv)).concat([xv(_travTot)])); _psCat[ps.length - 1] = _odcLabel; }
+  if (_matTot > 0) { ps.push(['Materials'].concat(_matPer.map(xv)).concat([xv(_matTot)])); _psCat[ps.length - 1] = 'Materials'; }
+  ps.push(['TOTAL EVALUATED PRICE'].concat(P.map((p, i) => xv(pricingPeriodCost(i) + (_travPer[i] || 0) + (_matPer[i] || 0)))).concat([xv(_laborTot + _travTot + _matTot)]));
   const wsPS = XLSX.utils.aoa_to_sheet(ps);
   { const _nP = pNames.length, _last = ps.length - 1; for (let _r = 1; _r <= _last; _r++) pxSumRow(wsPS, _r, _nP + 1, 1, _nP); for (let _c = 1; _c <= _nP; _c++) pxSumCol(wsPS, _last, _c, 1, _last - 1); }
   // #23: each price-element row is a LIVE SUMIFS over the Line-Item Detail by Category + Period.
@@ -13174,8 +13437,8 @@ function pricingBuildWorkbook() {
     // The hours matrix always holds a FULL YEAR of hours. A partial base period bills months/12 of
     // them, so every base-period figure below is the full-year figure times that fraction, and each
     // row says which of the two it is. _bMo/_bFrac drive it; at 12 months the fraction is 1.
-    const _bMo = _t ? _t.baseMonths : pricingPeriodMonths(P[0]);
-    const _bFrac = _t ? _t.baseFraction : pricingPeriodFraction(P[0]);
+    const _bMo = (_t && _t.baseMonths != null) ? _t.baseMonths : pricingPeriodMonths(P[0]);
+    const _bFrac = (_t && _t.baseFraction != null) ? _t.baseFraction : pricingPeriodFraction(P[0]);
     const _hrsBase = _hrs * _bFrac;
     const _labBase = _laborBase * _bFrac;
     const _perBasis = _t && _t.statedBasis === 'period';
@@ -13185,40 +13448,40 @@ function pricingBuildWorkbook() {
         _perBasis ? 'Set on the Pricing tab \u2014 the figure is taken as stated and never scaled up'
                   : (_t.basisLocked ? 'A contract total, spread over ' + _t.contractYearsText + ' contract years'
                                     : 'Set on the Pricing tab \u2014 scaled to each period by its own length'));
-      push('sraw', 'Government-stated value \u2014 low',          r2(_perBasis ? _t.low : _t.annualLow),  'Stated in the solicitation (' + _t.from + ')');
-      push('srawh','Government-stated value \u2014 high',         r2(_perBasis ? _t.high : _t.annualHigh), _t.isRange ? 'Stated in the solicitation' : 'Single stated figure');
+      push('sraw', 'Government-stated value \u2014 low',          xv(_perBasis ? _t.low : _t.annualLow),  'Stated in the solicitation (' + _t.from + ')');
+      push('srawh','Government-stated value \u2014 high',         xv(_perBasis ? _t.high : _t.annualHigh), _t.isRange ? 'Stated in the solicitation' : 'Single stated figure');
       push('bmo1', 'Base period length (months)',                 _bMo,              'Pricing Step 6');
-      push('alo',  'Annual rate of spend \u2014 low',             r2(_t.annualLow),  _perBasis ? ('Base-period budget \u00f7 ' + _bMo + '/12 \u2014 back-solved, not stated') : 'As stated');
-      push('ahi',  'Annual rate of spend \u2014 high',            r2(_t.annualHigh), _perBasis ? ('Base-period budget \u00f7 ' + _bMo + '/12 \u2014 back-solved, not stated') : 'As stated');
-      push('low',  'Expected for the base period \u2014 low',     r2(_t.low),        _perBasis ? 'As stated \u2014 a fixed budget is not scaled' : ('Annual low x ' + _bMo + '/12'));
-      push('high', 'Expected for the base period \u2014 high',    r2(_t.high),       _perBasis ? 'As stated \u2014 a fixed budget is not scaled' : ('Annual high x ' + _bMo + '/12'));
-      push('anch', 'Anchor point used (base period)',             r2(_t.anchor),     _t.isRange ? (pxAnchorLabel(_t.anchorMode) + ' of the base-period range') : 'Single stated figure');
+      push('alo',  'Annual rate of spend \u2014 low',             xv(_t.annualLow),  _perBasis ? ('Base-period budget \u00f7 ' + _bMo + '/12 \u2014 back-solved, not stated') : 'As stated');
+      push('ahi',  'Annual rate of spend \u2014 high',            xv(_t.annualHigh), _perBasis ? ('Base-period budget \u00f7 ' + _bMo + '/12 \u2014 back-solved, not stated') : 'As stated');
+      push('low',  'Expected for the base period \u2014 low',     xv(_t.low),        _perBasis ? 'As stated \u2014 a fixed budget is not scaled' : ('Annual low x ' + _bMo + '/12'));
+      push('high', 'Expected for the base period \u2014 high',    xv(_t.high),       _perBasis ? 'As stated \u2014 a fixed budget is not scaled' : ('Annual high x ' + _bMo + '/12'));
+      push('anch', 'Anchor point used (base period)',             xv(_t.anchor),     _t.isRange ? (pxAnchorLabel(_t.anchorMode) + ' of the base-period range') : 'Single stated figure');
       rc.push(['']);
     }
     push('lcats', 'Labor categories',                     M.lcats.length,        'Pricing Step 4');
-    push('fte',   'Team size (FTE staffing level)',       r2(_hrs / _hpf),       'Full-year hours / hours per FTE \u2014 a staffing level, not a period quantity');
+    push('fte',   'Team size (FTE staffing level)',       xv(_hrs / _hpf),       'Full-year hours / hours per FTE \u2014 a staffing level, not a period quantity');
     push('hpf',   'Hours per FTE (12 months)',            _hpf,                  (M.hoursPerFte > 0 ? 'Stated in the solicitation' : 'Company standard'));
-    push('hrsY',  'Full-year billable hours',             r2(_hrs),              'Hours allocation matrix (always a full 12 months)');
+    push('hrsY',  'Full-year billable hours',             xv(_hrs),              'Hours allocation matrix (always a full 12 months)');
     push('bmo',   'Base period length (months)',          _bMo,                  'Pricing Step 6');
-    push('hrs',   'Base-period billable hours',           r2(_hrsBase),          'Full-year hours x ' + _bMo + '/12');
-    push('bl',    'Blended fully burdened rate ($/hr)',   r2(_hrs > 0 ? _laborBase / _hrs : 0), 'Labor / hours \u2014 a rate, unaffected by period length');
+    push('hrs',   'Base-period billable hours',           xv(_hrsBase),          'Full-year hours x ' + _bMo + '/12');
+    push('bl',    'Blended fully burdened rate ($/hr)',   xv(_hrs > 0 ? _laborBase / _hrs : 0), 'Labor / hours \u2014 a rate, unaffected by period length');
     rc.push(['']);
-    push('lab',   'Base-period labor',                    r2(_labBase),          'Base-period hours x fully burdened rate');
-    push('nl',    'Base-period travel / ODC / materials', r2(_t ? _t.nonLabor : 0), 'Step 6 travel and materials');
-    push('by',    'BASE-PERIOD PRICE',                    r2(_t ? _t.baseYear : _labBase), 'Labor + non-labor');
+    push('lab',   'Base-period labor',                    xv(_labBase),          'Base-period hours x fully burdened rate');
+    push('nl',    'Base-period travel / ODC / materials', xv((_t && _t.nonLabor != null) ? _t.nonLabor : 0), 'Step 6 travel and materials');
+    push('by',    'BASE-PERIOD PRICE',                    xv((_t && _t.baseYear != null) ? _t.baseYear : _labBase), 'Labor + non-labor');
     rc.push(['']);
     P.forEach((p, i) => push('p' + i, (p.name || ('Period ' + (i + 1))) + '  (' + pricingPeriodMonths(p) + ' mo' + (i === 0 ? '' : ', +' + ((M.escalationMode === 'flat') ? (parseFloat(M.escalationFlat) || 0) : (parseFloat(p.escalation) || 0)) + '%') + ')',
-      r2(pricingPeriodCost(i) + (_travPer[i] || 0) + (_matPer[i] || 0)), i === 0 ? 'Priced by the hours matrix' : 'Base year compounded by escalation'));
-    push('tot',   'TOTAL CONTRACT VALUE',                 r2(_t ? _t.total : (pricingGrandTotal() + _travTot + _matTot)), 'Sum of all periods');
+      xv(pricingPeriodCost(i) + (_travPer[i] || 0) + (_matPer[i] || 0)), i === 0 ? 'Priced by the hours matrix' : 'Base year compounded by escalation'));
+    push('tot',   'TOTAL CONTRACT VALUE',                 xv(_t ? _t.total : (pricingGrandTotal() + _travTot + _matTot)), 'Sum of all periods');
     if (_t && _t.hasStated) {
       rc.push(['']);
       push('cy',  'Contract length (years)',             _t.contractYears, 'Sum of every period\u2019s months / 12 \u2014 NOT a count of periods');
-      push('slo', (_t.totalIsProjected ? 'Projected' : 'Government-stated') + ' total \u2014 low',   r2(_t.totalLow),
+      push('slo', (_t.totalIsProjected ? 'Projected' : 'Government-stated') + ' total \u2014 low',   xv(_t.totalLow),
         (_t.totalIsProjected ? 'Base-period budget carried forward at the same rate of spend x ' : 'Annual low x ') + _t.contractYearsText + ' contract years');
-      push('shi', (_t.totalIsProjected ? 'Projected' : 'Government-stated') + ' total \u2014 high',  r2(_t.totalHigh),
+      push('shi', (_t.totalIsProjected ? 'Projected' : 'Government-stated') + ' total \u2014 high',  xv(_t.totalHigh),
         (_t.totalIsProjected ? 'Base-period budget carried forward at the same rate of spend x ' : 'Annual high x ') + _t.contractYearsText + ' contract years');
-      push('var', 'Variance vs. anchor (base period)',    r2(_t.baseYear - _t.anchor), 'Base-period price less the base-period anchor');
-      push('vpc', 'Variance vs. anchor (%)',              r2(_t.pct),       'Positive is above the anchor');
+      push('var', 'Variance vs. anchor (base period)',    xv(_t.baseYear - _t.anchor), 'Base-period price less the base-period anchor');
+      push('vpc', 'Variance vs. anchor (%)',              xv(_t.pct),       'Positive is above the anchor');
       push('vd',  'Verdict',                              (_t.status === 'inside' ? 'INSIDE the stated range' : ('OUTSIDE \u2014 ' + _t.status + ' the stated range')), 'Base-period price against the base-period low/high');
     }
     const wsRC = XLSX.utils.aoa_to_sheet(rc);
@@ -13226,7 +13489,10 @@ function pricingBuildWorkbook() {
     // Every derived cell re-computes from the rows above it, so an edit to hours, months or labor
     // flows through the whole sheet the way a cost analyst expects.
     if (_rowOf.hrs != null && _rowOf.hrsY != null && _rowOf.bmo != null) pxSetFormula(wsRC, _rowOf.hrs, 1, 'B' + (_rowOf.hrsY + 1) + '*B' + (_rowOf.bmo + 1) + '/12');
-    if (_rowOf.bl != null && _rowOf.lab != null && _rowOf.hrs != null) pxSetFormula(wsRC, _rowOf.bl, 1, 'IF(B' + (_rowOf.hrs + 1) + '=0,0,B' + (_rowOf.lab + 1) + '/B' + (_rowOf.hrs + 1) + ')');
+    // The blended rate is deliberately a STATIC cached value, not a formula. It is an
+    // input to this reconciliation (it falls out of the rate build-up on Labor + Wrap),
+    // and making it 'lab/hrs' while 'lab' is 'hrs*bl' is a circular reference: Excel
+    // warns on open and neither cell re-derives. Labor derives from it, not the reverse.
     if (_rowOf.fte != null && _rowOf.hrsY != null && _rowOf.hpf != null) pxSetFormula(wsRC, _rowOf.fte, 1, 'IF(B' + (_rowOf.hpf + 1) + '=0,0,B' + (_rowOf.hrsY + 1) + '/B' + (_rowOf.hpf + 1) + ')');
     if (_rowOf.lab != null && _rowOf.hrs != null && _rowOf.bl != null) pxSetFormula(wsRC, _rowOf.lab, 1, 'B' + (_rowOf.hrs + 1) + '*B' + (_rowOf.bl + 1) + '');
     // The stated-value chain runs in the direction the basis dictates, so the sheet re-derives either
@@ -13265,11 +13531,13 @@ function pricingBuildWorkbook() {
     const _clinRows = pricingClinScheduleRows();
     const cs = [['CLIN', 'Description', 'Period', 'Type', 'Qty', 'Unit', 'Unit Price ($)', 'Extended Price ($)']];
     _clinRows.forEach(r => {
-      if (r.grand) cs.push(['', 'TOTAL CONTRACT VALUE (base + options)', '', '', '', '', '', r2(r.total)]);
+      if (r.grand) cs.push(['', 'TOTAL CONTRACT VALUE (base + options)', '', '', '', '', '', xv(r.total)]);
       else if (r.extHeader) cs.push(['', 'Option to Extend Services (FAR 52.217-8) - evaluation only, at final option-year rates; not part of the contract value above', '', '', '', '', '', '']);
-      else if (r.grandWithExt) cs.push(['', 'Total evaluated price incl. 6-month extension', '', '', '', '', '', r2(r.total)]);
-      else if (r.subtotal) cs.push(['', r.period + ' subtotal', '', '', '', '', '', r2(r.total)]);
-      else cs.push([r.clin, r.desc, r.period, r.type, r.qty, r.unit, r2(r.unitPrice), r2(r.total)]);
+      else if (r.grandWithExt) cs.push(['', 'Total evaluated price incl. 6-month extension', '', '', '', '', '', xv(r.total)]);
+      else if (r.subtotal) cs.push(['', r.period + ' subtotal', '', '', '', '', '', xv(r.total)]);
+      // Qty x Unit Price is a LIVE formula on this row, so both operands and the
+      // result are cached at full precision; the money number format rounds for display.
+      else cs.push([r.clin, r.desc, r.period, r.type, r.qty, r.unit, xv(r.unitPrice), xv(r.total)]);
     });
     const wsCS = XLSX.utils.aoa_to_sheet(cs);
     for (let _r = 1; _r < cs.length; _r++) { if (typeof cs[_r][4] === 'number' && typeof cs[_r][6] === 'number') pxSetFormula(wsCS, _r, 7, XLSX.utils.encode_col(4) + (_r + 1) + '*' + XLSX.utils.encode_col(6) + (_r + 1)); }
@@ -13297,7 +13565,27 @@ function pricingBuildWorkbook() {
 
   // ---- TAB 1: Line-Item Detail (most granular; pivot off this) ----
   const _locOn = !!pricingModel.localityEnabled;   // #13: extra column only when the locality add-on is active
-  const det = [['Category', 'Labor Category / Item', (gsa ? 'GSA LCAT' : 'Base Rate ($/hr)'), 'Task / CLIN Code', 'Task / CLIN Name', 'Period', 'Term (mo)', 'Hours', 'FTE', (gsa ? 'Net Rate ($/hr)' : 'Fully Burdened Rate ($/hr)'), (gsa ? 'GSA Year' : 'Wrap Factor'), 'Price ($)', 'Paid Rate ($/hr)', 'Salary ($/yr)', 'Fully Burdened Rate pre-disc ($/hr)', 'Discount (%)', 'COLA (%)', 'Pinned Anchor', 'Gov Price pre-disc ($)'].concat(_locOn ? ['Employer Tax (%)'] : [])];
+  // CLIN is a real dimension of the price whenever the layer is on, so the master
+  // dataset has to carry it or it cannot be pivoted by CLIN. Appended as the LAST
+  // column, which keeps every existing column index, number format and SUMIFS
+  // reference exactly where it was.
+  const _clinDim = (() => {
+    if (!(M.clins && M.clins.enabled) || typeof pricingClinPeriods !== 'function'
+        || typeof pricingClinNumber !== 'function') return null;
+    let pds = [];
+    try { pds = pricingClinPeriods().filter(pd => !pd.isExt); } catch (e) { return null; }
+    const lines = (typeof pricingClin === 'function' ? (pricingClin().lines || []) : []);
+    const numFor = (li, i) => (li >= 0 && pds[i]) ? pricingClinNumber(li, pds[i].prefix) : '';
+    return {
+      forTask: (taskId, i) => {
+        let li = lines.findIndex(l => l.scope === 'tasks' && (l.taskIds || []).indexOf(taskId) >= 0);
+        if (li < 0) li = lines.findIndex(l => l.scope === 'labor');
+        return numFor(li, i);
+      },
+      forScope: (scope, i) => numFor(lines.findIndex(l => l.scope === scope), i)
+    };
+  })();
+  const det = [['Category', 'Labor Category / Item', (gsa ? 'GSA LCAT' : 'Base Rate ($/hr)'), 'Task / CLIN Code', 'Task / CLIN Name', 'Period', 'Term (mo)', 'Hours', 'FTE', (gsa ? 'Net Rate ($/hr)' : 'Fully Burdened Rate ($/hr)'), (gsa ? 'GSA Year' : 'Wrap Factor'), 'Price ($)', 'Paid Rate ($/hr)', 'Salary ($/yr)', 'Fully Burdened Rate pre-disc ($/hr)', 'Discount (%)', 'COLA (%)', 'Pinned Anchor', 'Gov Price pre-disc ($)'].concat(_locOn ? ['Employer Tax (%)'] : []).concat(['CLIN'])];
   const _alab = (l) => { const b = l && l.rateBasis; return b === 'paid' ? 'Company Paid Hourly Rate' : b === 'loaded' ? 'Fully Burdened Hourly Rate' : b === 'salary' ? 'Company Paid Annualized Salary' : b === 'annual' ? 'Fully Burdened Annualized Salary' : '—'; };
   const _detMeta = {}, _rowsLP = {}, _rowsTP = {};
   M.lcats.forEach((l, li) => {
@@ -13320,11 +13608,11 @@ function pricingBuildWorkbook() {
           t.name || '',
           pNames[i],
           pricingPeriodMonths(p),
-          r2(hi * frac(i)),
-          r2(hi / (defaultHpf() || 1)),     // FTE this role contributes to this task in this period
-          r2(effRate(l, i)),
+          xv(hi * frac(i)),
+          xv(hi / (pricingHpf(l) || defaultHpf() || 1)),   // FTE on THIS role's own hours basis
+          xv(effRate(l, i)),
           gsa ? pricingGsaScheduleYearForPeriod(i) : r2(pricingEffectiveWrapFactor(l)),
-          r2(hi * effRate(l, i) * frac(i)),
+          xv(hi * frac(i)) * xv(effRate(l, i)),   // identical to the H*J formula on this row
           r2(_paid),
           r2(_paid * 2080),
           r2(_lpre),
@@ -13332,7 +13620,8 @@ function pricingBuildWorkbook() {
           gsa ? '' : (i === 0 ? 0 : r2((pricingModel.escalationMode === 'flat') ? (parseFloat(pricingModel.escalationFlat) || 0) : (parseFloat(p.escalation) || 0))),
           _alab(l),
           r2(hi * _lpre * frac(i))
-        ].concat(_locOn ? [r2(pricingLocalityRate(l) * 100)] : []));
+        ].concat(_locOn ? [r2(pricingLocalityRate(l) * 100)] : [])
+         .concat([_clinDim ? _clinDim.forTask(t.id, i) : '']));
       });
     });
   });
@@ -13342,10 +13631,10 @@ function pricingBuildWorkbook() {
   const _odcCat = (M.travel && M.travel.odcCategory) || 'Travel & ODC';
   P.forEach((p, i) => {
     const amt = _odcByP[i] || 0; if (amt <= 0) return;
-    det.push([_odcCat, _odcCat, '', '(n/a)', _odcCat + ' (estimate / NTE)', pNames[i], pricingPeriodMonths(p), '', '', '', '', r2(amt), '', '', '', '', '', '', ''].concat(_locOn ? [''] : []));
+    det.push([_odcCat, _odcCat, '', '(n/a)', _odcCat + ' (estimate / NTE)', pNames[i], pricingPeriodMonths(p), '', '', '', '', xv(amt), '', '', '', '', '', '', ''].concat(_locOn ? [''] : []).concat([_clinDim ? _clinDim.forScope('travelodc', i) : '']));
   });
   const _matByP = (typeof pricingMaterialsByPeriod === 'function') ? pricingMaterialsByPeriod() : [];
-  P.forEach((p, i) => { const amt = _matByP[i] || 0; if (amt <= 0) return; det.push(['Materials', 'Materials', '', '(n/a)', 'Materials (estimate / NTE)', pNames[i], pricingPeriodMonths(p), '', '', '', '', r2(amt), '', '', '', '', '', '', ''].concat(_locOn ? [''] : [])); });
+  P.forEach((p, i) => { const amt = _matByP[i] || 0; if (amt <= 0) return; det.push(['Materials', 'Materials', '', '(n/a)', 'Materials (estimate / NTE)', pNames[i], pricingPeriodMonths(p), '', '', '', '', xv(amt), '', '', '', '', '', '', ''].concat(_locOn ? [''] : []).concat([_clinDim ? _clinDim.forScope('materials', i) : ''])); });
   const wsDet = XLSX.utils.aoa_to_sheet(det);
   const _rtColStart = _locOn ? 3 : 2;   // non-GSA rate columns on the Rate Table begin after the optional tax col
   for (let _r = 1; _r < det.length; _r++) {
@@ -13357,7 +13646,7 @@ function pricingBuildWorkbook() {
     pxSetFormula(wsDet, _r, 9, "'Fully Burdened Rate Table'!" + XLSX.utils.encode_col(_rtCol) + (_m.li + 2));
     if (!gsa) { const _rf = _ixRole[M.lcats[_m.li].id]; if (_rf) pxSetFormula(wsDet, _r, 2, _rf.base); }
   }
-  wsDet['!cols'] = [{ wch: 13 }, { wch: 26 }, { wch: 16 }, { wch: 14 }, { wch: 32 }, { wch: 16 }, { wch: 9 }, { wch: 11 }, { wch: 8 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 15 }, { wch: 13 }, { wch: 22 }, { wch: 12 }, { wch: 10 }, { wch: 16 }, { wch: 20 }].concat(_locOn ? [{ wch: 12 }] : []);
+  wsDet['!cols'] = [{ wch: 13 }, { wch: 26 }, { wch: 16 }, { wch: 14 }, { wch: 32 }, { wch: 16 }, { wch: 9 }, { wch: 11 }, { wch: 8 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 15 }, { wch: 13 }, { wch: 22 }, { wch: 12 }, { wch: 10 }, { wch: 16 }, { wch: 20 }].concat(_locOn ? [{ wch: 12 }] : []).concat([{ wch: 12 }]);
   pxStyle(wsDet, { money: gsa ? [9, 11, 12, 13, 14, 18] : [2, 9, 11, 12, 13, 14, 18], hours: [7], fte: [8] });
   XLSX.utils.book_append_sheet(wb, wsDet, 'Line-Item Detail');
   // Rollup helper: a robust, row-exact SUM of the priced Line-Item rows for a group (no name/code matching).
@@ -13389,7 +13678,7 @@ function pricingBuildWorkbook() {
     const rt = [hdrRT];
     M.lcats.forEach(l => {
       const row = [l.name || '(unnamed)', l.gsaLcat || l.name || '', (discPct || 0) / 100];
-      P.forEach((p, i) => { row.push(r2(pricingGsaRateFor(l, pricingGsaScheduleYearForPeriod(i)))); row.push(r2(effRate(l, i))); });
+      P.forEach((p, i) => { row.push(xv(pricingGsaRateFor(l, pricingGsaScheduleYearForPeriod(i)))); row.push(xv(effRate(l, i))); });
       rt.push(row);
     });
     wsRT = XLSX.utils.aoa_to_sheet(rt);
@@ -13407,7 +13696,7 @@ function pricingBuildWorkbook() {
   } else {
     const _locOnRT = !!pricingModel.localityEnabled;   // #13: show the locality component that's baked into the wrap
     const rt = [['Labor Category', 'Base Rate ($/hr)'].concat(_locOnRT ? ['Employer Tax (%)'] : []).concat(pNames.map(nm => nm + ' ($/hr)'))];
-    M.lcats.forEach(l => { rt.push([l.name || '(unnamed)', r2(parseFloat(l.baseRate) || 0)].concat(_locOnRT ? [r2(pricingLocalityRate(l) * 100)] : []).concat(P.map((p, i) => r2(effRate(l, i))))); });
+    M.lcats.forEach(l => { rt.push([l.name || '(unnamed)', xv(parseFloat(l.baseRate) || 0)].concat(_locOnRT ? [xv(pricingLocalityRate(l) * 100)] : []).concat(P.map((p, i) => xv(effRate(l, i))))); });
     wsRT = XLSX.utils.aoa_to_sheet(rt);
     wsRT['!cols'] = [{ wch: 26 }, { wch: 18 }].concat(_locOnRT ? [{ wch: 12 }] : []).concat(pNames.map(() => ({ wch: 14 })));
     const _rateColStart = _locOnRT ? 3 : 2;
@@ -13716,6 +14005,24 @@ function pricingValueTieOut() {
   const baseYear = pricingBaseYearPrice();
   const out = { baseYear: baseYear, total: pricingTotalPrice(), fte: hrs / hpf, hpf: hpf, hours: hrs,
                 blended: hrs > 0 ? (laborBase / hrs) : 0, hasStated: false, status: 'none' };
+  // Period STRUCTURE does not depend on a Government-stated value, so it is set
+  // before the early return. Consumers used to guard with `t ? t.baseMonths : ...`
+  // — a truthy object with an undefined property — and silently got NaN, which is
+  // how a no-stated-value Excel export came to show $0 labor beside a correct
+  // base-period price.
+  {
+    const _P0 = (pricingModel.periods && pricingModel.periods.length) ? pricingModel.periods : [{ months: 12 }];
+    out.periods = _P0.length;
+    out.baseMonths = pricingPeriodMonths(_P0[0]);
+    out.baseFraction = pricingPeriodFraction(_P0[0]);
+    out.contractYears = _P0.reduce((s, p) => s + pricingPeriodFraction(p), 0);
+    out.contractYearsText = String(Math.round(out.contractYears * 100) / 100);
+    out.laborFullYear = Math.round(laborBase);
+    out.laborBilled = Math.round(laborBase * out.baseFraction);
+    out.nonLabor = Math.round(baseYear - (laborBase * out.baseFraction));
+    out.hoursFullYear = hrs;
+    out.hoursBase = hrs * out.baseFraction;
+  }
   if (!r || !r.stated || !(r.stated.low > 0)) return out;
   out.hasStated = true;
   // ── PERIOD LENGTH (#5, v145) ────────────────────────────────────────────────────────────────
