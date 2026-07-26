@@ -3153,7 +3153,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '157';
+const APP_VERSION = '160';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -8974,6 +8974,8 @@ async function runGeneration() {
       `"period_structure":"the base + option period breakdown, e.g. '1 base year + 4 option years'; '' if unstated",` +
       `"page_limits":{"vol0":"pages or 'not specified'","vol1":"pages or 'not specified'","vol2":"pages or 'not specified'","vol3":"pages or 'not specified'","vol4":"pages or 'not specified'","notes":"any other format instructions"},` +
       `"section_l_instructions":["exact structural/format requirements from Section L: required headings, font, margins, file format, etc."],` +
+      // WAVE E precedence rule, stated before the fields it governs.
+      `"_amendment_precedence_rule":"If the bundle contains amendments, EVERY field above and below reflects the AMENDED value, not the original. Where an amendment changed a date, a page limit, a requirement or an evaluation factor, use the amendment's value and record the change in the amendments array. Never blend the two.",` +
       // WAVE A: the volume layout the solicitation actually demands. The tool's own
       // default is Exec Summary + Technical + Past Performance + Price + Contract Docs;
       // when a solicitation prescribes anything else, that mismatch is disqualifying and
@@ -9003,6 +9005,15 @@ async function runGeneration() {
         `"copies":"the number of copies required if the submission is physical or multi-copy, as stated; '' if not applicable",` +
         `"questions_due":"the date written questions / Q&A are due, as YYYY-MM-DD, with local time and time zone if stated. This is a DIFFERENT date from submission_date and is usually EARLIER — never copy one into the other. If the solicitation states only a proposal due date and no separate question deadline, return '' here rather than repeating submission_date",` +
         `"notes":"anything else that governs a VALID submission — required subject-line format, confirmation-of-receipt requirements, the stated late-offer policy"},` +
+      // WAVE E: a bundle routinely contains the original solicitation AND its
+      // amendments, which contradict it. Identify them, and carry the LATEST value
+      // into every other field rather than whichever document was read last.
+      `"amendments":[{"number":"the amendment identifier exactly as written \u2014 e.g. 'Amendment 0001', 'Mod P00002', 'SF 30 dated 2026-08-12'",` +
+        `"date":"the amendment's effective or issue date as YYYY-MM-DD; '' if not stated",` +
+        `"changed":"what this amendment actually CHANGED, in one sentence per change \u2014 dates moved, page limits altered, requirements added or struck, Q&A answers incorporated",` +
+        `"supersedes":"the specific original text, date or figure this replaces, quoted or identified precisely enough to find it; '' if the amendment only adds",` +
+        `"applied":"'yes' ONLY if you used this amendment's values in every other field of this JSON, 'no' if you could not, '' if unsure. Answer honestly \u2014 a wrong 'yes' means nobody re-checks a date that moved"}],` +
+      `"amendment_notes":"anything about the amendment set as a whole \u2014 an amendment referenced but NOT present in the uploaded bundle (say so explicitly and name it), amendments that conflict with each other, or an acknowledgment requirement. '' if nothing to note",` +
       `"evaluation_factors":[{"factor":"Technical Approach","weight":"40%","subfactors":["..."]}],` +
       `"highest_weight_factor":"name of highest-weighted eval factor",` +
       `"pws_task_areas":["task: description"],` +
@@ -9021,6 +9032,10 @@ async function runGeneration() {
     let briefing = await callClaudeForJson(apiKey, docContent, 4000, 300000, 'Document reading');
 
     cachedBriefing = briefing;
+    // Pin it: the PRICING briefing also writes cachedBriefing and carries neither
+    // page_limits nor the Wave A submission fields, so a later "Pull RFP Analysis"
+    // would otherwise empty the compliance table and the checklist.
+    window._lastProposalBriefing = briefing;
     allSteps[0].status = 'done'; allSteps[1].status = 'done'; allSteps[2].status = 'active';
     setProgress(30, allSteps);
     // Recalibrate ETA now that briefing is done — remaining = volumes only
@@ -9541,7 +9556,9 @@ async function generateDocsClientSide(proposalData, volumes) {
 
         const buffer = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
         const blob   = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-        docs[vol]    = { label, filename: `${prefix}_Volume_${vol}_${volTitles[vol]}.docx`, url: URL.createObjectURL(blob) };
+        // Keep the BLOB, not just its object URL: the Wave C page measurement needs
+        // the bytes to convert through Graph, and re-fetching the URL is wasteful.
+        docs[vol]    = { label, filename: `${prefix}_Volume_${vol}_${volTitles[vol]}.docx`, url: URL.createObjectURL(blob), blob: blob };
 
       } catch(e) {
         console.error(`Template error for ${label}:`, e);
@@ -10373,9 +10390,283 @@ function _estimateVolumePages(vol, volData) {
   return Math.max(1, Math.round(pages));
 }
 
+// ── WAVE C: real page counts ────────────────────────────────────────────────
+// Measured counts per volume: { pages, source, at } on success, { pages:0, error }
+// on any failure. Module state, deliberately NOT persisted — it describes the
+// documents generated in THIS session and would be a lie about any other.
+let _measuredPages = {};
+
+// The single source of truth for "how many pages is this volume". Returns an
+// object, never a bare number, because the caller must be able to say WHERE the
+// figure came from.
+function volumePageCount(vol, volData) {
+  const key = String(vol);
+  const rec = _measuredPages && _measuredPages[key];
+  if (rec && isFinite(rec.pages) && rec.pages > 0) {
+    return { pages: rec.pages, measured: true, source: 'word',
+             note: 'Counted from the generated .docx, paginated by Word' };
+  }
+  const est = _estimateVolumePages(vol, volData);
+  if (est == null) return null;
+  const why = (rec && rec.error) ? String(rec.error) : '';
+  return { pages: est, measured: false, source: 'estimate',
+           note: why ? 'Estimated from word count — could not measure: ' + why
+                     : 'Estimated from word count' };
+}
+
+// Convert the volume's .docx through Graph (Word's own layout) and count the PDF
+// pages. Every failure is recorded with its reason rather than thrown, so the
+// compliance table can explain why it fell back to an estimate.
+async function measureVolumePages(vol, docxFile, token) {
+  const key = String(vol);
+  if (!docxFile) { _measuredPages[key] = { pages: 0, error: 'no document to measure' }; return null; }
+  if (!token) { _measuredPages[key] = { pages: 0, error: 'not signed in to Microsoft 365' }; return null; }
+  // convertViaGraphDirect needs a .name for its temp path; a bare Blob has none.
+  const named = docxFile.name ? docxFile : {
+    name: 'volume' + key + '.docx',
+    arrayBuffer: function () { return docxFile.arrayBuffer(); }
+  };
+  try {
+    // convertViaGraph's own branch: the direct upload only works in permissive
+    // tenants, so use the conversion proxy whenever one is configured.
+    const _proxyUrl = ((typeof CLIENT_CONFIG !== 'undefined' && CLIENT_CONFIG.conversionProxyUrl) || '').trim();
+    const pdfBlob = _proxyUrl
+      ? await convertViaProxy(named, token, _proxyUrl)
+      : await convertViaGraphDirect(named, token);
+    if (!pdfBlob) throw new Error('conversion returned nothing');
+    const n = await checkPdfPageCount(pdfBlob);
+    if (!n || !isFinite(n) || n <= 0) throw new Error('page count came back zero');
+    _measuredPages[key] = { pages: n, source: 'word', at: Date.now() };
+    return n;
+  } catch (e) {
+    _measuredPages[key] = { pages: 0, error: (e && e.message) ? e.message : 'conversion failed' };
+    return null;
+  }
+}
+
+// Measure every generated volume. Failures are per-volume and never abort the rest.
+async function measureAllVolumePages(files, token) {
+  const list = Array.isArray(files) ? files.filter(f => f && f.vol != null) : [];
+  for (let i = 0; i < list.length; i++) {
+    await measureVolumePages(list[i].vol, list[i].file, token);
+  }
+  return _measuredPages;
+}
+
+// ── WAVE D: re-render the compliance table once real counts arrive ──────────
+function refreshPageCompliance() {
+  const wrap = document.getElementById('pageComplianceWrap');
+  if (!wrap) return false;
+  const html = renderPageComplianceTable();
+  if (!html) return false;
+  wrap.innerHTML = html;
+  return true;
+}
+
+// Measure every generated volume with Word's own pagination, then refresh the
+// table. Fire-and-forget from renderDownloads: the estimate is already on screen,
+// so this only ever REPLACES a guess with a fact. Never throws — a failure just
+// leaves the estimate in place with its reason attached.
+async function measureAndRefreshPages(docs) {
+  try {
+    if (!docs || typeof docs !== 'object') return false;
+    const list = Object.keys(docs)
+      .filter(v => docs[v] && docs[v].blob)
+      .map(v => ({ vol: v, file: new File([docs[v].blob], docs[v].filename || ('volume' + v + '.docx'),
+                    { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }) }));
+    if (!list.length) return false;
+    if (typeof msalClient === 'undefined' || !msalClient || !msAccount) {
+      list.forEach(x => { _measuredPages[String(x.vol)] = { pages: 0, error: 'not signed in to Microsoft 365' }; });
+      refreshPageCompliance();
+      return false;
+    }
+    const token = await getSpAccessToken();
+    await measureAllVolumePages(list, token);
+    refreshPageCompliance();
+    return true;
+  } catch (e) {
+    try { log('Page measurement unavailable: ' + ((e && e.message) || e), 'warn'); } catch (e2) {}
+    refreshPageCompliance();
+    return false;
+  }
+}
+
+// ── WAVE D: what the tool CANNOT do for you ─────────────────────────────────
+// Wave A extracts the forms, reps-and-certs handling, returnable attachments and
+// submission mechanics. None of it was consumed. A federal offer missing a signed
+// SF 33 or an in-document Section K is non-responsive — thrown out unread — and
+// under the "never read the solicitation" goal the user would never learn that.
+// So the checklist is deliberately explicit about which items are BLOCKING and
+// which are simply things to know.
+function buildMandatoryItems(briefing) {
+  const b = briefing || {};
+  const items = [];
+  const add = (kind, label, detail, blocking, source) => {
+    if (!String(label || '').trim()) return;
+    items.push({ kind: kind, label: String(label).trim(), detail: String(detail || '').trim(),
+                 blocking: !!blocking, source: source });
+  };
+
+  // Forms. mandatory is 'yes' unless the solicitation clearly says otherwise —
+  // the Wave A spec tells the model to answer 'yes' when unsure, so treat an
+  // empty answer as blocking too.
+  (Array.isArray(b.required_forms) ? b.required_forms : []).forEach(f => {
+    if (!f || typeof f !== 'object') return;
+    const mand = String(f.mandatory || '').trim().toLowerCase();
+    const where = String(f.where || '').trim();
+    add('form', f.form, [String(f.what || '').trim(), where ? '(' + where + ')' : ''].filter(Boolean).join(' '),
+        mand !== 'no', 'required_forms');
+  });
+
+  // Reps and certs. The SAM-vs-in-document distinction decides responsiveness.
+  const rc = String(b.reps_and_certs || '').trim().toLowerCase();
+  if (rc === 'in_document' || rc === 'both') {
+    add('repscerts', 'Representations and certifications must be COMPLETED AND RETURNED with the offer',
+        rc === 'both'
+          ? 'The solicitation requires both a SAM.gov registration and in-document reps and certs. An offer missing the in-document copy is non-responsive.'
+          : 'Section K or a full-text FAR 52.212-3 must be filled in and submitted. An offer missing it is non-responsive.',
+        true, 'reps_and_certs');
+  } else if (rc === 'sam') {
+    add('repscerts', 'Representations and certifications are handled in SAM.gov',
+        'Incorporated by reference — nothing to attach, but the registration must be current and the NAICS must be listed on it.',
+        false, 'reps_and_certs');
+  }
+
+  // Attachments that must be completed and returned (not the reference-only ones).
+  (Array.isArray(b.attachments_required) ? b.attachments_required : []).forEach(a => {
+    if (!a || typeof a !== 'object') return;
+    if (String(a.must_return || '').trim().toLowerCase() !== 'yes') return;
+    add('attachment', a.name, a.notes, true, 'attachments_required');
+  });
+
+  // Submission mechanics — not blocking, but getting any of these wrong can be.
+  const sm = (b.submission_mechanics && typeof b.submission_mechanics === 'object') ? b.submission_mechanics : {};
+  const mech = [
+    ['method', 'Submission method'], ['portal_or_address', 'Submit to'],
+    ['file_format', 'Required file format'], ['file_naming', 'File naming convention'],
+    ['size_limit', 'Size limit'], ['copies', 'Copies required']
+  ];
+  mech.forEach(pair => {
+    const v = String(sm[pair[0]] || '').trim();
+    if (v) add('mechanics', pair[1], v, false, 'submission_mechanics');
+  });
+  const qd = String(sm.questions_due || '').trim();
+  if (qd) add('deadline', 'Written questions due', qd + ' \u2014 earlier than the proposal deadline; missing it forfeits the chance to ask.', false, 'submission_mechanics');
+  const sd = String(b.submission_date || '').trim();
+  if (sd) add('deadline', 'Proposal due', sd, false, 'briefing');
+
+  // A volume-structure mismatch belongs here too — it is a submission-shape risk.
+  const mm = (typeof volumeStructureMismatch === 'function') ? volumeStructureMismatch(b) : null;
+  if (mm && mm.differs) {
+    add('structure', 'Required volume structure differs from the assembled layout',
+        'The solicitation requires ' + mm.count + ' volume(s). Check the generated files map onto them before submitting.',
+        true, 'volume_structure');
+  }
+
+  const blocking = items.filter(i => i.blocking).length;
+  return { items: items, blocking: blocking, total: items.length,
+           anyExtracted: items.length > 0 };
+}
+
+function renderMandatoryItems(briefing) {
+  const cl = buildMandatoryItems(briefing);
+  if (!cl.total) return '';
+  const ICON = { form: '\uD83D\uDCDD', repscerts: '\u2696\uFE0F', attachment: '\uD83D\uDCCE',
+                 mechanics: '\uD83D\uDCE4', deadline: '\u23F0', structure: '\uD83D\uDCDA' };
+  const row = i =>
+    '<li style="padding:7px 10px;border-bottom:1px solid #f1f5f9;display:flex;gap:9px;align-items:flex-start;' +
+      (i.blocking ? 'background:#fffbeb' : '') + '">' +
+    '<span style="flex:none">' + (ICON[i.kind] || '\u2022') + '</span>' +
+    '<span style="min-width:0"><span style="font-weight:600">' + escHtml(i.label) + '</span>' +
+    (i.blocking ? '<span style="margin-left:6px;font-size:10px;font-weight:700;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 4px">MUST SUBMIT</span>' : '') +
+    (i.detail ? '<div style="font-size:12px;color:var(--muted);margin-top:2px">' + escHtml(i.detail) + '</div>' : '') +
+    '</span></li>';
+  return '<div style="margin-top:18px">' +
+    '<div style="font-weight:700;color:var(--blue);font-size:14px;margin-bottom:4px">\uD83D\uDCCB Before you submit' +
+    (cl.blocking ? ' \u2014 ' + cl.blocking + ' item(s) this tool cannot produce for you' : '') + '</div>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 10px">' +
+    (cl.blocking
+      ? 'Items marked MUST SUBMIT are required for a responsive offer and are NOT in the generated files \u2014 signature pages, certifications and completed attachments have to be handled by a person. Everything else is here so you do not have to go back to the solicitation for it.'
+      : 'No mandatory forms or returnable attachments were found in the solicitation. The details below are the submission mechanics, so you do not have to go back to the solicitation for them.') +
+    '</p><ul style="list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">' +
+    cl.items.map(row).join('') + '</ul></div>';
+}
+
+// ── The briefing the PROPOSAL was written from ───────────────────────────────
+// `cachedBriefing` is assigned by TWO different prompts — the proposal briefing in
+// runGeneration() and the pricing briefing in ensureBriefing(). Only the former
+// carries page_limits and the Wave A submission fields. Pinning a copy at
+// generation time means a later "Pull RFP Analysis" on the Pricing tab cannot
+// silently empty the compliance table or the mandatory-items checklist.
+function proposalBriefing() {
+  if (typeof window !== 'undefined' && window._lastProposalBriefing) return window._lastProposalBriefing;
+  return (typeof cachedBriefing !== 'undefined' && cachedBriefing) ? cachedBriefing : null;
+}
+
+// ── WAVE E: amendment reconciliation ────────────────────────────────────────
+// Returns null when the bundle contains no amendments. Otherwise reports what the
+// model says each amendment changed, and — crucially — which extracted fields it
+// applied a superseded value to. Amendments are the single most common way a
+// bundle silently contradicts itself: a due date moves, a page limit changes, a
+// requirement is struck, and the original document still says the old thing.
+function buildAmendmentReconciliation(briefing) {
+  const b = briefing || {};
+  const raw = Array.isArray(b.amendments) ? b.amendments : [];
+  const list = raw
+    .map(a => (a && typeof a === 'object') ? a : { number: String(a == null ? '' : a) })
+    .filter(a => String(a.number || '').trim() || String(a.changed || '').trim());
+  if (!list.length) return null;
+
+  const items = list.map(a => ({
+    number: String(a.number || '').trim() || '(unnumbered)',
+    date: String(a.date || '').trim(),
+    changed: String(a.changed || '').trim(),
+    supersedes: String(a.supersedes || '').trim(),
+    applied: String(a.applied || '').trim().toLowerCase()
+  }));
+
+  // 'applied' is the model's own statement that it carried the amended value
+  // through. Anything that is not an explicit 'yes' is treated as unconfirmed —
+  // the same err-toward-caution rule the Wave A specs use.
+  const unconfirmed = items.filter(i => i.applied !== 'yes');
+  return {
+    items: items,
+    count: items.length,
+    unconfirmed: unconfirmed.length,
+    allApplied: unconfirmed.length === 0,
+    note: String(b.amendment_notes || '').trim()
+  };
+}
+
+function renderAmendmentNotice(briefing) {
+  const rec = buildAmendmentReconciliation(briefing);
+  if (!rec) return '';
+  const row = i =>
+    '<li style="padding:7px 10px;border-bottom:1px solid #f1f5f9">' +
+    '<span style="font-weight:600">' + escHtml(i.number) + '</span>' +
+    (i.date ? '<span style="color:var(--muted);font-size:12px"> \u00b7 ' + escHtml(i.date) + '</span>' : '') +
+    (i.applied !== 'yes'
+      ? '<span style="margin-left:6px;font-size:10px;font-weight:700;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 4px">VERIFY</span>'
+      : '') +
+    (i.changed ? '<div style="font-size:12px;color:var(--muted);margin-top:2px">' + escHtml(i.changed) + '</div>' : '') +
+    (i.supersedes ? '<div style="font-size:12px;color:#92400e;margin-top:2px">Supersedes: ' + escHtml(i.supersedes) + '</div>' : '') +
+    '</li>';
+  return '<div style="margin-top:18px">' +
+    '<div style="font-weight:700;color:var(--blue);font-size:14px;margin-bottom:4px">\uD83D\uDD01 Amendments in this bundle (' + rec.count + ')</div>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 10px">' +
+    (rec.allApplied
+      ? 'The amended values were carried into the extraction above. The original documents still contain the superseded text \u2014 if you cross-check anything against them, use the amendment.'
+      : rec.unconfirmed + ' of ' + rec.count + ' could not be confirmed as applied. Check every date, page limit and requirement against the amendment before submitting \u2014 the original documents still say the old thing.') +
+    '</p><ul style="list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">' +
+    rec.items.map(row).join('') + '</ul>' +
+    (rec.note ? '<p style="font-size:12px;color:var(--muted);margin:8px 0 0">' + escHtml(rec.note) + '</p>' : '') +
+    '</div>';
+}
+
 function renderPageComplianceTable() {
   const proposalData = window._lastProposalData;
-  const limits = (typeof cachedBriefing !== 'undefined' && cachedBriefing && cachedBriefing.page_limits) || {};
+  const _pb = (typeof proposalBriefing === 'function') ? proposalBriefing() : null;
+  const limits = (_pb && _pb.page_limits) || {};
   if (!proposalData) return '';
 
   const volNames = {
@@ -10387,11 +10678,15 @@ function renderPageComplianceTable() {
   };
 
   const rows = [];
-  let anyLimit = false;
+  let anyLimit = false, anyMeasured = false, anyEstimated = false;
   Object.keys(volNames).forEach(vol => {
     const volData = proposalData[`volume${vol}`];
     if (!volData) return; // only volumes that were generated
-    const est = _estimateVolumePages(vol, volData);
+    // WAVE C: prefer Word's own pagination; fall back to the estimate, labelled.
+    const pc = volumePageCount(vol, volData);
+    if (!pc) return;
+    const est = pc.pages;
+    if (pc.measured) anyMeasured = true; else anyEstimated = true;
     const lim = _parsePageLimit(limits[`vol${vol}`] || limits[vol]);
     if (!lim.unlimited) anyLimit = true;
 
@@ -10399,16 +10694,25 @@ function renderPageComplianceTable() {
     if (lim.unlimited) {
       status = 'No limit stated'; color = 'var(--muted)'; bg = 'transparent';
     } else if (est <= lim.max) {
-      status = `✓ Within ${lim.max}-page limit`; color = '#166534'; bg = '#f0fdf4';
+      // A measured pass is a fact; an estimated pass still needs confirming.
+      status = pc.measured
+        ? `\u2713 Within ${lim.max}-page limit (measured)`
+        : `\u2713 Within ${lim.max}-page limit (estimated \u2014 confirm in Word)`;
+      color = '#166534'; bg = '#f0fdf4';
     } else {
-      status = `⚠ ~${est - lim.max} over — trim before submission`; color = '#92400e'; bg = '#fffbeb';
+      status = pc.measured
+        ? `\u26a0 ${est - lim.max} page(s) OVER the ${lim.max}-page limit \u2014 must be trimmed`
+        : `\u26a0 ~${est - lim.max} over the ${lim.max}-page limit \u2014 trim, then measure`;
+      color = '#92400e'; bg = '#fffbeb';
     }
     const limText = lim.unlimited ? '—' : (lim.min && lim.min !== lim.max ? `${lim.min}–${lim.max}` : String(lim.max));
     rows.push(
       `<tr style="background:${bg}">` +
       `<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:600">${volNames[vol]}</td>` +
       `<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:center">${limText}</td>` +
-      `<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:center">~${est}</td>` +
+      `<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:center" title="${escHtml(pc.note)}">` +
+        (pc.measured ? `<strong>${est}</strong>` : `~${est}`) +
+        `<div style="font-size:10px;color:var(--muted);font-weight:400">${pc.measured ? 'measured' : 'estimate'}</div></td>` +
       `<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;color:${color};font-size:12px">${status}</td>` +
       `</tr>`
     );
@@ -10417,16 +10721,21 @@ function renderPageComplianceTable() {
 
   return (
     `<div style="margin-top:18px">` +
-    `<div style="font-weight:700;color:var(--blue);font-size:14px;margin-bottom:4px">📏 Page-Count Compliance (estimate)</div>` +
+    `<div style="font-weight:700;color:var(--blue);font-size:14px;margin-bottom:4px">\uD83D\uDCCF Page-Count Compliance` +
+    (anyMeasured && !anyEstimated ? ` (measured)` : anyMeasured ? ` (mixed)` : ` (estimate)`) + `</div>` +
     `<p style="font-size:12px;color:var(--muted);margin:0 0 10px">` +
-    `Estimated from the generated text. Open each volume in Word (after the Table of Contents updates) to confirm exact pagination before submission.` +
+    (anyMeasured && !anyEstimated
+      ? `Every figure below is Word's own page count, taken from the generated .docx converted to PDF. These are the real numbers.`
+      : anyMeasured
+        ? `Bold figures are Word's own page count from the generated .docx. Figures marked "estimate" could not be measured \u2014 hover for the reason \u2014 and are a word-count approximation; open those volumes in Word to confirm before submission.`
+        : `Every figure below is a word-count approximation, not a real page count \u2014 hover for the reason none could be measured. Open each volume in Word (after the Table of Contents updates) to confirm exact pagination before submission.`) +
     (anyLimit ? '' : ' No explicit page limits were found in this solicitation — figures are shown for reference.') +
     `</p>` +
     `<table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid var(--border);border-radius:8px;overflow:hidden">` +
     `<thead><tr style="background:var(--pale)">` +
     `<th style="padding:8px 10px;text-align:left;font-size:12px;color:var(--blue)">Volume</th>` +
     `<th style="padding:8px 10px;text-align:center;font-size:12px;color:var(--blue)">RFP Limit (pp)</th>` +
-    `<th style="padding:8px 10px;text-align:center;font-size:12px;color:var(--blue)">Est. Written (pp)</th>` +
+    `<th style="padding:8px 10px;text-align:center;font-size:12px;color:var(--blue)">Written (pp)</th>` +
     `<th style="padding:8px 10px;text-align:left;font-size:12px;color:var(--blue)">Status</th>` +
     `</tr></thead><tbody>${rows.join('')}</tbody></table></div>`
   );
@@ -10483,7 +10792,9 @@ function renderDownloads(docs) {
     list.appendChild(item);
   });
 
-  // Page-count compliance table (estimate) — appended below the file list
+  // Page-count compliance table — appended below the file list. It renders with
+  // ESTIMATES first so the panel is never blank, then measureAndRefreshPages
+  // replaces them with Word's own counts as soon as the conversions land.
   const existingTable = document.getElementById('pageComplianceWrap');
   if (existingTable) existingTable.remove();
   const tableHtml = renderPageComplianceTable();
@@ -10493,6 +10804,33 @@ function renderDownloads(docs) {
     wrap.innerHTML = tableHtml;
     list.appendChild(wrap);
   }
+
+  // WAVE D: the mandatory-items checklist — the things a person still has to do.
+  const existingChecklist = document.getElementById('submissionChecklistWrap');
+  if (existingChecklist) existingChecklist.remove();
+  const _pbrief = (typeof proposalBriefing === 'function') ? proposalBriefing() : null;
+  const clHtml = (typeof renderMandatoryItems === 'function') ? renderMandatoryItems(_pbrief) : '';
+  if (clHtml) {
+    const clWrap = document.createElement('div');
+    clWrap.id = 'submissionChecklistWrap';
+    clWrap.innerHTML = clHtml;
+    list.appendChild(clWrap);
+  }
+
+  // WAVE E: amendments in the bundle, and whether their values were carried through.
+  const existingAmd = document.getElementById('amendmentNoticeWrap');
+  if (existingAmd) existingAmd.remove();
+  const amdHtml = (typeof renderAmendmentNotice === 'function') ? renderAmendmentNotice(_pbrief) : '';
+  if (amdHtml) {
+    const amdWrap = document.createElement('div');
+    amdWrap.id = 'amendmentNoticeWrap';
+    amdWrap.innerHTML = amdHtml;
+    list.appendChild(amdWrap);
+  }
+
+  // Fire-and-forget: the estimate is already on screen, so this only ever
+  // replaces a guess with a fact.
+  if (tableHtml) { try { measureAndRefreshPages(docs); } catch (e) {} }
 
   card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
