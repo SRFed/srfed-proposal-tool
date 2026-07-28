@@ -456,6 +456,10 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .spinner { width: 18px; height: 18px; border: 2.5px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; }
   .spinner-dark { width: 18px; height: 18px; border: 2.5px solid rgba(0,95,213,0.2); border-top-color: var(--blue); border-radius: 50%; animation: spin 0.7s linear infinite; }
+    /* Draws the ring in currentColor, so it is visible wherever the label is. The
+       plain .spinner is white and disappears on a light button — which is exactly
+       what made "Searching..." look inert on the Market Rates rows. */
+    .spinner-auto { width: 18px; height: 18px; border: 2.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; vertical-align: middle; }
   /* Indeterminate progress bar for in-progress async actions (e.g. partner search) */
   @keyframes indetSweep { 0% { left: -45%; } 100% { left: 100%; } }
   .indet-bar { position: relative; height: 8px; background: #cfe2ff; border-radius: 4px; overflow: hidden; }
@@ -1485,10 +1489,10 @@
         Drop your generated Word documents here, then click <strong>Run Compliance Check</strong> to verify that every "shall," "must," and "should" requirement from your RFP has been addressed in your proposal volumes.
       </p>
       <div class="drop-zone" id="dropZoneCompliance" style="margin-bottom:16px;min-height:100px">
-        <input type="file" id="fileInputCompliance" multiple accept=".docx,.doc,.pdf,.txt"/>
+        <input type="file" id="fileInputCompliance" multiple accept=".docx,.doc,.pdf,.txt,.xlsx,.xls,.csv"/>
         <div class="dz-icon">📄</div>
         <div class="dz-title">Drop Generated Proposal Documents Here</div>
-        <div class="dz-sub">Word or PDF</div>
+        <div class="dz-sub">Word, PDF, Excel or text \u2014 every sheet of a workbook is read</div>
       </div>
       <div class="file-list" id="fileListCompliance" style="margin-bottom:12px"></div>
       <button class="btn btn-primary" id="complianceRunBtn" onclick="runComplianceCheck()"
@@ -3153,7 +3157,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '160';
+const APP_VERSION = '169';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -6393,7 +6397,21 @@ async function fileToContentBlockLocal(file) {
       });
       out = out.trim();
       if (out.length > 20) {
-        return { type: 'text', text: `[File: ${file.name}]\n${out.substring(0, 60000)}` };
+        // The 60k cap is necessary, but truncating in SILENCE is not. A requirements
+        // matrix cut off mid-way yields a compliance check that reads as complete and
+        // has simply not seen the rest. Say so, in the payload the model reads.
+        const _CAP = 60000;
+        if (out.length > _CAP) {
+          const kept = out.substring(0, _CAP);
+          const dropped = out.length - _CAP;
+          return { type: 'text', text: `[File: ${file.name}]\n${kept}` +
+            `\n\n[!! TRUNCATED: this spreadsheet produced ${out.length.toLocaleString()} characters and only the first ` +
+            `${_CAP.toLocaleString()} are shown \u2014 ${dropped.toLocaleString()} characters (roughly ` +
+            `${Math.round(dropped / Math.max(1, out.length) * 100)}% of the workbook) were NOT read. ` +
+            `Any conclusion drawn from this file is incomplete: say so explicitly rather than reporting on it as if whole. ` +
+            `Split the workbook or remove unused sheets and re-run.]` };
+        }
+        return { type: 'text', text: `[File: ${file.name}]\n${out}` };
       }
       // Empty workbook
       return { type: 'text', text: `[File: ${file.name} — spreadsheet opened but contained no data cells.]`, _unreadable: true, _fileName: file.name };
@@ -6727,7 +6745,7 @@ async function ensureBriefing(apiKey) {
     `"option_period_months":"length of EACH option period in WHOLE months as a number (12 for option years); 0 if none/unknown",` +
     `"sca_coverage":"'yes' if the contract is covered by the Service Contract Act / SCLS - treat the PRESENCE of a Wage Determination (a WD document, SF-98/98a, a WD number, DOL wage tables) or FAR 52.222-41 as DECISIVE, answer 'yes'; 'no' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption), not merely because it sounds professional; '' if not addressed","travel_required":"'yes' if the solicitation includes a travel CLIN or requires reimbursable travel/trips, 'no' if it states no travel is required, else ''","travel_nte":"the travel not-to-exceed dollar ceiling if one is stated (e.g. '$50,000'), else ''",` +
     `"wd_number":"if the solicitation states or references a DOL Wage Determination NUMBER, copy it exactly (e.g. '2015-4281'); '' if not stated","wd_revision":"the Wage Determination REVISION number if stated (e.g. '23'); '' if not stated","place_of_performance":"the primary place of performance (county and state, city/state, or installation) if stated; '' if not stated",` +
-    `"pop_start_date":"period-of-performance START date as YYYY-MM-DD if the solicitation states or implies one; '' if not stated",` +
+    `"pop_start_date":"period-of-performance START date as YYYY-MM-DD if the solicitation states or implies one; '' if not stated. If only a month and year are stated ('performance begins February 2027') return YYYY-MM, and if only a year, return YYYY - do NOT invent a day to fill the format, a fabricated date that looks precise is worse than a partial one",` +
     `"estimated_ftes":"the FTE / level-of-effort the solicitation REQUIRES. PRIORITY: (1) if the solicitation states an explicit FTE / level-of-effort figure, copy it EXACTLY including any decimal or fraction (e.g. 2.5, 0.5, 3.25); do NOT round. (2) ELSE if the solicitation gives an estimated-hours / workload / level-of-effort table by labor category, compute the FTEs as (sum of the BASE-YEAR hours column ONLY) divided by 1912, to two decimals; NEVER add the base-year and option-year columns together - option periods are SEPARATE performance periods, not additional concurrent staff. (3) ELSE '' or 'not specified'","workload_hours_base_year":"if the solicitation gives an estimated-hours / workload / level-of-effort table by labor category, the SUM of the BASE-YEAR hours column ONLY as an integer (e.g. 14685); sum ONLY the base-year column and do NOT add any option-year column; '' if no such table is given","workload_by_lcat":[{"lcat":"one row PER labor category from the estimated-hours / workload / level-of-effort table (base-year column ONLY); empty array if no such table is given","base_year_hours":0}],` +
     `"estimated_value":"",` +
     `"pricing_methodology":"exactly one of 'lcat','pws_task','product','simple' — how pricing must be STRUCTURED per Section L/B; '' if unstated",` +
@@ -8968,7 +8986,7 @@ async function runGeneration() {
       companyCtx + `\n\n` +
       `Read ALL documents above thoroughly — including the PWS, RFP, Section L (Instructions to Offerors), Section M (Evaluation Criteria), and all attachments.\n\n` +
       `Extract and return a comprehensive JSON briefing:\n` +
-      `{"solicitation_number":"","requirement_title":"","agency_name":"","agency_address":"","agency_poc":"","agency_poc_email":"","agency_poc_phone":"","submission_date":"the EXACT date (include the local time and time zone if stated) that offers/proposals are DUE to the Government. Copy the digits exactly as written; do NOT infer, shift, or round. Give the date part as YYYY-MM-DD. This is the proposal/offer due or closing date (e.g. SF-1449 Block 8, SF-33 Block 9, or the Section L due-no-later-than date) - NOT the questions/Q&A deadline, NOT the period-of-performance start, NOT the solicitation issue date. If several dates appear, choose only the one explicitly labeled as the offer/proposal due or closing date; empty string if genuinely not stated","contract_type":"","period_of_performance":"","naics":"","set_aside":"","place_of_performance":"","estimated_ftes":"the FTE / level-of-effort the solicitation REQUIRES if stated — copy the EXACT figure including any decimal or fraction (e.g. 2.5, 0.5); do NOT round. If instead a workload / level-of-effort hours table by labor category is given, derive the FTEs from the BASE-YEAR hours column ONLY divided by 1912 (never add base + option columns). '' or 'not specified' if none","estimated_value":"","base_period_months":"the BASE period length in WHOLE MONTHS as a number. Compute it: if a date range is given (e.g. base period 01 Oct 2025 to 30 Jun 2026) count the months (=9); if a month count is stated use it; if a full base year with no other length is indicated use 12; use 0 only if you truly cannot tell","option_period_count":"number of option periods/years as a number; 0 if none","option_period_months":"length of EACH option period in WHOLE months as a number (12 for option years); 0 if none/unknown","pop_start_date":"period-of-performance START date as YYYY-MM-DD if the solicitation states or implies one; '' if not stated","sca_coverage":"'yes' if the contract is covered by the Service Contract Act / SCLS - treat the PRESENCE of a Wage Determination (a WD document, SF-98/98a, a WD number, DOL wage tables) or FAR 52.222-41 as DECISIVE, answer 'yes'; 'no' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption), not merely because it sounds professional; '' if not addressed","travel_required":"'yes' if the solicitation includes a travel CLIN or requires reimbursable travel/trips, 'no' if it states no travel is required, else ''","travel_nte":"the travel not-to-exceed dollar ceiling if one is stated (e.g. '$50,000'), else ''",` +
+      `{"solicitation_number":"","requirement_title":"","agency_name":"","agency_address":"","agency_poc":"","agency_poc_email":"","agency_poc_phone":"","submission_date":"the EXACT date (include the local time and time zone if stated) that offers/proposals are DUE to the Government. Copy the digits exactly as written; do NOT infer, shift, or round. Give the date part as YYYY-MM-DD. This is the proposal/offer due or closing date (e.g. SF-1449 Block 8, SF-33 Block 9, or the Section L due-no-later-than date) - NOT the questions/Q&A deadline, NOT the period-of-performance start, NOT the solicitation issue date. If several dates appear, choose only the one explicitly labeled as the offer/proposal due or closing date; empty string if genuinely not stated","contract_type":"","period_of_performance":"","naics":"","set_aside":"","place_of_performance":"","estimated_ftes":"the FTE / level-of-effort the solicitation REQUIRES if stated — copy the EXACT figure including any decimal or fraction (e.g. 2.5, 0.5); do NOT round. If instead a workload / level-of-effort hours table by labor category is given, derive the FTEs from the BASE-YEAR hours column ONLY divided by 1912 (never add base + option columns). '' or 'not specified' if none","estimated_value":"","base_period_months":"the BASE period length in WHOLE MONTHS as a number. Compute it: if a date range is given (e.g. base period 01 Oct 2025 to 30 Jun 2026) count the months (=9); if a month count is stated use it; if a full base year with no other length is indicated use 12; use 0 only if you truly cannot tell","option_period_count":"number of option periods/years as a number; 0 if none","option_period_months":"length of EACH option period in WHOLE months as a number (12 for option years); 0 if none/unknown","pop_start_date":"period-of-performance START date as YYYY-MM-DD if the solicitation states or implies one; '' if not stated. If only a month and year are stated ('performance begins February 2027') return YYYY-MM, and if only a year, return YYYY - do NOT invent a day to fill the format, a fabricated date that looks precise is worse than a partial one","sca_coverage":"'yes' if the contract is covered by the Service Contract Act / SCLS - treat the PRESENCE of a Wage Determination (a WD document, SF-98/98a, a WD number, DOL wage tables) or FAR 52.222-41 as DECISIVE, answer 'yes'; 'no' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption), not merely because it sounds professional; '' if not addressed","travel_required":"'yes' if the solicitation includes a travel CLIN or requires reimbursable travel/trips, 'no' if it states no travel is required, else ''","travel_nte":"the travel not-to-exceed dollar ceiling if one is stated (e.g. '$50,000'), else ''",` +
       `"pricing_methodology":"how the Government wants pricing STRUCTURED — exactly one of 'lcat' (fully burdened rates by labor category), 'pws_task' (price broken out per PWS task/section), 'product' (per product/deliverable/CLIN), or 'simple' (total labor + wrap). Pick the closest match from Section L/B; if unstated, ''",` +
       `"pricing_instructions":"verbatim or close paraphrase of any cost/price-volume format instructions from Section L/B/M — required rate tables, CLIN structure, escalation rules, format/page limits; '' if none",` +
       `"period_structure":"the base + option period breakdown, e.g. '1 base year + 4 option years'; '' if unstated",` +
@@ -11388,8 +11406,20 @@ function _mktRoleBits(role, level, clear, ctx) {
   if (ctx && ctx.minRate) b.push('Solicitation-stated minimum wage for this category: ' + ctx.minRate);
   return b.join('\n');
 }
-const _MKT_SOURCE_RULE = 'Draw on public sources \u2014 GSA CALC+ (calc.gsa.gov) and BLS OES (bls.gov/oes) as the primary authoritative federal sources, plus Salary.com and other reputable PUBLIC salary aggregators. Do NOT cite subscription-gated tools you cannot actually access (e.g. ERI / SalaryExpert Assessor); cite only sources you genuinely retrieved.';
-const _MKT_FIGURE_RULE = 'Report the 25th, 50th, and 75th percentile as ANNUAL BASE SALARY in USD \u2014 direct/unburdened pay to the employee, NOT a loaded or billed rate. Also give the equivalent hourly (annual / 2080). Where a minimum education, experience level, clearance or Wage Determination is stated for a position, price to THAT profile, not to the bare job title. Ensure p25 <= p50 <= p75.';
+// Each source reports a DIFFERENT basis, and mixing them is the single most common
+// way these figures come out wrong. A national OES median for management analysts
+// sits near $50/hr; a cleared federal-contractor program analyst in the National
+// Capital Region is not that number.
+const _MKT_SOURCE_RULE = 'Draw on public sources, and for EVERY figure state which source it came from and what basis that source reports \u2014 the bases differ and conflating them is the most common cause of a wrong answer:\n' +
+  '- GSA CALC+ (calc.gsa.gov) reports FULLY BURDENED CEILING BILLING RATES awarded on federal schedules \u2014 NOT employee pay. A CALC+ figure must have the contractor wrap divided out (typically 1.6\u20132.0x) before it can be reported as base salary. Say so when you do it.\n' +
+  '- BLS OES (bls.gov/oes) reports MEDIAN WAGES across ALL employers and ALL industries, including state/local government and small commercial employers. A NATIONAL OES median is NOT what a federal prime pays a cleared contractor employee in a high-cost metro. Use the metro-area (MSA) figure wherever one exists, and treat the national figure as a floor, not an answer.\n' +
+  '- Salary.com and comparable public aggregators report employer-paid base pay, which IS the target basis \u2014 prefer their metro-specific figures over any national average.\n' +
+  'Do NOT cite subscription-gated tools you cannot actually access (e.g. ERI / SalaryExpert Assessor); cite only sources you genuinely retrieved.';
+const _MKT_FIGURE_RULE = 'Report the 25th, 50th, and 75th percentile as ANNUAL BASE SALARY in USD \u2014 direct/unburdened pay to the employee, NOT a loaded or billed rate. Also give the equivalent hourly (annual / 2080). Where a minimum education, experience level, clearance or Wage Determination is stated for a position, price to THAT profile, not to the bare job title. Ensure p25 <= p50 <= p75.\n' +
+  'Price the ACTUAL MARKET THE POSITION SITS IN, not a national all-employer average. A cleared federal-contractor role in a high-cost metro commands a real, documented premium over a national all-industry median, and reporting that median as though it were the market is a material UNDERSTATEMENT that will lose the bid on realism or cost the offeror money on award.\n' +
+  'If the location given is a high-cost metro \u2014 the National Capital Region (DC / Northern Virginia / suburban Maryland), San Francisco Bay Area, New York, Boston, Seattle, San Diego, Los Angeles, Denver or Huntsville \u2014 apply the metro differential explicitly and state in your notes what you applied and why.\n' +
+  'If a security clearance is required, apply the clearance premium and state it: commonly on the order of 10\u201320% for Secret and 15\u201330% for TS/SCI, higher with a polygraph.\n' +
+  'If the work is federal contract support rather than commercial or public-sector employment, say which segment you priced. Never present a national all-industry median as the answer without saying that is what it is.';
 
 // ── session cache ────────────────────────────────────────────────────────────
 // Keyed on everything that can move the number. Written by every lookup, read by the bulk path, so
@@ -11528,7 +11558,18 @@ async function marketRun(btn) {
   if (!remote && !loc) { show('Enter a location, or check Remote / national.', true); return; }
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
   if (!apiKey) { show('Enter your Anthropic API key (top of the page) first.', true); return; }
-  results.style.display = 'none'; results.innerHTML = '';
+  // The old code HID the pane (display:none) and blanked it, so a running lookup
+  // looked like nothing had happened. Clear it the same way but leave a NAMED,
+  // spinning placeholder in place, so it is obvious which role is being searched
+  // and obvious that the previous numbers are gone.
+  _mktLastRecord = null;
+  results.style.display = 'block'; results.innerHTML = '';
+  if (results) {
+    const _escRole = (typeof pricingEsc === 'function') ? pricingEsc(role) : role;
+    results.innerHTML = '<div style="display:flex;align-items:center;gap:9px;padding:16px 14px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);font-size:13px">' +
+      '<span class="spinner-auto" style="width:15px;height:15px;border-width:2px;color:var(--blue);flex:none"></span>' +
+      '<span>Searching market data for <strong style="color:var(--text)">' + _escRole + '</strong>\u2026 previous result cleared.</span></div>';
+  }
   const _restore = _mktSpin(btn);
   _mktRunBusy = true;
   status.style.display = 'none';   // #24: no grey loading line; the button's spinner is the loading cue
@@ -11559,13 +11600,43 @@ function marketRender(data, ctx) {
   const fmtH = n => (n == null || isNaN(n)) ? '—' : '$' + (Math.round(n * 100) / 100).toFixed(2);
   const hrOf = p => (hr[p] != null && !isNaN(hr[p])) ? hr[p] : ((sal[p] != null) ? sal[p] / 2080 : null);
   const roleJs = String(data.position || ctx.role || '').replace(/[\\'"]/g, ' ').trim();
-  const col = (label, key, hi) => `
-    <div style="flex:1;min-width:150px;border:1px solid ${hi ? '#8a93e8' : 'var(--border)'};border-radius:10px;padding:12px 14px;background:${hi ? '#f5f6fe' : 'white'}">
+  // ── all FOUR figures per percentile ────────────────────────────────────────
+  // The PAID HOURLY rate is the anchor and the other three derive from it, matching
+  // _mktPaidHourly's own precedence (hourly leads, salary/2080 is the fallback). That
+  // guarantees the four numbers tie out to each other. Two hour bases, both correct:
+  // salary is payroll hours (2,080), burdened annual is BILLABLE hours per FTE-year.
+  const _WRAP = (typeof pricingWrapFactor === 'function') ? (pricingWrapFactor() || 0) : 0;
+  const _HRS_PAID = 2080;
+  const _HRS_BILL = (typeof defaultHpf === 'function') ? (defaultHpf() || 1912) : 1912;
+  const _wrapNote = (typeof pricingWrapModeLabel === 'function') ? pricingWrapModeLabel() : '';
+  const figRow = (lbl, val, sub) =>
+    `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:3px 0;border-top:1px solid #f1f5f9">
+       <span style="font-size:10.5px;color:var(--muted)">${lbl}</span>
+       <span style="font-size:13px;font-weight:700;white-space:nowrap">${val}${sub ? `<span style="font-size:10px;font-weight:600;color:var(--muted)">${sub}</span>` : ''}</span>
+     </div>`;
+  const col = (label, key, hi) => {
+    const paid = hrOf(key);
+    const burd = (paid != null && _WRAP > 0) ? paid * _WRAP : null;
+    const salary = (paid != null) ? paid * _HRS_PAID : null;
+    const burdAnnual = (burd != null) ? burd * _HRS_BILL : null;
+    // If the model gave a salary that disagrees with paid x 2,080, say so instead of
+    // rendering an inconsistent pair and letting the reader pick.
+    const stated = sal[key];
+    const mismatch = (stated != null && !isNaN(stated) && salary != null && Math.abs(stated - salary) > Math.max(2000, salary * 0.02));
+    return `
+    <div style="flex:1;min-width:190px;border:1px solid ${hi ? '#8a93e8' : 'var(--border)'};border-radius:10px;padding:12px 14px;background:${hi ? '#f5f6fe' : 'white'}">
       <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div>
-      <div style="font-size:19px;font-weight:800;margin-top:3px">${fmt$(sal[key])}<span style="font-size:12px;font-weight:600;color:var(--muted)">/yr</span></div>
-      <div style="font-size:12px;color:var(--muted);margin-top:1px">${fmtH(hrOf(key))}/hr paid</div>
-      <button onclick="marketSendToPricing('${roleJs}','paid',${Math.round((hrOf(key) || 0) * 100) / 100})" style="margin-top:9px;width:100%;font-size:11.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 8px;cursor:pointer">Use in Pricing →</button>
+      <div style="font-size:19px;font-weight:800;margin-top:3px">${fmtH(paid)}<span style="font-size:12px;font-weight:600;color:var(--muted)">/hr paid</span></div>
+      <div style="margin-top:7px">
+        ${figRow('Fully burdened', fmtH(burd), '/hr')}
+        ${figRow('Salary', fmt$(salary), '/yr')}
+        ${figRow('Burdened annualized', fmt$(burdAnnual), '/yr')}
+      </div>
+      ${mismatch ? `<div style="font-size:10px;color:#92400e;margin-top:5px;line-height:1.3">Source quoted ${fmt$(stated)}/yr; shown figures derive from the hourly rate.</div>` : ''}
+      <button onclick="marketSendToPricing('${roleJs}','paid',${Math.round((paid || 0) * 100) / 100})" style="margin-top:9px;width:100%;font-size:11.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 8px;cursor:pointer">Use in Pricing →</button>
     </div>`;
+  };
+  const basisNote = `<div style="font-size:11px;color:var(--muted);margin:0 0 10px">Burdened figures use your company wrap of <strong style="color:var(--text)">${(Math.round(_WRAP * 1000) / 1000).toFixed(3)}\u00d7</strong>${_wrapNote ? ' (' + esc(_wrapNote) + ')' : ''}. Salary is ${_HRS_PAID.toLocaleString()} payroll hours; burdened annualized is ${_HRS_BILL.toLocaleString()} billable hours per FTE-year.</div>`;
   const srcs = (data.sources || []).map(s => {
     const nm = esc(s.name || 'source'); const u = String(s.url || '').replace(/"/g, '&quot;');
     return `<li style="margin-bottom:3px">${u ? `<a href="${u}" target="_blank" rel="noopener" style="color:var(--blue)">${nm}</a>` : nm}${s.note ? ` <span style="color:var(--muted)">— ${esc(s.note)}</span>` : ''}</li>`;
@@ -11591,6 +11662,7 @@ function marketRender(data, ctx) {
       ${conf ? `<span style="font-size:11px;font-weight:700;color:${confColor}">confidence: ${conf}</span>` : ''}
     </div>
     ${profileLine}
+    ${basisNote}
     <div style="display:flex;gap:12px;flex-wrap:wrap">${col('25th percentile', 'p25', false)}${col('50th percentile (median)', 'p50', true)}${col('75th percentile', 'p75', false)}</div>
     ${data.notes ? `<div style="font-size:12px;color:var(--muted);margin-top:12px;line-height:1.5">${esc(data.notes)}</div>` : ''}
     ${srcs ? `<div style="margin-top:12px"><div style="font-size:12px;font-weight:700;margin-bottom:4px">Sources</div><ul style="font-size:12px;margin:0;padding-left:18px">${srcs}</ul></div>` : ''}
@@ -11617,7 +11689,8 @@ function _mktSpin(btn) {
   if (!btn) return function () {};
   if (btn.getAttribute && btn.getAttribute('data-mkt-label') == null) btn.setAttribute('data-mkt-label', btn.innerHTML);
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Searching\u2026';
+  // spinner-auto, not spinner: the plain one is white and vanishes on a light button.
+  btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;margin-right:6px"></span>Searching\u2026';
   return function () {
     btn.disabled = false;
     const lbl = btn.getAttribute ? btn.getAttribute('data-mkt-label') : null;
@@ -11757,14 +11830,62 @@ function marketRenderChecklist() {
   el.innerHTML = h;
 }
 // #5: fill the Market Rates search from a Pricing role and run it; success marks the role researched.
+// Sync EVERY market-rate context input to the role being looked up.
+//
+// Any field that cannot be determined is CLEARED, never left holding the previous
+// search's value. This is not cosmetic: #mktLevel and #mktClear are read straight
+// into the prompt by _mktRoleBits, so a leftover clearance or seniority silently
+// prices the wrong profile — look up a Registered Nurse, then a Project Manager,
+// and the PM was priced at the nurse's clearance and location.
+function _mktSyncInputsForRole(name, l) {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : String(v)); };
+  set('mktRole', name || '');
+
+  // Clearance comes off the analyzed solicitation for THIS role, or is cleared.
+  const ctx = (typeof _mktRoleContext === 'function') ? _mktRoleContext(name) : {};
+  set('mktClear', (ctx && ctx.clearance) || '');
+
+  // Seniority read off the title — solicitations rarely state it as a separate
+  // field. Order matters: 'ii' must be tested before 'i'.
+  const t = ' ' + String(name || '').toLowerCase() + ' ';
+  set('mktLevel',
+    /\b(principal|chief|director|executive)\b/.test(t) ? 'principal' :
+    /\b(lead|supervisor|iv|4)\b/.test(t) ? 'lead' :
+    /\b(senior|sr|iii|3)\b/.test(t) ? 'senior' :
+    /\b(ii|2)\b/.test(t) ? 'mid' :
+    /\b(junior|jr|entry|associate|assistant|i|1)\b/.test(t) ? 'junior' : '');
+
+  // Location: the role's own work state, else the opportunity's place of
+  // performance, else cleared. Never the previous search's location.
+  let loc = '';
+  const st = (l && l.localityState) || '';
+  if (st && typeof PX_STATES !== 'undefined' && Array.isArray(PX_STATES)) {
+    loc = (PX_STATES.find(s => s[0] === st) || [])[1] || '';
+  }
+  if (!loc) {
+    const pop = (typeof window !== 'undefined' && window._lastBnaIntel &&
+                 window._lastBnaIntel.place_of_performance) || '';
+    loc = String(pop).replace(/^\s*\[[^\]]*\]\s*/, '').trim();
+  }
+  set('mktLoc', loc);
+
+  const rem = document.getElementById('mktRemote');
+  if (rem && rem.checked) {
+    rem.checked = false;
+    if (typeof mktToggleRemote === 'function') { try { mktToggleRemote(); } catch (e) {} }
+  }
+}
+
 async function marketLookupRole(id, btn) {
   const l = (typeof pricingModel !== 'undefined' && pricingModel && pricingModel.lcats) ? pricingModel.lcats.find(x => x.id === id) : null;
   if (!l) return;
-  const roleEl = document.getElementById('mktRole'); if (roleEl) roleEl.value = l.name || '';
-  const st = l.localityState || (pricingModel.lcats.find(x => x.localityState) || {}).localityState || '';
-  const stName = st ? ((typeof PX_STATES !== 'undefined' && (PX_STATES.find(s => s[0] === st) || [])[1]) || '') : '';
-  const locEl = document.getElementById('mktLoc');
-  if (locEl && stName && !locEl.value.trim()) locEl.value = stName;
+  // Sync ALL of the context inputs, clearing anything undeterminable. The old code
+  // set the role, set the location only if it happened to be empty, and never
+  // touched seniority or clearance — so every lookup after the first inherited the
+  // previous role's profile and priced against it.
+  const _fallbackState = l.localityState ||
+    (pricingModel.lcats.find(x => x.localityState) || {}).localityState || '';
+  _mktSyncInputsForRole(l.name || '', { localityState: _fallbackState });
   _mktLookupRoleId = id;
   const runBtn = document.getElementById('mktRunBtn');
   // #4a: marketRun spins the Market Rates tab button. If the user clicked a different button (a per-role
@@ -12438,6 +12559,16 @@ async function pricingAutoBuildStructure() {
     if (_govWorkload.length) {
       pricingModel.statedWorkloadByLcat = _govWorkload;
       pricingModel.fteSource = _wlProposed ? 'estimated' : 'stated';
+      // PHASE 6: if the BNA detected that the Government works on a different
+      // hours-per-FTE year, the price model must bill on the same basis or Pricing
+      // re-derives the fractional FTEs the BNA just corrected. defaultHpf() reads
+      // pricingModel.hoursPerFte first, so this one assignment moves the whole tab.
+      const _bnaHpf = (window._lastBnaIntel && window._lastBnaIntel._staffingReconciliation &&
+                       window._lastBnaIntel._staffingReconciliation.govHpf) || 0;
+      if (_bnaHpf > 0 && parseFloat(pricingModel.hoursPerFte) !== _bnaHpf) {
+        pricingModel.hoursPerFte = _bnaHpf;
+        try { log('Hours basis set to ' + _bnaHpf.toLocaleString() + ' hrs/FTE-year to match the solicitation\u2019s workload table.', 'warn'); } catch (e) {}
+      }
       pricingModel.statedFteTotal = Math.round((_govWorkload.reduce((s, r) => s + r.hours, 0) / defaultHpf()) * 100) / 100;
     }
     const _workloadBlock = _govWorkload.length
@@ -12830,15 +12961,36 @@ function pricingRenderAutoBuildPanel() {
   if ((cr.per_role && cr.per_role.length) || cr.overall) {
     h += `<div style="margin-top:10px;font-weight:700;font-size:12px">Cost-realism check</div>`;
     if (cr.per_role && cr.per_role.length) {
-      h += `<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11.5px;width:100%"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:3px 6px">Role</th>${gsa ? '<th style="padding:3px 6px">Our rate</th>' : ''}<th style="padding:3px 6px">Market range (est.)</th><th style="padding:3px 6px">Assessment</th><th style="padding:3px 6px">Note</th></tr></thead><tbody>`;
+      h += `<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11.5px;width:100%"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:3px 6px">Role</th><th style="padding:3px 6px">Our burdened rate</th><th style="padding:3px 6px">Market range \u2014 fully burdened (est.)</th><th style="padding:3px 6px">Assessment</th><th style="padding:3px 6px">Note</th></tr></thead><tbody>`;
       const _lcatByName = {};
       (pricingModel.lcats || []).forEach(l => { _lcatByName[String(l.name || '').toLowerCase().trim()] = l; });
       cr.per_role.forEach(r => {
         const lo = r.market_low != null ? pricingFmtC(r.market_low) : '\u2014', hi = r.market_high != null ? pricingFmtC(r.market_high) : '\u2014';
         let ourRate = (r.our_loaded_rate != null && !isNaN(r.our_loaded_rate)) ? Number(r.our_loaded_rate) : null;
-        if ((ourRate == null || ourRate <= 0) && gsa) { const _l = _lcatByName[String(r.role_name || '').toLowerCase().trim()]; if (_l) { const _lr = pricingLoadedRate(_l, 0); if (_lr > 0) ourRate = _lr; } }
+        // Fill our own rate in EVERY mode, not just GSA. Off-schedule this column used
+        // to be omitted entirely, leaving a market band with nothing to compare against
+        // — which is exactly how a rate can sit outside its band unnoticed.
+        if (ourRate == null || ourRate <= 0) {
+          const _l = _lcatByName[String(r.role_name || '').toLowerCase().trim()];
+          if (_l) { const _lr = pricingBilledRate(_l, 0); if (_lr > 0) ourRate = _lr; }
+        }
         const ourCell = (ourRate != null && ourRate > 0) ? (pricingFmtC(ourRate) + '/hr') : '\u2014';
-        h += `<tr style="border-top:1px solid var(--border)"><td style="padding:3px 6px;font-weight:600">${pricingEsc(r.role_name || '')}</td>${gsa ? `<td style="padding:3px 6px">${ourCell}</td>` : ''}<td style="padding:3px 6px">${lo} \u2013 ${hi}/hr</td><td style="padding:3px 6px">${assess(r.assessment)}</td><td style="padding:3px 6px;color:var(--muted)">${pricingEsc(r.note || '')}</td></tr>`;
+        // The band is a FULLY BURDENED reference, so compare it to the burdened rate and
+        // COMPUTE the verdict. r.assessment is the model's own claim and was previously
+        // rendered unchecked — it is now only echoed when it agrees with the arithmetic.
+        const _lo = Number(r.market_low), _hi = Number(r.market_high);
+        let _verdict = null;
+        if (ourRate != null && ourRate > 0 && isFinite(_lo) && isFinite(_hi) && _hi >= _lo && _hi > 0) {
+          _verdict = ourRate < _lo ? 'below' : (ourRate > _hi ? 'above' : 'in range');
+        }
+        const _claimed = String(r.assessment || '').toLowerCase().replace(/[^a-z ]/g, '').trim();
+        const _disagrees = _verdict && _claimed && _claimed.indexOf(_verdict) < 0;
+        const _assessCell = _verdict
+          ? (assess(_verdict) + (_disagrees
+              ? ' <span title="The AI called this ' + pricingEsc(r.assessment || '') + '; the arithmetic says ' + _verdict + '." style="font-size:10px;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:0 3px">AI said ' + pricingEsc(r.assessment || '') + '</span>'
+              : ''))
+          : assess(r.assessment);
+        h += `<tr style="border-top:1px solid var(--border)"><td style="padding:3px 6px;font-weight:600">${pricingEsc(r.role_name || '')}</td><td style="padding:3px 6px">${ourCell}</td><td style="padding:3px 6px">${lo} \u2013 ${hi}/hr</td><td style="padding:3px 6px">${_assessCell}</td><td style="padding:3px 6px;color:var(--muted)">${pricingEsc(r.note || '')}</td></tr>`;
       });
       h += `</tbody></table></div>`;
     }
@@ -12894,6 +13046,10 @@ function pricingRenderAll() {
   pricingRenderWarnings();
   pricingRenderFeedStatus();
   pricingSave();
+
+  // WAVE C: keep the BNA's blended rate and value in step with the real build-up.
+  // No-op unless a priced rate actually moved; never renders Pricing itself.
+  try { if (typeof bnaRefreshFromPricing === 'function') bnaRefreshFromPricing(); } catch (e) {}
 }
 
 function pricingRenderContext() {
@@ -12946,17 +13102,22 @@ function pricingRenderTasks() {
 function pricingLcatHeaderBanner() {
   const th = (txt, flexBasis, tip) => '<div title="' + (tip || '') + '" style="' + flexBasis
     + ';font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)">' + txt + '</div>';
-  return '<div style="display:flex;gap:6px 8px;align-items:center;padding:2px 10px 4px;border-bottom:1px solid #e5e7eb;margin-bottom:2px">'
-    + th('Labor Category', 'flex:2;min-width:130px')
-    + th('Paid Rate', 'flex-basis:210px;flex-shrink:0', 'What you enter, and in which basis. The other three derive from it.')
-    + th('Rate Detail', 'flex-basis:188px;flex-shrink:0;text-align:center', 'Company-paid vs fully-burdened, hourly vs annual. Company annual is at 2,080 payroll hours; burdened annual is at this role\u2019s billable Hrs/FTE. All calculated \u2014 not editable.')
-    + th('Proposed FTE', 'flex-basis:60px;flex-shrink:0;text-align:right', 'Full-time-equivalent staffing you propose for this role (base year)')
-    + th('Hrs/FTE', 'flex-basis:64px;flex-shrink:0;text-align:right', 'Billable hours per FTE for this role; blank = company default')
-    + '<div style="width:22px;flex-shrink:0"></div>'
+  // GRID, not flex: the header and every row share ONE track definition, so a
+  // column sits in the same place on every row whatever its contents measure.
+  return '<div style="display:grid;grid-template-columns:minmax(150px,2fr) 210px 188px 64px 64px auto;gap:6px 8px;align-items:center;padding:2px 10px 4px;border-bottom:1px solid #e5e7eb;margin-bottom:2px">'
+    + th('Labor Category', 'min-width:0')
+    + th('Paid Rate', 'min-width:0', 'What you enter, and in which basis. The other three derive from it.')
+    + th('Rate Detail', 'min-width:0;text-align:center', 'Company-paid vs fully-burdened, hourly vs annual. Company annual is at 2,080 payroll hours; burdened annual is at this role\u2019s billable Hrs/FTE. All calculated \u2014 not editable.')
+    + th('Proposed FTE', 'min-width:0;text-align:right', 'Full-time-equivalent staffing you propose for this role (base year)')
+    + th('Hrs/FTE', 'min-width:0;text-align:right', 'Billable hours per FTE for this role; blank = company default')
+    + '<div></div>'
     + '</div>';
 }
 
 // The read-only 2x2. Empty until a rate is entered, so a blank role is not four "$0.00" cells.
+// Rendered into a FIXED grid track, so the table fills the track instead of sizing
+// to whatever its digits happen to measure — that content-driven width is exactly
+// what pushed every column after it out of alignment.
 function pricingRateMatrixHtml(l) {
   const paid = parseFloat(l.baseRate) || 0;
   const W = pricingEffectiveWrapFactor(l), H = pricingHpf(l);
@@ -13008,8 +13169,8 @@ function pricingRenderLcats() {
       const rateNote = l.gsaLcat
         ? `Yr ${applYear} ${pricingFmtC(gsaRate)} − ${disc}% = <strong>${pricingFmtC(_gld)}/hr loaded</strong> <span style="color:var(--muted)">≈ ${pricingFmtC(_gpd)} paid · ${pricingFmtC(_gpd * 2080)}/yr · ${pricingFmtC(_gld * _gH)}/FTE-yr</span>`
         : '<span style="color:var(--warn)">map to a GSA LCAT →</span>';
-      return `<div id="pxLcat_${l.id}" style="display:flex;gap:6px 8px;align-items:center;flex-wrap:wrap;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
-        <input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (as named in your proposal)" style="flex:2;min-width:150px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+      return `<div id="pxLcat_${l.id}" style="display:grid;grid-template-columns:minmax(150px,2fr) 210px 188px 64px 64px auto;gap:6px 8px;align-items:center;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
+        <input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (as named in your proposal)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box"/>
         <select onchange="pricingSetGsaLcat('${l.id}',this.value)" style="flex:2;min-width:170px;padding:6px 30px 6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:white;text-overflow:ellipsis">${opts}</select>
         <div style="display:flex;align-items:center;gap:4px"><span style="font-size:11px;color:var(--muted)" title="Full-time-equivalent staffing you propose for this role (base year)">Proposed FTE</span><input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" style="width:60px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:right"/></div>
         <span style="font-size:11px;color:var(--muted);white-space:nowrap">${pricingRowFte(l).toFixed(2)} FTE</span>
@@ -13033,17 +13194,17 @@ function pricingRenderLcats() {
     else if (l.rateStatus === 'proposed') _chip = '<span title="Suggested by the tool \u2014 edit or confirm to make it yours" style="font-size:9.5px;font-weight:700;color:#9a3412;background:#ffedd5;border:1px solid #fdba74;border-radius:4px;padding:1px 5px;white-space:nowrap">proposed</span>';
     else if (l.rateStatus === 'entered') _chip = '<span title="A rate you entered" style="font-size:9.5px;font-weight:700;color:var(--blue);background:#dbeafe;border:1px solid #93c5fd;border-radius:4px;padding:1px 5px;white-space:nowrap">entered</span>';
     else if (l.evaluated) _chip = '<span title="You looked this up on Market Rates" style="font-size:9.5px;font-weight:700;color:#15803d;background:#dcfce7;border:1px solid #86efac;border-radius:4px;padding:1px 5px;white-space:nowrap">\u2713 researched</span>';
-    const _warn = paid > 0 ? '' : '<div style="flex-basis:100%;font-size:10.5px;color:var(--warn);padding-left:2px">enter a rate to derive the burdened figures</div>';
-    return `<div id="pxLcat_${l.id}" style="display:flex;gap:6px 8px;align-items:center;flex-wrap:wrap;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
-      <input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (e.g. Registered Nurse)" style="flex:2;min-width:130px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px"/>
-      <div style="flex-basis:210px;flex-shrink:0;display:flex;align-items:center;gap:3px">
+    const _warn = paid > 0 ? '' : '<div style="grid-column:1/-1;font-size:10.5px;color:var(--warn);padding-left:2px">enter a rate to derive the burdened figures</div>';
+    return `<div id="pxLcat_${l.id}" style="display:grid;grid-template-columns:minmax(150px,2fr) 210px 188px 64px 64px auto;gap:6px 8px;align-items:center;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
+      <input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (e.g. Registered Nurse)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;box-sizing:border-box"/>
+      <div style="min-width:0;display:flex;align-items:center;gap:3px">
         <select onchange="pricingSetLcatRate('${l.id}','rateBasis',this.value)" title="What are you entering? The other three figures derive from it." style="flex:1;min-width:0;padding:6px 16px 6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:white;text-overflow:ellipsis">${opt('paid','Company Paid Hourly Rate')}${opt('salary','Company Paid Annualized Salary')}${opt('loaded','Fully Burdened Hourly Rate')}${opt('annual','Fully Burdened Annualized Salary')}</select>
         <input type="text" inputmode="decimal" value="${_pxFmtMoney(rInput)}" onchange="pricingSetLcatRate('${l.id}','rateInput',this.value)" title="${l.rateStatus==='proposed'?'Proposed rate \u2014 recommended by the tool; edit or confirm to make it yours':(l.rateStatus==='entered'?'You set this rate':'')}" style="width:84px;flex-shrink:0;padding:6px 8px;border-radius:6px;font-size:12.5px;text-align:right;${_pxRateCellCss(l)}"/>
       </div>
       ${pricingRateMatrixHtml(l)}
-      <input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" title="Proposed FTE" style="flex-basis:60px;flex-shrink:0;width:60px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/>
-      <input type="number" min="0" step="1" value="${l.hpf}" onchange="pricingSetLcat('${l.id}','hpf',this.value)" placeholder="${defaultHpf()}" title="Billable hours per FTE for this role; blank = company default" style="flex-basis:64px;flex-shrink:0;width:64px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/>
-      <div style="display:flex;align-items:center;gap:5px;margin-left:auto">${_chip}<button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px">✕</button></div>
+      <input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" title="Proposed FTE" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right;box-sizing:border-box"/>
+      <input type="number" min="0" step="1" value="${l.hpf}" onchange="pricingSetLcat('${l.id}','hpf',this.value)" placeholder="${defaultHpf()}" title="Billable hours per FTE for this role; blank = company default" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right;box-sizing:border-box"/>
+      <div style="display:flex;align-items:center;gap:5px;justify-content:flex-end">${_chip}<button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px">✕</button></div>
       ${_warn}
     </div>`;
   }).join('');
@@ -18646,10 +18807,10 @@ async function extractOpportunityIntel(docContent, apiKey) {
     `7. For is_sca: the contract is SCA/SCLS-covered whenever a Wage Determination is attached or referenced, or FAR 52.222-41 applies - treat a WD's presence as DECISIVE evidence of coverage. When the contract is SCA-covered, mark is_sca true for every non-exempt SERVICE position (administrative, technical support, clerical, operations, maintenance, help-desk, and similar roles). Mark a position false ONLY if it is a bona-fide exempt professional/administrative/executive/computer employee under 29 CFR 541, or the contract is genuinely not SCA-covered. Do NOT mark positions false just because the SCA clause does not name each one individually, and do NOT default everything to false when a WD is present.\n` +
     `8. For min_hourly_rate: ONLY populate this if the solicitation or an attached Wage Determination EXPLICITLY states the exact dollar amount for this LCAT. If no rate is stated verbatim, use "" (empty string). Do NOT estimate, infer, or look up WD rates - only copy exact figures from the document.\n` +
     `9. For pursuit_recommendation: this is a REQUIRED professional judgment — NEVER leave it blank or use "Not stated". Decide "Prime", "Subcontract", or "Pass" for ${CLIENT_CONFIG.companyShortName || 'the company'}${CLIENT_CONFIG.businessType ? ' (a ' + CLIENT_CONFIG.businessType + ')' : ''} and give a one- to two-sentence rationale grounded in set-aside fit, capability alignment, and competitive position. Begin the value with the decision word. Example: "Prime - the set-aside aligns directly with the company's certifications and the NAICS matches core capabilities."\n\n` +
-    `10. For base_year_value and total_contract_value: these are HIGH-VALUE go/no-go sizing fields - do NOT default them to "Not stated". If a dollar figure is stated, copy it verbatim. If NOT stated, give a clearly-labeled order-of-magnitude ESTIMATE and prefix it with "[Inferred] ~" (example base_year_value "[Inferred] ~$15M-$30M/yr"; example total_contract_value "[Inferred] ~$80M-$160M" across the full period of performance), reasoned from scope breadth, number of work areas/CLINs, FTE count, period length, agency size, and comparable known contracts. In award_value_rationale state the basis in one sentence (example "Est. from nine work areas plus multi-year PoP and FAA financial-operations scope"). Only use "Not stated in documents" if there is genuinely nothing to reason from. When labor is quoter-defined (loe_basis "quoter", no Government hours table), do NOT guess the value from vague scope size - compute base_year_value = the sum over your proposed roles of (base_year_fte x 1912 x est_loaded_rate), prefix "[Inferred] ", and state the team basis in award_value_rationale (e.g. "Proposed team of 1 PM/SME + 2 support analysts = 3.0 FTE at a blended ~$130/hr loaded"). total_contract_value = base_year_value x number of performance periods.
+    `10. For base_year_value and total_contract_value: these are HIGH-VALUE go/no-go sizing fields - do NOT default them to "Not stated". If a dollar figure is stated, copy it verbatim. If NOT stated, give a clearly-labeled order-of-magnitude ESTIMATE and prefix it with "[Inferred] ~" (example base_year_value "[Inferred] ~$15M-$30M/yr"; example total_contract_value "[Inferred] ~$80M-$160M" across the full period of performance), reasoned from scope breadth, number of work areas/CLINs, FTE count, period length, agency size, and comparable known contracts. In award_value_rationale state the basis in one sentence (example "Est. from nine work areas plus multi-year PoP and FAA financial-operations scope"). Only use "Not stated in documents" if there is genuinely nothing to reason from. When labor is quoter-defined (loe_basis "quoter", no Government hours table), do NOT guess the value from vague scope size - compute base_year_value = the sum over your proposed roles of (base_year_fte x 1912 x est_loaded_rate), prefix "[Inferred] ", and state the team basis in award_value_rationale (e.g. "Proposed team of 1 PM/SME + 2 support analysts = 3.0 FTE at a blended ~$130/hr loaded"). total_contract_value = base_year_value x the real contract LENGTH IN YEARS (not the number of ordering periods): if the base period is shorter than 12 months, count it as its actual fraction of a year - e.g. a 6-month base plus four 12-month options is 4.5 years, NOT 5.
 11. For incumbent: name the current/incumbent contractor IF the documents state or clearly identify it (for example the SOW references the current provider, or a recompete names the predecessor contract). If this is a recompete/follow-on but the incumbent is NOT identifiable from the documents, output "Not stated in documents - check USASpending.gov or FPDS for the predecessor award holder". Do NOT guess a company name from outside knowledge; if you provide a name inferred from document context rather than explicitly stated, prefix it with "[Inferred] ".
 Respond with ONLY a raw JSON object. No markdown. No backticks. Start with { end with }.\n` +
-    `WORKLOAD / LEVEL-OF-EFFORT TABLE (OVERRIDES rule 10 whenever such a table is present): If the solicitation gives an estimated-hours / workload / level-of-effort table by labor category, treat those hours as the authoritative basis and do NOT estimate. (a) ANNUAL hours = the sum of the BASE-YEAR hours column ONLY; NEVER add the base-year and option-year columns together (option periods are SEPARATE performance periods, not additional concurrent staff). (b) fte_count = annual hours / 1912, rounded to ONE decimal, PREFIXED with "[GovEst] " because it is derived from the government's STATED workload estimate (an estimate, not a firm requirement) - e.g. "[GovEst] 7.7". (c) For EACH labor category, base_year_fte = that category base-year hours / 1912 to one decimal, and set base_year_hours to that category's base-year hours as an INTEGER exactly as stated in the table. (d) base_year_value and total_contract_value are the government's stated workload priced at a rate WE assume, so PREFIX BOTH with "[Inferred] ". Compute base_year_value = annual hours times a REALISTIC blended fully-loaded hourly rate: for analytical / professional-services labor (data analysts, business process engineers, program managers, and similar) a defensible blended fully-loaded rate is roughly $100-$150/hr - use a higher rate ONLY for genuinely specialized or cleared labor and note that in award_value_rationale. Do NOT use inflated rates (e.g. $250+/hr) for standard analyst / professional labor. Example base_year_value "[Inferred] ~$1.8M/yr". total_contract_value = base_year_value times the number of performance periods, e.g. "[Inferred] ~$3.6M". In award_value_rationale state the hours basis and the assumed blended rate (e.g. "RFQ base-year workload of 14685 hours across 5 labor categories at a blended loaded rate of ~$125/hr").\n\n` +
+    `WORKLOAD / LEVEL-OF-EFFORT TABLE (OVERRIDES rule 10 whenever such a table is present): If the solicitation gives an estimated-hours / workload / level-of-effort table by labor category, treat those hours as the authoritative basis and do NOT estimate. (a) ANNUAL hours = the sum of the BASE-YEAR hours column ONLY; NEVER add the base-year and option-year columns together (option periods are SEPARATE performance periods, not additional concurrent staff). (b) fte_count = annual hours / 1912, rounded to ONE decimal, PREFIXED with "[GovEst] " because it is derived from the government's STATED workload estimate (an estimate, not a firm requirement) - e.g. "[GovEst] 7.7". (c) For EACH labor category, base_year_fte = that category base-year hours / 1912 to one decimal, and set base_year_hours to that category's base-year hours as an INTEGER exactly as stated in the table. (d) base_year_value and total_contract_value are the government's stated workload priced at a rate WE assume, so PREFIX BOTH with "[Inferred] ". Compute base_year_value = annual hours times a REALISTIC blended fully-loaded hourly rate: for analytical / professional-services labor (data analysts, business process engineers, program managers, and similar) a defensible blended fully-loaded rate is roughly $100-$150/hr - use a higher rate ONLY for genuinely specialized or cleared labor and note that in award_value_rationale. Do NOT use inflated rates (e.g. $250+/hr) for standard analyst / professional labor. Example base_year_value "[Inferred] ~$1.8M/yr". total_contract_value = base_year_value times the real contract LENGTH IN YEARS, not the number of ordering periods - a 6-month base plus four 12-month option years is 4.5 years, not 5 - e.g. "[Inferred] ~$3.6M". In award_value_rationale state the hours basis and the assumed blended rate (e.g. "RFQ base-year workload of 14685 hours across 5 labor categories at a blended loaded rate of ~$125/hr").\n\n` +
     `IMPORTANT: Use only plain ASCII in all string values. No special characters, no em-dashes, no smart quotes, no newlines inside strings.\n\n` +
     `{"department_agency":"top-level Cabinet Department or independent agency, with abbreviation","sub_agency":"operating division/bureau/command beneath it with abbreviation, or empty string if none","contracting_office":"specific contracting/buying office issuing this action, or empty string if not stated","requirement_name":"EXACT verbatim title from document","id_number":"exact solicitation/RFQ/RFP number","stage":"exactly one of: Sources Sought | RFI | Draft | Pre-solicitation | RFQ | RFP (per rule 5); never 'Draft PWS'; or 'Not stated in documents'","next_due_date":"","opportunity_url":"","source":"where this opportunity was found/sourced if the user or documents state it - e.g. SAM.gov, GSA eBuy, Unison Marketplace/ORBIT, an agency forecast (APFS/AFPS), GovWin, a direct agency email, or a sources-sought notice. This is the portal/channel it came through, distinct from the contract vehicle. Use the value the user provided if noted; empty string if not stated","description":"2-3 sentence description in your own words; if this opportunity establishes or is itself a contract vehicle (IDIQ/MATOC/BPA/GWAC), state that explicitly","fte_count":"per the WORKLOAD / LEVEL-OF-EFFORT rule above when such a table is present (base-year hours only / 1912, one decimal, PREFIXED [GovEst]); else the explicitly stated figure (no prefix); else empty string","contract_years":"total years in the period of performance as a PLAIN INTEGER (base year + all option years), e.g. 5 for a base plus four option years; empty string if not stated - do NOT put hours, dollars, or dates here","place_of_performance":"","work_setting":"","period_of_performance":"","pop_start_date":"the START date of the base period of performance if the documents state one (e.g. an anticipated award date or base-period start); if only estimated/anticipated, prefix [Inferred]; empty if not stated","pop_end_date":"the END date of the BASE period ONLY (the first ordering/performance period, typically ~364-365 days after pop_start_date) as YYYY-MM-DD. This is NOT the end of the option years - if the base period is 12 months and starts 2025-10-01 this is 2026-09-30. Use a stated base-period end if given; else compute it from pop_start_date + the base period length (prefix [Inferred] if computed). Do NOT put the final option-year end date here - that is last_possible_performance_date. Empty if neither stated nor computable","last_possible_performance_date":"the LAST date performance can occur on the contract, INCLUDING every option period - the end of the final option year (typically ~5 years after pop_start_date for a base + four options) as YYYY-MM-DD. This is DISTINCT from pop_end_date: pop_end_date ends the base period, this ends the whole contract. On a single-period contract with no options the two are the SAME. Use a stated final/option end date if given; else compute it from pop_start_date + total contract duration (base + all options), prefix [Inferred]; empty if neither stated nor computable","facility_clearance_required":"","personnel_clearance_required":"","set_aside":"the EXACT operative set-aside from the solicitation (the SAM.gov Set-Aside Type, the 'Set-Aside:' block, or the FAR clause: 52.219-6 = Total Small Business, 52.219-27 = SDVOSB, 52.219-30 = WOSB, 52.219-29 = EDWOSB, 52.219-3 = HUBZone, 52.219-18 = 8(a)). These are DISTINCT categories - never substitute one for another; a Total Small Business set-aside is NOT WOSB/SDVOSB/8(a)/HUBZone. Cross-check against the required certifications - if offerors must hold a specific certification, the set_aside MUST match it. Do NOT infer a socioeconomic set-aside from small-business subcontracting goals, agency socioeconomic goals, or NAICS size-standard eligibility - classify ONLY from the operative set-aside determination. Use 'Not stated in documents' only if genuinely absent","contract_vehicle":"the NAME of the existing contract vehicle this work is ordered under, if any - e.g. SEWP V, OASIS+, Alliant 2, GSA MAS / Federal Supply Schedule, CIO-SP4, 8(a) STARS III, or a specifically named agency IDIQ or BPA. This is a PROPER NAME, not a contract type or structure: do NOT put IDIQ, MATOC, BPA, GWAC, single/multiple award, FFP, or T&M here (those belong in contract_type). If this opportunity is ITSELF establishing a new vehicle (e.g. standing up an IDIQ/MATOC/BPA that is being competed), put N/A here and make that clear in requirement_name and description instead. If the work is open-market/standalone or no named vehicle is identified, put N/A","ko_name_office":"","cor_name_office":"","naics_code":"","sin":"","psc":"","base_year_value":"","total_contract_value":"","award_value_rationale":"","new_or_recompete":"","incumbent":"","contract_type":"","sca_coverage":"whether the contract is covered by the Service Contract Act / Service Contract Labor Standards (SCLS). Answer 'Yes - SCA covered' if a Wage Determination is attached or referenced (a WD document, an SF-98/98a, a WD number such as 2015-XXXX or a state/area WD, or DOL occupation-and-wage tables) OR FAR 52.222-41 applies - the PRESENCE of a Wage Determination is DECISIVE, answer Yes. Answer 'No - exempt' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption). Do NOT answer No merely because the work sounds professional or technical. Use 'Not stated in documents' only if genuinely not addressed","loe_basis":"government if the solicitation gives a workload/staffing/hours table, otherwise quoter (you propose the team in a pricing model); empty if unclear","certifications_required":[],"labor_categories":[{"lcat":"Exact Labor Category Title","key_personnel":false,"is_sca":false,"min_hourly_rate":"","clearance":"","experience_yrs":"","education":"","base_year_fte":"","base_year_hours":"","est_loaded_rate":"","notes":""}],"pursuit_recommendation":"prime/sub/pass with brief rationale"}`;
 
@@ -18949,6 +19110,29 @@ async function lookupIncumbentViaWeb(intel, apiKey) {
 // total_contract_value = base x periods (the $182K base -> $26.3M total bug). So we parse conservatively
 // and CLAMP to [1,10], falling back to period_of_performance and the pop start/end dates before defaulting
 // to 5. This keeps FTEs, base value, and total value consistent instead of fragmented.
+// Real contract LENGTH in years, as distinct from the number of ordering periods.
+// A 6-month base plus four 12-month options is FIVE periods but only 4.5 years, and
+// multiplying an annual rate of spend by the period COUNT overstates the contract by
+// 11%. This is the same distinction pricingValueTieOut() already draws; the BNA
+// surface needed its own copy because it has no period array to sum, only dates.
+function _bnaContractYears(intel) {
+  intel = intel || {};
+  const periods = _bnaContractPeriods(intel);
+  const strip = s => String(s == null ? '' : s).replace(/^\s*\[[^\]]*\]\s*/, '');
+  let baseYears = 0;
+  const ds = Date.parse(strip(intel.pop_start_date)), de = Date.parse(strip(intel.pop_end_date));
+  if (!isNaN(ds) && !isNaN(de) && de > ds) {
+    const yr = (de - ds) / (365.25 * 86400000);
+    if (yr > 0.04 && yr <= 5) baseYears = yr;            // pop_end_date is the BASE period end (v150)
+  }
+  if (!baseYears) {
+    const m = String(intel.period_of_performance || '').match(/base[^.;]{0,40}?(\d{1,2})\s*month/i);
+    if (m) { const mo = parseInt(m[1], 10); if (mo >= 1 && mo <= 60) baseYears = mo / 12; }
+  }
+  if (!baseYears) return periods;    // base length unknown — the count is the best we have
+  return Math.round((baseYears + Math.max(0, periods - 1)) * 100) / 100;
+}
+
 function _bnaContractPeriods(intel) {
   intel = intel || {};
   const clamp = n => Math.min(10, Math.max(1, Math.round(n)));
@@ -19048,6 +19232,115 @@ function pxIntegerFte(vals, target) {
   return fl;
 }
 
+// ── WAVE A: the real priced rate, when there is one ─────────────────────────
+// Returns the fully burdened rate this role is ACTUALLY priced at, or null when
+// there is no price model, no matching role, or no rate yet.
+//
+// The opportunity-stamp guard is load-bearing. pricingModel persists in
+// localStorage across opportunities, so without it a BNA for opportunity B would
+// silently inherit opportunity A's rates — a worse failure than the estimate it
+// replaces, because it looks authoritative.
+function _bnaPricedRate(lcatName) {
+  try {
+    if (typeof pricingModel === 'undefined' || !pricingModel) return null;
+    if (!Array.isArray(pricingModel.lcats) || !pricingModel.lcats.length) return null;
+    if (typeof pricingOppMismatch === 'function') {
+      const mm = pricingOppMismatch();
+      if (mm && mm.kind === 'mismatch') return null;
+    }
+    const norm = s => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const want = norm(lcatName);
+    if (!want) return null;
+    const l = pricingModel.lcats.find(x => norm(x.name) === want);
+    if (!l) return null;
+    const r = (typeof pricingBilledRate === 'function') ? pricingBilledRate(l, 0) : 0;
+    return (isFinite(r) && r > 0) ? r : null;
+  } catch (e) {
+    // A silent fall-back to a guess is the exact failure this wave exists to end.
+    // Returning null is still correct, but it must not happen quietly.
+    try { log('BNA could not read the priced rate for "' + lcatName + '" (' +
+      ((e && e.message) || e) + ') — falling back to an estimated rate.', 'warn'); } catch (e2) {}
+    return null;
+  }
+}
+
+// ── WAVE C: keep the two surfaces reconciled ────────────────────────────────
+// A signature of the priced rates, so the refresh below is a no-op unless the
+// numbers that feed the BNA actually moved.
+let _bnaLastPriceSig = '';
+let _bnaRefreshing = false;
+function _bnaPriceSig() {
+  try {
+    if (typeof pricingModel === 'undefined' || !pricingModel || !Array.isArray(pricingModel.lcats)) return '';
+    return pricingModel.lcats.map(l =>
+      String(l.name || '') + ':' + Math.round(((typeof pricingBilledRate === 'function' ? pricingBilledRate(l, 0) : 0) || 0) * 100)
+    ).join('|');
+  } catch (e) { return ''; }
+}
+
+// Re-run the staffing/value reconciliation against the current price model and
+// re-render the BNA readout. One-directional by design: this reads Pricing and
+// writes the BNA, never the reverse, and the reentrancy flag makes a loop
+// impossible even if a future render calls back.
+function bnaRefreshFromPricing(force) {
+  try {
+    if (_bnaRefreshing) return false;
+    const intel = (typeof window !== 'undefined') ? window._lastBnaIntel : null;
+    if (!intel || typeof reconcileStaffing !== 'function') return false;
+    const sig = _bnaPriceSig();
+    if (!force && sig === _bnaLastPriceSig) return false;
+    _bnaLastPriceSig = sig;
+    _bnaRefreshing = true;
+    try {
+      reconcileStaffing(intel);
+      const body = (typeof window !== 'undefined') ? window._bnaIntelBody : null;
+      if (body && typeof renderOpportunityIntel === 'function') renderOpportunityIntel(intel, body);
+    } finally { _bnaRefreshing = false; }
+    return true;
+  } catch (e) { _bnaRefreshing = false; return false; }
+}
+
+// ── PHASE 6: whose hours-per-FTE year is this? ──────────────────────────────
+// Returns null when the current basis is already the best explanation, else
+// { hpf, clean, total, currentHpf, currentClean }.
+//
+// Bases in real solicitations: 2,080 (payroll year, still common in older workload
+// tables), 1,920, 1,912 (the modern billable year), 1,880, 1,860, 1,800.
+const _GOV_HPF_CANDIDATES = [2088, 2080, 2040, 2000, 1960, 1920, 1912, 1880, 1860, 1800];
+
+function detectGovHoursBasis(lcats, currentHpf) {
+  const rows = (Array.isArray(lcats) ? lcats : [])
+    .map(c => parseFloat(String((c && c.base_year_hours) != null ? c.base_year_hours : '')
+      .replace(/[^0-9.]/g, '')))
+    .filter(h => isFinite(h) && h > 0);
+  if (rows.length < 2) return null;
+  const cur = (isFinite(currentHpf) && currentHpf > 0) ? currentHpf : 1912;
+
+  // A basis explains a role when the hours divide to a whole FTE. Roles under half an
+  // FTE are genuinely fractional (a 60-hour advisory slot is 60 hours on ANY basis) —
+  // they explain under nothing and must not be counted for or against a candidate.
+  const cleanUnder = H => rows.filter(h => {
+    const f = h / H;
+    return f >= 0.5 && Math.abs(f - Math.round(f)) < 0.005;
+  }).length;
+
+  const currentClean = cleanUnder(cur);
+  let best = null;
+  _GOV_HPF_CANDIDATES.forEach(H => {
+    if (H === cur) return;
+    const n = cleanUnder(H);
+    // Must beat the incumbent, explain at least two roles, and explain at least half
+    // of them. One lucky coincidence is not a basis.
+    if (n > currentClean && n >= 2 && n >= Math.ceil(rows.length / 2)) {
+      if (!best || n > best.clean) best = { hpf: H, clean: n, total: rows.length };
+    }
+  });
+  if (!best) return null;
+  best.currentHpf = cur;
+  best.currentClean = currentClean;
+  return best;
+}
+
 function reconcileStaffing(intel) {
   try {
     if (!intel || typeof intel !== 'object') return intel;
@@ -19057,7 +19350,11 @@ function reconcileStaffing(intel) {
       if (!intel._lcRaw) { if (Array.isArray(intel.labor_categories)) intel._lcRaw = JSON.parse(JSON.stringify(intel.labor_categories)); }
       else { intel.labor_categories = JSON.parse(JSON.stringify(intel._lcRaw)); }
     } catch (e) {}
-    const HPF = (typeof defaultHpf === 'function') ? (defaultHpf() || 1912) : 1912;
+    // HPF feeds every figure below — FTE, blended rate, base-year value, total — so
+    // adopting the Government's own basis here corrects the whole chain at once.
+    const _hpfOwn = (typeof defaultHpf === 'function') ? (defaultHpf() || 1912) : 1912;
+    const _govHpf = detectGovHoursBasis(intel.labor_categories, _hpfOwn);
+    const HPF = _govHpf ? _govHpf.hpf : _hpfOwn;
     const num = v => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.]/g, '')); return isNaN(n) ? 0 : n; };
     const dollars = v => { const s = String(v == null ? '' : v); const m = s.match(/([\d,]+(?:\.\d+)?)\s*([mbk])?/i); if (!m) return 0; let n = parseFloat(m[1].replace(/,/g, '')); if (isNaN(n)) return 0; const suf = (m[2] || '').toLowerCase(); if (suf === 'k') n *= 1e3; else if (suf === 'm') n *= 1e6; else if (suf === 'b') n *= 1e9; return n; };
     const isInf = v => /^\s*\[inferred\]/i.test(String(v == null ? '' : v));
@@ -19095,9 +19392,15 @@ function reconcileStaffing(intel) {
     const source = ((govHours || govFte) && !declaredQuoter) ? 'government-workload' : 'proposed-loe';
     intel.staffing_source = source;
 
+    // Precedence: the REAL priced rate beats a stated wage floor, which beats the
+    // model's estimate, which beats a hardcoded default. Each role records which
+    // one it got, so the readout can say whether these are prices or guesses.
     const rateFor = c => {
-      if (num(c.min_hourly_rate) > 0) return num(c.min_hourly_rate) * 1.7;   // burden a stated wage floor
-      if (num(c.est_loaded_rate) > 0) return num(c.est_loaded_rate);
+      const priced = _bnaPricedRate(c.lcat);
+      if (priced) { c._rateBasis = 'priced'; return priced; }
+      if (num(c.min_hourly_rate) > 0) { c._rateBasis = 'wage-floor'; return num(c.min_hourly_rate) * 1.7; }
+      if (num(c.est_loaded_rate) > 0) { c._rateBasis = 'ai-estimate'; return num(c.est_loaded_rate); }
+      c._rateBasis = 'assumed-default';
       const t = (c.lcat || '').toLowerCase();
       if (c.key_personnel === true || c.key_personnel === 'true' || /program manager|project manager|\bpm\b|principal|director|\bsme\b|subject matter|architect|\blead\b/.test(t)) return 160;
       if (/senior|\bsr\b|engineer|advisor|consultant|specialist/.test(t)) return 120;
@@ -19112,6 +19415,21 @@ function reconcileStaffing(intel) {
       c._fte = fte; c._rate = rateFor(c);
     });
 
+    // WAVE B: where did each rate come from? A blended figure built from guesses and
+    // one built from the priced model are not the same claim, and the difference was
+    // invisible until it produced a 53% divergence on a live pursuit.
+    // SNAPSHOT at the moment the rate is decided. A lazy closure over `cats` reads
+    // whatever the anchor-scaling logic left behind further down — which zeroed the
+    // rate while leaving the basis intact, so the detail looked populated and was not.
+    const _rateSnapshot = cats.map(c => ({
+      lcat: c.lcat, rate: Math.round((c._rate || 0) * 100) / 100,
+      basis: c._rateBasis || 'assumed-default'
+    }));
+    const rateDetail = () => _rateSnapshot;
+    const rateSourceOf = () => {
+      const d = rateDetail(), n = d.filter(x => x.basis === 'priced').length;
+      return !d.length ? 'none' : (n === 0 ? 'estimated' : (n === d.length ? 'priced' : 'mixed'));
+    };
     const laborOf = () => cats.reduce((s, c) => s + c._fte * HPF * c._rate, 0);
     let labor = laborOf();
     const periods = _bnaContractPeriods(intel);
@@ -19151,21 +19469,40 @@ function reconcileStaffing(intel) {
       if (source === 'government-workload' && govH > 0) { c.base_year_hours = Math.round(govH); c.base_year_fte = Math.round((govH / HPF) * 100) / 100; }
       else { c.base_year_fte = Math.round(c._fte * 100) / 100; c.base_year_hours = Math.round(c._fte * HPF); }
       if (!hasNum(c.est_loaded_rate)) c.est_loaded_rate = Math.round(c._rate);
-      delete c._k; delete c._fte; delete c._rate;
+      // _rateBasis joins the scratch fields stripped here: the snapshot above has
+      // already captured it, and anything left on a cat leaks into the persisted
+      // intel and out through any export of it.
+      delete c._k; delete c._fte; delete c._rate; delete c._rateBasis;
     });
     intel.labor_categories = cats;
     intel.fte_count = (source === 'government-workload' ? '[GovEst] ' : '[Proposed] ') + (Math.round(totalFte * 100) / 100);
 
     const fmt = v => v >= 1e6 ? ('$' + (Math.round(v / 1e5) / 10) + 'M') : ('$' + Math.round(v / 1000) + 'K');
     const anchorVal = statedHard ? anchorTarget : labor;   // the base-year $ the total ties to
+    // The base-year figure is an ANNUAL RATE OF SPEND, so the contract total is that
+    // rate times the real contract LENGTH — never times the number of ordering periods.
+    const contractYears = _bnaContractYears(intel);
     if (statedHard) {                        // keep the hard base (stated OR incumbent-sourced) verbatim; derive the total from IT
-      if (!hasNum(intel.total_contract_value) || isInf(intel.total_contract_value)) intel.total_contract_value = '[Inferred] ~' + fmt(anchorVal * periods);
+      if (!hasNum(intel.total_contract_value) || isInf(intel.total_contract_value)) intel.total_contract_value = '[Inferred] ~' + fmt(anchorVal * contractYears);
     } else {                                 // derive the value from the reconciled team - always ties out
       intel.base_year_value = '[Inferred] ~' + fmt(labor) + '/yr';
-      intel.total_contract_value = '[Inferred] ~' + fmt(labor * periods);
-      intel.award_value_rationale = 'Reconciled from a ' + (source === 'government-workload' ? 'government-stated workload of ' : 'proposed ' + cats.length + '-role team, ') + (Math.round(totalFte * 100) / 100) + ' FTE (' + Math.round(totalFte * HPF).toLocaleString() + ' base-year hours) at a blended ~$' + Math.round(blended) + '/hr fully-loaded.' + (source === 'proposed-loe' ? ' Quoter-defined LOE \u2014 confirm headcount in Pricing.' : '');
+      intel.total_contract_value = '[Inferred] ~' + fmt(labor * contractYears);
+      intel.award_value_rationale = 'Reconciled from a ' + (source === 'government-workload' ? 'government-stated workload of ' : 'proposed ' + cats.length + '-role team, ') + (Math.round(totalFte * 100) / 100) + ' FTE (' + Math.round(totalFte * HPF).toLocaleString() + ' base-year hours) at a blended ~$' + Math.round(blended) + '/hr fully-loaded' + (rateSourceOf() === 'priced'
+        ? ', priced from the rates in the Pricing tab.'
+        : rateSourceOf() === 'mixed'
+          ? ' \u2014 some roles priced from the Pricing tab, the rest ASSUMED. Build out Pricing to replace the assumptions.'
+          : ' \u2014 rates are ASSUMED for sizing only, not priced. Build the Pricing tab and this figure will be recomputed from your real rates.')
+        + (contractYears !== periods ? ' Contract total = that annual rate \u00d7 ' + contractYears + ' contract years (' + periods + ' ordering periods, base period shorter than 12 months).' : '') + (_govHpf ? ' The solicitation\u2019s workload table is built on ' + _govHpf.hpf.toLocaleString() +
+        ' hours per FTE-year, not the ' + _govHpf.currentHpf.toLocaleString() + ' this tool bills at (' +
+        _govHpf.clean + ' of ' + _govHpf.total + ' categories divide to whole FTE on it), so these figures use ' +
+        _govHpf.hpf.toLocaleString() + ' \u2014 which is why they read as whole positions rather than ' +
+        (Math.round((_govHpf.hpf / _govHpf.currentHpf) * 100) / 100) + '.' : '') +
+        (source === 'proposed-loe' ? ' Quoter-defined LOE \u2014 confirm headcount in Pricing.' : '');
     }
-    intel._staffingReconciliation = { source: source, nRoles: cats.length, totalFte: Math.round(totalFte * 100) / 100, blended: Math.round(blended), baseValue: Math.round(anchorVal), periods: periods, valueDerived: !statedHard,
+    intel._staffingReconciliation = { source: source, nRoles: cats.length, totalFte: Math.round(totalFte * 100) / 100, blended: Math.round(blended), baseValue: Math.round(anchorVal), periods: periods, contractYears: contractYears, valueDerived: !statedHard,
+      rateDetail: rateDetail(), rateSource: rateSourceOf(),
+      govHpf: _govHpf ? _govHpf.hpf : null, govHpfFrom: _govHpf ? _govHpf.currentHpf : null,
+      govHpfClean: _govHpf ? _govHpf.clean : 0, govHpfTotal: _govHpf ? _govHpf.total : 0,
       stated: statedHard ? { low: byRange.low, high: byRange.high, isRange: !!byRange.isRange, from: anchorFrom, totalRange: _totalRange } : null,
       anchorMode: anchorMode, anchorTarget: Math.round(anchorTarget), impliedLabor: Math.round(labor), hpf: HPF };
     return intel;
@@ -19199,11 +19536,25 @@ function _staffingBanner(intel) {
 // (-05:00 is Eastern in winter but Central in summer, so naming a zone would be a fabrication).
 function _fmtOppDate(v) {
   const s = String(v == null ? '' : v).trim();
+  const MON = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  // PARTIAL DATES. A solicitation that states only "February 2027" gets extracted as
+  // 2027-02, and that is the honest answer — inventing a day would look precise and
+  // be fabricated. But it must not leak out as raw ISO next to "January 31, 2028",
+  // so render it in the same house format.
+  const pm = s.match(/^(\d{4})-(\d{1,2})$/);
+  if (pm) {
+    const pmo = +pm[2];
+    if (pmo >= 1 && pmo <= 12) return MON[pmo - 1] + ' ' + pm[1];
+    return s;
+  }
+  const py = s.match(/^(\d{4})$/);
+  if (py) { const y = +py[1]; return (y >= 1900 && y <= 2200) ? py[1] : s; }
+
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?)?\s*(Z|[+-]\d{2}:?\d{2})?$/);
   if (!m) return s;                                  // already human-readable, or not a date at all
   const mo = +m[2], d = +m[3];
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return s;
-  const MON = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   let out = MON[mo - 1] + ' ' + d + ', ' + m[1];
   if (m[4] != null) {
     const h = +m[4];
