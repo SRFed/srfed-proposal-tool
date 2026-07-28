@@ -262,6 +262,14 @@
   }
   .token-bar-fill.warn   { background: #f59e0b; }
   .token-bar-fill.danger { background: #ef4444; }
+  /* #2: PROVISIONAL. Until every file behind a row has had its real text measured, the row is
+     drawn from a byte-based guess and must not assert a safe/warn/danger verdict. Hatched grey
+     says "this number is not settled yet" without pretending to know which way it will move. */
+  .token-bar-fill.pending {
+    background: repeating-linear-gradient(45deg, #cbd5e1 0 6px, #e2e8f0 6px 12px);
+    animation: tmPendingShift 1.1s linear infinite;
+  }
+  @keyframes tmPendingShift { from { background-position: 0 0; } to { background-position: 17px 0; } }
   .token-meter-sub { margin-top: 6px; font-size: 11px; color: var(--muted); }
   .token-meter-hint { font-size: 11px; font-weight: 500; color: var(--muted); }
   .tm-row { padding: 9px 0; border-top: 1px solid #f1f5f9; }
@@ -271,6 +279,8 @@
   .tm-row-note { font-size: 10px; font-weight: 600; color: var(--muted); background: #f1f5f9; padding: 1px 6px; border-radius: 4px; margin-left: 7px; white-space: nowrap; }
   .tm-row-count { font-size: 12px; font-weight: 700; white-space: nowrap; }
   .tm-row-count.safe { color: var(--success); } .tm-row-count.warn { color: var(--warn); } .tm-row-count.danger { color: var(--error); }
+  .tm-row-count.pending { color: #64748b; }
+  .tm-row-pending { margin-top: 4px; font-size: 10.5px; font-weight: 600; color: #64748b; line-height: 1.45; }
   .tm-row .token-bar-track { height: 7px; }
   .tm-row-desc { margin-top: 4px; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
   .token-meter-foot { margin-top: 11px; padding-top: 9px; border-top: 1px dashed var(--border); font-size: 10.5px; color: var(--muted); line-height: 1.55; }
@@ -974,7 +984,7 @@
      bar — which pushes .container down — never covers it. -->
 
 <!-- ══ GLOBAL STICKY STATUS / PROGRESS BAR (under header, all tabs) ══════ -->
-<div id="globalStatusBar" style="display:none;position:fixed;top:0;left:212px;right:0;z-index:150;background:white;border-bottom:2px solid var(--light-blue);box-shadow:0 2px 8px rgba(0,95,213,0.12);transition:all 0.2s">
+<div id="globalStatusBar" style="display:none;position:fixed;top:0;left:212px;right:0;z-index:150;background:white;border-bottom:2px solid var(--light-blue);box-shadow:0 2px 8px rgba(0,95,213,0.12);transition:all 0.2s,opacity 0.5s ease">
   <div style="max-width:1100px;margin:0 auto;padding:8px 24px">
     <!-- Minimized strip: just title + ETA on one line -->
     <div id="gsbMinimized" style="display:none;align-items:center;gap:10px;cursor:pointer" onclick="_gsbExpand()" title="Click to expand">
@@ -2595,8 +2605,9 @@
       <textarea id="resReq" placeholder="Paste the solicitation's qualification requirements for this role &mdash; degree, years of experience, certifications, clearance. The AI checks the resume against each one." style="min-height:80px"></textarea>
       <div style="margin-top:8px;padding:10px 12px;background:var(--pale,var(--info-bg));border:1px solid var(--info-border);border-radius:8px">
         <div style="font-size:12.5px;font-weight:700;color:var(--blue);margin-bottom:2px">Seed requirements from the analyzed opportunity</div>
-        <div style="font-size:11.5px;color:var(--muted);line-height:1.5;margin-bottom:8px">If you've analyzed an opportunity on the Bid/No-Bid tab, this pulls its clearance, required certifications, and key capability areas into the requirements box above &mdash; so you don't retype them. It fills the box only if it's empty.</div>
+        <div style="font-size:11.5px;color:var(--muted);line-height:1.5;margin-bottom:8px">If you've analyzed an opportunity on the Bid/No-Bid tab, this lists the labor categories it found. Pick the one you're building this resume for and its stated qualifications &mdash; clearance, education, experience, certifications &mdash; drop into the requirements box above. Picking a role replaces whatever is in the box.</div>
         <button type="button" class="btn sm" onclick="resumeSeedReq()">↓ Seed requirements from analyzed opportunity</button>
+        <div id="resSeedPicker" style="display:none;margin-top:10px"></div>
       </div>
 
       <!-- ── Contact information (collapsible, collapsed by default) ─────── -->
@@ -3157,7 +3168,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '169';
+const APP_VERSION = '171';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -7478,16 +7489,31 @@ function updateTokenMeter() {
   const kk        = n => `${Math.round(n / 1000).toLocaleString('en-US')}k`;
   const levelFor  = (used, budget) => { const p = used / budget * 100; return p >= 85 ? 'danger' : p >= 60 ? 'warn' : 'safe'; };
 
+  // #2: A ROW MAY NOT CLAIM A VERDICT IT HAS NOT EARNED.
+  // estimateTokens() falls back to a byte-based guess (TOKENS_PER_KB) until measureFileTokens
+  // has extracted a file's real text. For PDFs that guess runs high by a wide margin, because
+  // most of a PDF's bytes are fonts, images and structure rather than text. measureAndRerender
+  // then measures EVERY unmeasured file in the array -- including ones loaded earlier -- so a
+  // later load could swap several inflated guesses for real, much smaller counts and the bar
+  // would FALL even though documents had just been added. The arithmetic was right both times;
+  // what was missing was any signal that the first figure was provisional. So: while any file
+  // behind a row is unmeasured, the row shows no colour verdict and says it is still measuring.
+  const unmeasuredIn = arr => arr.filter(f => f && f._tokens == null).length;
+
   // One bar = one outgoing API call, measured against THAT call's own budget.
-  const row = (icon, label, note, used, budget, desc) => {
-    const lvl = levelFor(used, budget);
-    const pct = Math.min(used / budget * 100, 100);
+  const row = (icon, label, note, used, budget, desc, files) => {
+    const src     = files || [];
+    const pendCnt = unmeasuredIn(src);
+    const lvl     = pendCnt ? 'pending' : levelFor(used, budget);
+    const pct     = Math.min(used / budget * 100, 100);
+    const note2   = pendCnt ? `sizing ${pendCnt} of ${src.length}` : note;
     return `<div class="tm-row">
       <div class="tm-row-top">
-        <span class="tm-row-label">${icon} ${label}<span class="tm-row-note">${note}</span></span>
-        <span class="tm-row-count ${lvl}">~${kk(used)} / ${kk(budget)}</span>
+        <span class="tm-row-label">${icon} ${label}<span class="tm-row-note">${note2}</span></span>
+        <span class="tm-row-count ${lvl}">${pendCnt ? '' : '~'}${kk(used)} / ${kk(budget)}${pendCnt ? ' (estimate)' : ''}</span>
       </div>
       <div class="token-bar-track"><div class="token-bar-fill${lvl !== 'safe' ? ' ' + lvl : ''}" style="width:${pct}%"></div></div>
+      ${pendCnt ? `<div class="tm-row-pending">Still measuring ${pendCnt} file${pendCnt !== 1 ? 's' : ''} \u2014 this figure is a size-based estimate, not a count, and will change once the real text is read. PDFs usually come in well UNDER their estimate.</div>` : ''}
       <div class="tm-row-desc">${desc}</div>
     </div>`;
   };
@@ -7497,7 +7523,7 @@ function updateTokenMeter() {
   // 1) RFP / PWS → the briefing (and analysis) read
   html += row('📄', 'RFP / PWS reading', 'briefing', rfpTok, RFP_BUDGET,
     `${allRFP.length} solicitation file${allRFP.length !== 1 ? 's' : ''} — sent in one call so the tool can extract requirements, evaluation factors, and metadata.` +
-    (rfpTok > RFP_BUDGET ? ' <strong style="color:var(--error)">Over the limit — the largest files will be skipped.</strong> Keep only the core PWS, Section L, Section M, and amendments.' : ''));
+    (rfpTok > RFP_BUDGET ? ' <strong style="color:var(--error)">Over the limit — the largest files will be skipped.</strong> Keep only the core PWS, Section L, Section M, and amendments.' : ''), allRFP);
 
   // 2) Company docs → read once, up front; powers Past Performance AND grounds the
   //    Technical / Management / Key Personnel / Executive volumes in real strengths.
@@ -7505,12 +7531,12 @@ function updateTokenMeter() {
     allCompany.length
       ? `${allCompany.length} company document${allCompany.length !== 1 ? 's' : ''}${spCount ? ` (${spCount} from SharePoint)` : ''} — read once, up front. Builds your Past Performance references and grounds the Technical, Management, and Executive volumes in your proven experience.` +
         (coTok > COMPANY_BUDGET ? ' <strong style="color:var(--error)">Over the limit — the largest files will be skipped.</strong>' : '')
-      : 'No company documents loaded — Past Performance would fall back to [PROVIDE: …] placeholders and the Technical volume would rely on your win themes. Add resumes / past-performance docs or a SharePoint folder.');
+      : 'No company documents loaded — Past Performance would fall back to [PROVIDE: …] placeholders and the Technical volume would rely on your win themes. Add resumes / past-performance docs or a SharePoint folder.', allCompany);
 
   // 3) Tone → one-time style pass (only when a tone folder is loaded)
   if (allTone.length) {
     html += row('✍️', 'Style matching', 'one-time · optional', toneTok, TONE_BUDGET,
-      `${allTone.length} past proposal${allTone.length !== 1 ? 's' : ''} — sent once to learn your house voice. Style only; no facts, names, or numbers are reused.`);
+      `${allTone.length} past proposal${allTone.length !== 1 ? 's' : ''} — sent once to learn your house voice. Style only; no facts, names, or numbers are reused.`, allTone);
   }
 
   rowsEl.innerHTML = html;
@@ -11554,10 +11580,12 @@ async function marketRun(btn) {
     if (typeof showStatus === 'function') showStatus('info', 'Lookup already running', 'One market-rate lookup is in flight \u2014 it will finish in a moment.');
     return;   // #4a: without this guard a second run corrupts the first run's saved button label
   }
-  if (!role) { show('Enter a position / labor category first.', true); return; }
-  if (!remote && !loc) { show('Enter a location, or check Remote / national.', true); return; }
+  // #12: a validation bail means no lookup started, so the pending role binding is stale.
+  // Left set, it would silently attach the NEXT free-form lookup's result to this role.
+  if (!role) { _mktLookupRoleId = null; show('Enter a position / labor category first.', true); return; }
+  if (!remote && !loc) { _mktLookupRoleId = null; show('Enter a location, or check Remote / national.', true); return; }
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
-  if (!apiKey) { show('Enter your Anthropic API key (top of the page) first.', true); return; }
+  if (!apiKey) { _mktLookupRoleId = null; show('Enter your Anthropic API key (top of the page) first.', true); return; }
   // The old code HID the pane (display:none) and blanked it, so a running lookup
   // looked like nothing had happened. Clear it the same way but leave a NAMED,
   // spinning placeholder in place, so it is obvious which role is being searched
@@ -11572,6 +11600,10 @@ async function marketRun(btn) {
   }
   const _restore = _mktSpin(btn);
   _mktRunBusy = true;
+  // #12: capture the owning role NOW, at dispatch. Reading the global back at completion
+  // time is what let a mid-flight second click redirect this result onto a different role.
+  const _ownerRoleId = _mktLookupRoleId;
+  _mktSetLocked(true);
   status.style.display = 'none';   // #24: no grey loading line; the button's spinner is the loading cue
   try {
     const _rctx = _mktRoleContext(role);
@@ -11579,7 +11611,7 @@ async function marketRun(btn) {
     marketRender(data, { role: role, loc: loc, profile: _rctx, level: level, clear: clear });
     // #4a: hand the result's owning role forward. Null for a free-form lookup, which correctly
     // clears any binding left over from a previous per-role lookup.
-    _mktResultRoleId = _mktLookupRoleId;
+    _mktResultRoleId = _ownerRoleId;
     if (_mktResultRoleId && typeof pricingModel !== 'undefined' && pricingModel && pricingModel.lcats) { const _lr = pricingModel.lcats.find(x => x.id === _mktResultRoleId); if (_lr) _lr.evaluated = true; }
     _mktLookupRoleId = null;
     if (typeof marketRenderChecklist === 'function') marketRenderChecklist();
@@ -11588,6 +11620,7 @@ async function marketRun(btn) {
     show('Lookup failed: ' + (e.message || e), true);
   } finally {
     _mktRunBusy = false;
+    _mktSetLocked(false);
     _restore();
   }
 }
@@ -11685,6 +11718,37 @@ let _mktRunBusy = false;
 // and parked on a data attribute: the old code did `btn._html = btn.innerHTML` at the START of every
 // run, so a second lookup begun before the first finished snapshotted the SPINNER as the "original"
 // text and both restores then put the spinner back \u2014 permanently.
+// #12: LOCK EVERY MARKET-RATE ENTRY POINT WHILE A LOOKUP IS IN FLIGHT.
+// Without this, clicking a second role mid-flight repopulated the top context inputs
+// with role B while role A's search was still the one actually running -- and worse,
+// marketLookupRole had already overwritten _mktLookupRoleId, so when A's lookup landed
+// it bound A's market data to role B and marked B researched. The busy flag alone did
+// not prevent that: it rejected the second RUN, but only after the inputs and the
+// pending role id had already been mutated. Locking the controls means the mutation
+// can never be attempted; snapshotting the owning role id in marketRun means that even
+// if it somehow were, the result still lands on the role that asked for it.
+function _mktSetLocked(locked) {
+  try {
+    ['mktRole', 'mktLoc', 'mktLevel', 'mktClear', 'mktRemote'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.disabled = !!locked;
+      el.style.opacity = locked ? '0.55' : '';
+      el.style.cursor = locked ? 'not-allowed' : '';
+    });
+    var run = document.getElementById('mktRunBtn');
+    if (run && locked) run.disabled = true;   // marketRun's own spinner restores this one
+    document.querySelectorAll('.mkt-lookup-btn').forEach(function (b) {
+      // A button already spinning is owned by _mktSpin, which restores it itself.
+      if (b.getAttribute('data-mkt-label') != null) return;
+      b.disabled = !!locked;
+      b.style.opacity = locked ? '0.5' : '';
+      b.style.cursor = locked ? 'not-allowed' : 'pointer';
+      b.title = locked ? 'A market-rate lookup is already running \u2014 this unlocks the moment it finishes.' : '';
+    });
+  } catch (e) {}
+}
+
 function _mktSpin(btn) {
   if (!btn) return function () {};
   if (btn.getAttribute && btn.getAttribute('data-mkt-label') == null) btn.setAttribute('data-mkt-label', btn.innerHTML);
@@ -11824,10 +11888,13 @@ function marketRenderChecklist() {
     // row that had been researched, leaving the whole list looking ragged.
     '<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto">' +
     '<span style="display:inline-flex;justify-content:flex-end;min-width:118px">' + chipFor(l) + '</span>' +
-    '<button onclick="marketLookupRole(\'' + l.id + '\', this)" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;min-width:104px;text-align:center">' + (l.evaluated ? 'Look up again' : 'Look up \u2192') + '</button>' +
+    '<button class="mkt-lookup-btn" onclick="marketLookupRole(\'' + l.id + '\', this)" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;min-width:104px;text-align:center">' + (l.evaluated ? 'Look up again' : 'Look up \u2192') + '</button>' +
     '</div>' +
     '</div>').join('');
   el.innerHTML = h;
+  // #12: these buttons are recreated on every render, so a render that happens while a
+  // lookup is running would hand back a fresh, clickable set. Re-assert the lock.
+  if (_mktRunBusy) _mktSetLocked(true);
 }
 // #5: fill the Market Rates search from a Pricing role and run it; success marks the role researched.
 // Sync EVERY market-rate context input to the role being looked up.
@@ -11879,6 +11946,15 @@ function _mktSyncInputsForRole(name, l) {
 async function marketLookupRole(id, btn) {
   const l = (typeof pricingModel !== 'undefined' && pricingModel && pricingModel.lcats) ? pricingModel.lcats.find(x => x.id === id) : null;
   if (!l) return;
+  // #12: reject BEFORE touching anything. The guard inside marketRun fires too late --
+  // by the time it runs, the context inputs have been repainted with this role and
+  // _mktLookupRoleId has already been redirected away from the lookup that is actually
+  // running. Nothing below this line may execute while another lookup is in flight.
+  if (_mktRunBusy) {
+    if (typeof showStatus === 'function') showStatus('info', 'Lookup already running',
+      'One market-rate lookup is in flight \u2014 the controls unlock the moment it finishes.');
+    return;
+  }
   // Sync ALL of the context inputs, clearing anything undeterminable. The old code
   // set the role, set the location only if it happened to be empty, and never
   // touched seniority or clearance — so every lookup after the first inherited the
@@ -13105,11 +13181,11 @@ function pricingLcatHeaderBanner() {
   // GRID, not flex: the header and every row share ONE track definition, so a
   // column sits in the same place on every row whatever its contents measure.
   return '<div style="display:grid;grid-template-columns:minmax(150px,2fr) 210px 188px 64px 64px auto;gap:6px 8px;align-items:center;padding:2px 10px 4px;border-bottom:1px solid #e5e7eb;margin-bottom:2px">'
-    + th('Labor Category', 'min-width:0')
-    + th('Paid Rate', 'min-width:0', 'What you enter, and in which basis. The other three derive from it.')
+    + th('Labor Category', 'min-width:0;text-align:center')
+    + th('Paid Rate', 'min-width:0;text-align:center', 'What you enter, and in which basis. The other three derive from it.')
     + th('Rate Detail', 'min-width:0;text-align:center', 'Company-paid vs fully-burdened, hourly vs annual. Company annual is at 2,080 payroll hours; burdened annual is at this role\u2019s billable Hrs/FTE. All calculated \u2014 not editable.')
-    + th('Proposed FTE', 'min-width:0;text-align:right', 'Full-time-equivalent staffing you propose for this role (base year)')
-    + th('Hrs/FTE', 'min-width:0;text-align:right', 'Billable hours per FTE for this role; blank = company default')
+    + th('Proposed FTE', 'min-width:0;text-align:center', 'Full-time-equivalent staffing you propose for this role (base year)')
+    + th('Hrs/FTE', 'min-width:0;text-align:center', 'Billable hours per FTE for this role; blank = company default')
     + '<div></div>'
     + '</div>';
 }
@@ -13126,7 +13202,9 @@ function pricingRateMatrixHtml(l) {
   const rowLbl = (txt, tip) => '<td title="' + (tip || '') + '" style="padding:2px 6px 2px 0;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;color:var(--muted);white-space:nowrap">' + txt + '</td>';
   const colLbl = txt => '<th style="padding:1px 6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;color:#9ca3af;text-align:right">' + txt + '</th>';
   const loaded = paid * W, salary = paid * 2080, annual = loaded * H;
-  return '<div style="flex-basis:188px;flex-shrink:0">'
+  // The 188px comes from the Step 4 GRID track, not from here (v166). The flex-basis this
+  // wrapper used to carry has been inert since then; removed so it cannot mislead.
+  return '<div style="min-width:0">'
     + '<table style="border-collapse:collapse;width:100%;background:#f8fafc;border:1px solid #eef2f7;border-radius:6px">'
     + '<thead><tr><th></th>' + colLbl('Hourly') + colLbl('Annual') + '</tr></thead>'
     + '<tbody>'
@@ -13172,7 +13250,7 @@ function pricingRenderLcats() {
       return `<div id="pxLcat_${l.id}" style="display:grid;grid-template-columns:minmax(150px,2fr) 210px 188px 64px 64px auto;gap:6px 8px;align-items:center;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
         <input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (as named in your proposal)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box"/>
         <select onchange="pricingSetGsaLcat('${l.id}',this.value)" style="flex:2;min-width:170px;padding:6px 30px 6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:white;text-overflow:ellipsis">${opts}</select>
-        <div style="display:flex;align-items:center;gap:4px"><span style="font-size:11px;color:var(--muted)" title="Full-time-equivalent staffing you propose for this role (base year)">Proposed FTE</span><input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" style="width:60px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:right"/></div>
+        <div style="display:flex;align-items:center;gap:4px"><span style="font-size:11px;color:var(--muted)" title="Full-time-equivalent staffing you propose for this role (base year)">Proposed FTE</span><input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" style="width:60px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:center"/></div>
         <span style="font-size:11px;color:var(--muted);white-space:nowrap">${pricingRowFte(l).toFixed(2)} FTE</span>
         <button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="margin-left:auto;background:none;border:none;color:var(--error);cursor:pointer;font-size:16px">✕</button>
         <div style="flex-basis:100%;font-size:11px;color:var(--muted);line-height:1.45;padding-left:2px">${rateNote}</div>
@@ -13199,11 +13277,11 @@ function pricingRenderLcats() {
       <input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (e.g. Registered Nurse)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;box-sizing:border-box"/>
       <div style="min-width:0;display:flex;align-items:center;gap:3px">
         <select onchange="pricingSetLcatRate('${l.id}','rateBasis',this.value)" title="What are you entering? The other three figures derive from it." style="flex:1;min-width:0;padding:6px 16px 6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:white;text-overflow:ellipsis">${opt('paid','Company Paid Hourly Rate')}${opt('salary','Company Paid Annualized Salary')}${opt('loaded','Fully Burdened Hourly Rate')}${opt('annual','Fully Burdened Annualized Salary')}</select>
-        <input type="text" inputmode="decimal" value="${_pxFmtMoney(rInput)}" onchange="pricingSetLcatRate('${l.id}','rateInput',this.value)" title="${l.rateStatus==='proposed'?'Proposed rate \u2014 recommended by the tool; edit or confirm to make it yours':(l.rateStatus==='entered'?'You set this rate':'')}" style="width:84px;flex-shrink:0;padding:6px 8px;border-radius:6px;font-size:12.5px;text-align:right;${_pxRateCellCss(l)}"/>
+        <input type="text" inputmode="decimal" value="${_pxFmtMoney(rInput)}" onchange="pricingSetLcatRate('${l.id}','rateInput',this.value)" title="${l.rateStatus==='proposed'?'Proposed rate \u2014 recommended by the tool; edit or confirm to make it yours':(l.rateStatus==='entered'?'You set this rate':'')}" style="width:84px;flex-shrink:0;padding:6px 8px;border-radius:6px;font-size:12.5px;text-align:center;${_pxRateCellCss(l)}"/>
       </div>
       ${pricingRateMatrixHtml(l)}
-      <input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" title="Proposed FTE" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right;box-sizing:border-box"/>
-      <input type="number" min="0" step="1" value="${l.hpf}" onchange="pricingSetLcat('${l.id}','hpf',this.value)" placeholder="${defaultHpf()}" title="Billable hours per FTE for this role; blank = company default" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right;box-sizing:border-box"/>
+      <input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" title="Proposed FTE" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
+      <input type="number" min="0" step="1" value="${l.hpf}" onchange="pricingSetLcat('${l.id}','hpf',this.value)" placeholder="${defaultHpf()}" title="Billable hours per FTE for this role; blank = company default" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
       <div style="display:flex;align-items:center;gap:5px;justify-content:flex-end">${_chip}<button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px">✕</button></div>
       ${_warn}
     </div>`;
@@ -13238,20 +13316,20 @@ function pricingRenderMatrix() {
       h += `<td style="padding:1px;border:1px solid var(--border);background:${zero ? '#f1f5f9' : '#ffffff'}">` +
         `<input type="number" min="0" step="1" value="${v > 0 ? v : 0}" onfocus="this.select()" oninput="pricingSetHours('${l.id}','${t.id}',this.value);pricingCellPaint(this)" style="width:42px;padding:3px 2px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;text-align:center;background:transparent;color:${zero ? 'var(--muted)' : 'var(--text)'}"/></td>`;
     });
-    h += `<td id="prt-hours-${l.id}" style="padding:4px 8px;border:1px solid var(--border);text-align:right;background:#f0f9ff;font-weight:600">${pricingRowHours(l.id).toLocaleString()}</td>`;
-    h += `<td id="prt-fte-${l.id}" style="padding:4px 8px;border:1px solid var(--border);text-align:right;background:#f0f9ff">${pricingRowFte(l).toFixed(2)}</td>`;
-    h += `<td id="prt-cost-${l.id}" style="padding:4px 8px;border:1px solid var(--border);text-align:right;background:#f0f9ff">${pricingFmt(pricingRowCost(l))}</td>`;
+    h += `<td id="prt-hours-${l.id}" style="padding:4px 8px;border:1px solid var(--border);text-align:center;background:#f0f9ff;font-weight:600">${pricingRowHours(l.id).toLocaleString()}</td>`;
+    h += `<td id="prt-fte-${l.id}" style="padding:4px 8px;border:1px solid var(--border);text-align:center;background:#f0f9ff">${pricingRowFte(l).toFixed(2)}</td>`;
+    h += `<td id="prt-cost-${l.id}" style="padding:4px 8px;border:1px solid var(--border);text-align:center;background:#f0f9ff">${pricingFmt(pricingRowCost(l))}</td>`;
     h += '</tr>';
   });
   // totals
   h += `<tr style="font-weight:700"><td style="padding:6px 8px;border:1px solid var(--border);position:sticky;left:0;background:#e0f2fe;z-index:1">Total (base year)</td>`;
-  pricingModel.tasks.forEach(t => { h += `<td id="pct-hours-${t.id}" style="padding:6px 8px;border:1px solid var(--border);text-align:right;background:#e0f2fe">${pricingColHours(t.id).toLocaleString()}</td>`; });
-  h += `<td id="pgt-hours" style="padding:6px 8px;border:1px solid var(--border);text-align:right;background:#bae6fd">${pricingTotalHours().toLocaleString()}</td>`;
-  h += `<td id="pgt-fte" style="padding:6px 8px;border:1px solid var(--border);text-align:right;background:#bae6fd">${(pricingTotalHours() / defaultHpf()).toFixed(2)}</td>`;
-  h += `<td id="pgt-cost" style="padding:6px 8px;border:1px solid var(--border);text-align:right;background:#bae6fd">${pricingFmt(pricingBaseTotal())}</td></tr>`;
+  pricingModel.tasks.forEach(t => { h += `<td id="pct-hours-${t.id}" style="padding:6px 8px;border:1px solid var(--border);text-align:center;background:#e0f2fe">${pricingColHours(t.id).toLocaleString()}</td>`; });
+  h += `<td id="pgt-hours" style="padding:6px 8px;border:1px solid var(--border);text-align:center;background:#bae6fd">${pricingTotalHours().toLocaleString()}</td>`;
+  h += `<td id="pgt-fte" style="padding:6px 8px;border:1px solid var(--border);text-align:center;background:#bae6fd">${(pricingTotalHours() / defaultHpf()).toFixed(2)}</td>`;
+  h += `<td id="pgt-cost" style="padding:6px 8px;border:1px solid var(--border);text-align:center;background:#bae6fd">${pricingFmt(pricingBaseTotal())}</td></tr>`;
   // cost by task
   h += `<tr><td style="padding:5px 8px;border:1px solid var(--border);position:sticky;left:0;background:#f8fafc;z-index:1;font-size:11px;color:var(--muted)">Price by task (base)</td>`;
-  pricingModel.tasks.forEach(t => { h += `<td id="pct-cost-${t.id}" style="padding:5px 8px;border:1px solid var(--border);text-align:right;font-size:11px;color:var(--muted)">${pricingFmt(pricingColCost(t.id))}</td>`; });
+  pricingModel.tasks.forEach(t => { h += `<td id="pct-cost-${t.id}" style="padding:5px 8px;border:1px solid var(--border);text-align:center;font-size:11px;color:var(--muted)">${pricingFmt(pricingColCost(t.id))}</td>`; });
   h += `<td colspan="3" style="border:1px solid var(--border);background:#f8fafc"></td></tr>`;
   h += '</tbody></table></div>';
   el.innerHTML = h;
@@ -16680,18 +16758,141 @@ function resumeMsg(msg, err) {
   const res = document.getElementById('resResults');
   if (res) { res.style.display = 'block'; res.innerHTML = '<div style="font-size:12.5px;color:' + (err ? 'var(--error)' : 'var(--muted)') + '">' + escHtml(msg) + '</div>'; }
 }
-function resumeSeedReq() {
-  const opp = window._bnaOpp || {};
-  const reqEl = document.getElementById('resReq');
-  if (!reqEl) return;
-  const certs = [].concat(opp.required_certifications || opp.certifications || []).filter(Boolean);
-  const caps = [].concat(opp.key_capabilities || opp.key_capabilities_needed || []).filter(Boolean);
+// #13: THIS BUTTON WAS READING FIELDS THAT DO NOT EXIST.
+// It looked for opp.required_certifications / opp.certifications and opp.key_capabilities /
+// opp.key_capabilities_needed on window._bnaOpp. Two of those three lines could never populate:
+// _bnaOpp is the SCORING extraction, whose opportunity schema carries required_clearance,
+// fte_count, set_aside, prime_eligible, contract_vehicle, estimated_value, required_cmmc and
+// required_iso -- and no certification or capability field at all. The clearance, education,
+// experience and certification detail actually lives on window._lastBnaIntel (the Opportunity
+// Details extraction), per labor category. So the button reported "nothing to seed from" on a
+// fully analyzed opportunity, which is exactly what it did for every user every time.
+//
+// It also silently no-opped when the requirements box already had text -- a click that did
+// nothing and said nothing.
+//
+// Both source objects are merged, the way the other Recruiting readers already do it. A resume
+// is written against ONE position, so rather than flattening the whole solicitation into one
+// blob, this now lists the labor categories the analysis found and seeds the one that is picked.
+let _resSeedLcats = [];
+
+function _resSeedSource() {
+  const intel = (typeof window !== 'undefined' && window._lastBnaIntel) ? window._lastBnaIntel : {};
+  const scored = (typeof window !== 'undefined' && window._bnaOpp) ? window._bnaOpp : {};
+  return Object.assign({}, intel, scored);
+}
+
+function _resSeedStrip(v) {
+  return (typeof _mktStrip === 'function') ? _mktStrip(v) : String(v == null ? '' : v).trim();
+}
+
+// Opportunity-wide facts that apply whichever role is being staffed.
+function _resSeedOppLines(opp) {
   const lines = [];
-  if (opp.required_clearance && String(opp.required_clearance).trim()) lines.push('Clearance: ' + opp.required_clearance);
+  const clr = _resSeedStrip(opp.required_clearance || opp.personnel_clearance_required || opp.clearance_required);
+  const fac = _resSeedStrip(opp.facility_clearance_required);
+  const certs = [].concat(opp.certifications_required || opp.required_certifications || opp.certifications || [])
+    .map(_resSeedStrip).filter(Boolean);
+  const caps = [].concat(opp.key_capabilities || opp.key_capabilities_needed || [])
+    .map(_resSeedStrip).filter(Boolean);
+  if (clr) lines.push('Clearance: ' + clr);
+  if (fac && !/^(no|none|n\/a|not stated)/i.test(fac)) lines.push('Facility clearance: ' + fac);
   if (certs.length) lines.push('Certifications: ' + certs.join(', '));
   if (caps.length) lines.push('Relevant capability areas: ' + caps.join('; '));
-  if (!lines.length) { resumeMsg('The analyzed opportunity has no clearance, certification, or capability details to seed from. Analyze an opportunity on the Bid/No-Bid tab, or type the requirements by hand.', true); return; }
-  if (!reqEl.value.trim()) reqEl.value = lines.join('\n');
+  return lines;
+}
+
+function resumeSeedReq() {
+  const reqEl = document.getElementById('resReq');
+  const box = document.getElementById('resSeedPicker');
+  if (!reqEl) return;
+  const opp = _resSeedSource();
+  const cats = (typeof window !== 'undefined' && window._lastBnaIntel && Array.isArray(window._lastBnaIntel.labor_categories))
+    ? window._lastBnaIntel.labor_categories.filter(c => c && _resSeedStrip(c.lcat || c.labor_category)) : [];
+  const oppLines = _resSeedOppLines(opp);
+
+  if (!cats.length && !oppLines.length) {
+    if (box) box.style.display = 'none';
+    resumeMsg('Nothing to seed from yet \u2014 no labor categories, clearance or certifications were found on the analyzed opportunity. Run Analyze on the Bid/No-Bid tab (Steps 1\u20132), or type the requirements by hand.', true);
+    return;
+  }
+
+  _resSeedLcats = cats;
+  const esc = (typeof escHtml === 'function') ? escHtml : (x => x);
+
+  // The picker sits next to the button, not in the results pane at the bottom of the tab.
+  let h = '<div style="font-size:11.5px;font-weight:700;color:var(--blue);margin-bottom:6px">'
+        + (cats.length ? 'Which position is this resume for?' : 'No labor categories were extracted \u2014 opportunity-wide requirements only')
+        + '</div><div style="display:flex;flex-wrap:wrap;gap:6px">';
+  cats.forEach(function (c, i) {
+    const nm = _resSeedStrip(c.lcat || c.labor_category);
+    const bits = [];
+    const clr = _resSeedStrip(c.clearance);
+    const exp = _resSeedStrip(c.experience_yrs || c.experience_years);
+    if (c.key_personnel === true || /^(y|true)/i.test(String(c.key_personnel == null ? '' : c.key_personnel))) bits.push('key personnel');
+    if (clr) bits.push(clr);
+    if (exp) bits.push(exp + (/\byr|year/i.test(exp) ? '' : ' yrs'));
+    h += '<button type="button" onclick="resumeSeedFromLcat(' + i + ')" '
+      + 'style="text-align:left;font-size:11.5px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:7px;padding:6px 11px;cursor:pointer">'
+      + esc(nm)
+      + (bits.length ? '<span style="display:block;font-weight:400;font-size:10.5px;color:var(--muted);margin-top:1px">' + esc(bits.join(' \u00b7 ')) + '</span>' : '')
+      + '</button>';
+  });
+  h += '<button type="button" onclick="resumeSeedFromLcat(-1)" '
+    + 'style="text-align:left;font-size:11.5px;font-weight:700;background:#fff;color:var(--muted);border:1px dashed var(--border);border-radius:7px;padding:6px 11px;cursor:pointer">'
+    + 'Opportunity-wide only'
+    + '<span style="display:block;font-weight:400;font-size:10.5px;color:var(--muted);margin-top:1px">no specific role</span></button>';
+  h += '</div>';
+  if (box) { box.innerHTML = h; box.style.display = 'block'; }
+}
+
+// Compose the requirements for ONE labor category (or -1 for opportunity-wide) and write them in.
+function resumeSeedFromLcat(idx) {
+  const reqEl = document.getElementById('resReq');
+  if (!reqEl) return;
+  const opp = _resSeedSource();
+  const lines = [];
+  let label = 'the opportunity';
+
+  if (idx >= 0 && _resSeedLcats[idx]) {
+    const c = _resSeedLcats[idx];
+    const nm = _resSeedStrip(c.lcat || c.labor_category);
+    label = nm;
+    const clr = _resSeedStrip(c.clearance);
+    const edu = _resSeedStrip(c.education || c.min_education);
+    const exp = _resSeedStrip(c.experience_yrs || c.experience_years);
+    const key = c.key_personnel === true || /^(y|true)/i.test(String(c.key_personnel == null ? '' : c.key_personnel));
+    const sca = c.is_sca === true || /^(y|true)/i.test(String(c.is_sca == null ? '' : c.is_sca));
+    const min = _resSeedStrip(c.min_hourly_rate || c.wage_rate);
+    if (nm) lines.push('Position: ' + nm);
+    if (key) lines.push('Designated KEY PERSONNEL in the solicitation \u2014 the resume must substantiate every stated qualification.');
+    // The role's own stated clearance wins; the opportunity-wide one is the fallback.
+    const clrFinal = clr || _resSeedStrip(opp.required_clearance || opp.personnel_clearance_required || opp.clearance_required);
+    if (clrFinal) lines.push('Clearance: ' + clrFinal);
+    if (edu) lines.push('Education: ' + edu);
+    if (exp) lines.push('Experience: ' + exp + (/\byr|year/i.test(exp) ? '' : ' years'));
+    const certs = [].concat(opp.certifications_required || opp.required_certifications || opp.certifications || [])
+      .map(_resSeedStrip).filter(Boolean);
+    if (certs.length) lines.push('Certifications: ' + certs.join(', '));
+    if (sca) lines.push('SCA-covered position' + (min ? ' \u2014 wage determination floor ' + min + '/hr' : '') + '.');
+    const notes = _resSeedStrip(c.notes);
+    if (notes) lines.push('Solicitation notes: ' + notes);
+  } else {
+    lines.push.apply(lines, _resSeedOppLines(opp));
+  }
+
+  if (!lines.length) {
+    resumeMsg('That labor category has no stated qualifications to seed \u2014 the solicitation named the role but not its requirements. Type them by hand, or pick another role.', true);
+    return;
+  }
+
+  const had = reqEl.value.trim();
+  reqEl.value = lines.join('\n');
+  try { reqEl.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+  const box = document.getElementById('resSeedPicker');
+  if (box) box.style.display = 'none';
+  resumeMsg((had ? 'Replaced the requirements box with ' : 'Seeded the requirements box from ') + label
+    + '. Check every line against the solicitation before running the compliance check \u2014 anything the extraction did not state is simply absent, not waived.', false);
 }
 // ── Resume Builder input helpers ─────────────────────────────────────────────
 // Manual fields are always available; uploading an existing resume is optional and, when present,
@@ -17668,11 +17869,42 @@ function updateBnaBtn() {
 // GLOBAL STICKY STATUS / PROGRESS BAR
 // All tabs share one bar pinned under the header.
 // ═══════════════════════════════════════════════════════════════════════════
+// #11: the banner used to stay up until it was manually dismissed, so a stack of stale
+// successes followed you around the tool. It now fades out on its own -- with two carve-outs
+// that are not negotiable:
+//   1. A bar carrying LIVE PROGRESS is never auto-hidden. It exists to be watched, and a
+//      generation run lasts far longer than this timer.
+//   2. An ERROR is never auto-hidden. The user may not have read it, and once it is gone
+//      there is nothing to go back to.
+let _gsbHideTimer = null;
+const _GSB_AUTO_HIDE_MS = 10000;
+
+function _gsbArmAutoHide(type, showProgress) {
+  if (_gsbHideTimer) { clearTimeout(_gsbHideTimer); _gsbHideTimer = null; }
+  if (showProgress || type === 'error') return;
+  _gsbHideTimer = setTimeout(function () {
+    _gsbHideTimer = null;
+    const bar = document.getElementById('globalStatusBar');
+    if (!bar || bar.style.display === 'none') return;
+    bar.style.opacity = '0';
+    setTimeout(function () {
+      // A newer message may have arrived mid-fade; it resets opacity and re-arms the timer,
+      // and this stale fade must not pull it off the screen.
+      if (_gsbHideTimer !== null || bar.style.opacity !== '0') return;
+      if (typeof _gsbHide === 'function') _gsbHide();
+    }, 550);
+  }, _GSB_AUTO_HIDE_MS);
+}
+
 function _gsb(type, title, msg, showProgress) {
   const icons = { info:'ℹ️', success:'✅', warn:'⚠️', error:'❌' };
   const bar   = document.getElementById('globalStatusBar');
   const inner = document.getElementById('gsbInner');
   if (!bar || !inner) return;
+  // Any new message cancels a pending fade and restores full opacity, so a message that
+  // lands during a fade-out is fully visible rather than half-faded.
+  if (_gsbHideTimer) { clearTimeout(_gsbHideTimer); _gsbHideTimer = null; }
+  bar.style.opacity = '1';
   inner.className = `status-bar ${type}`;
   inner.style.marginBottom = '0';
   document.getElementById('gsbIcon').textContent  = icons[type] || 'ℹ️';
@@ -17697,6 +17929,7 @@ function _gsb(type, title, msg, showProgress) {
   // Push container down so content isn't hidden behind the fixed bar
   const container = document.querySelector('.container');
   if (container) container.style.paddingTop = (showProgress ? '130px' : '80px');
+  _gsbArmAutoHide(type, showProgress);
 }
 
 function _gsbMinimize() {
@@ -17721,8 +17954,10 @@ function _gsbExpand() {
 
 // Call when dismissing the bar to restore normal padding
 function _gsbHide() {
+  if (_gsbHideTimer) { clearTimeout(_gsbHideTimer); _gsbHideTimer = null; }
   const bar = document.getElementById('globalStatusBar');
-  if (bar) bar.style.display = 'none';
+  // Reset opacity, or the bar stays invisible the next time it is shown.
+  if (bar) { bar.style.display = 'none'; bar.style.opacity = '1'; }
   // Reset minimized state for next time
   const exp = document.getElementById('gsbExpanded');
   const min = document.getElementById('gsbMinimized');
