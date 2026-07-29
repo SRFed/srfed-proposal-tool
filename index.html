@@ -2296,7 +2296,7 @@
       <!-- The matrix -->
       <div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto">
         <div style="font-weight:700;font-size:13px;margin-bottom:4px">🗂️ Hours Allocation Matrix</div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5">Enter billable hours per labor category, per task. Zero cells are <strong>greyed</strong> so the real allocation stands out; cells with hours show white. Type hours into any cell to use it. Row and column totals, costs, and FTE-equivalents update live.</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5">Enter billable hours per labor category, per task. Zero cells are <strong>greyed</strong> so the real allocation stands out; cells with hours show white. Type hours into any cell to use it. Row and column totals, costs, and FTE-equivalents update live. Column heads are shortened to keep the table readable &mdash; hover any one for the task's full text, or edit it in Step 3.</div>
         <div id="pricingMatrix"></div>
       </div>
     </div>
@@ -3170,7 +3170,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '174';
+const APP_VERSION = '178';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -4257,6 +4257,26 @@ function renderMsState() {
         if (_spVals.length > 0 && typeof loadSharePointFiles === 'function') {
           window._spAutoLoadDone = true;
           setTimeout(function () { try { loadSharePointFiles(true); } catch (e) {} }, 400);
+        }
+      } catch (e) {}
+    }
+    // #1: the BID/NO-BID tab has its OWN SharePoint loader and its OWN fields
+    // (bnaSPPastPerf / bnaSPResumes), and the block above has never touched them -- it
+    // only ever covered the four Proposal-tab fields. So that button still had to be
+    // clicked by hand every session even though its URLs were pre-filled from Settings.
+    // Guarded independently: the BNA links can be configured when the Proposal ones are
+    // not, and vice versa. loadBnaSPFiles already bails when both URLs are empty and
+    // de-dupes by filename, so this is inert in retail (no tenant, empty placeholders)
+    // and harmless if the user clicks Load as well. Staggered behind the Proposal load
+    // so the two bursts don't contend for the same access token at once.
+    if (!window._bnaSpAutoLoadDone) {
+      try {
+        var _bnaVals = ['bnaSPPastPerf','bnaSPResumes']
+          .map(function (id) { var e = document.getElementById(id); return e ? e.value.trim() : ''; })
+          .filter(function (v) { return v; });
+        if (_bnaVals.length > 0 && typeof loadBnaSPFiles === 'function') {
+          window._bnaSpAutoLoadDone = true;
+          setTimeout(function () { try { loadBnaSPFiles(); } catch (e) {} }, 900);
         }
       } catch (e) {}
     }
@@ -7144,6 +7164,21 @@ async function loadSharePointFiles(auto) {
 
     // Store templates separately — never sent to API
     spTemplateFiles = loadedTemplates;
+
+    // The SharePoint loader populated these arrays directly rather than going through
+    // addFilesToArray, which is the ONLY thing that ever kicked off token measurement. So
+    // nothing measured them: the Style-matching row sat on "sizing 1 of 1" indefinitely --
+    // not slowly, but forever, because no measurement had been started at all. The company
+    // row only ever settled by accident, when pulling documents in from the Bid/No-Bid tab
+    // ran addFilesToArray over companyFiles and swept up the SharePoint files with them.
+    // Templates are deliberately excluded: they are assembled in the browser and never sent,
+    // so they have no token cost to measure.
+    try {
+      if (typeof measureAndRerender === 'function') {
+        measureAndRerender(companyFiles, 'fileListCompany');
+        measureAndRerender(spToneFiles, null);   // no list element — the meter is its only display
+      }
+    } catch (e) {}
 
     // Render file list in Step 3
     const listEl = document.getElementById('spFileList');
@@ -12611,12 +12646,30 @@ function pricingWdSamLink() {
   return { url: 'https://sam.gov/wage-determinations', exact: false, num: num, rev: '' };
 }
 
+// The WD drop target. It previously said "Drop the WD file here" while being a plain
+// <label> with no drop handling whatsoever, so a dropped file was silently discarded.
+function pricingWdDzOver(e) {
+  e.preventDefault();
+  const el = e.currentTarget; if (el) { el.style.background = '#dbeafe'; el.style.borderColor = 'var(--blue)'; }
+}
+function pricingWdDzLeave(e) {
+  const el = e.currentTarget; if (el) { el.style.background = '#fff'; el.style.borderColor = 'var(--mid-blue)'; }
+}
+function pricingWdDzDrop(e) {
+  e.preventDefault();
+  pricingWdDzLeave(e);
+  const dt = e.dataTransfer;
+  const files = dt && dt.files ? dt.files : null;
+  if (files && files.length) pricingAddWdFiles(files);
+}
+
 async function pricingParseWd() {
   const apiKey = getApiKey();
   if (!apiKey) { alert('Enter your Anthropic API key on the Proposal tab (Step 2) first.'); return; }
   if (!pricingWdFiles.length) { alert('Add the Wage Determination file first.'); return; }
   const btn = document.getElementById('pricingWdParseBtn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> Reading WD\u2026'; }
+  pxProgStart('pricingWdProgress', 1, 'Reading the Wage Determination\u2026', 'Parsing the file\u2026', 25);
   try {
     const { blocks } = await buildContentBlocks(pricingWdFiles);
     if (!blocks.length) throw new Error('Could not read the WD file. Export a clean PDF or text version and try again.');
@@ -12624,7 +12677,16 @@ async function pricingParseWd() {
       `This is a U.S. Department of Labor Service Contract Act (SCA) Wage Determination (WD). Extract the WD identifier, the Health & Welfare (H&W) hourly rate, and the occupation wage table. Return ONLY JSON:\n` +
       `{"wd_number":"e.g. 2015-4281","wd_revision":"e.g. 23 ('' if none)","locality":"area/county/state the WD covers ('' if not stated)","hw_rate":<H&W dollars per hour as a number, e.g. 5.55>,"occupations":[{"code":"e.g. 01020","title":"exact occupation title","wage":<minimum hourly wage as a number>}]}\n` +
       `Rules: wages and H&W are dollars per hour, numbers only. Include every occupation listed. If a value is unreadable, omit that row. Do not invent codes, titles, wages, or the H&W rate.`;
-    const parsed = await callClaudeForJson(apiKey, [...blocks, { type: 'text', text: prompt }], 8000, 240000, 'Reading Wage Determination');
+    pxProgMark('pricingWdProgress', null, 'Extracting the occupation table\u2026');
+    const parsed = await callClaudeForJsonStreaming(
+      apiKey, [...blocks, { type: 'text', text: prompt }], 8000, 240000, 'Reading Wage Determination',
+      function (p) {
+        const n = p.items || 0;
+        pxProgMark('pricingWdProgress', null,
+          (n > 0 ? (n + ' occupation' + (n === 1 ? '' : 's') + ' read') : 'Extracting the occupation table\u2026')
+          + ' \u00b7 ' + p.chars.toLocaleString('en-US') + ' characters received');
+      },
+      /"wage"\s*:/g);
     const occ = Array.isArray(parsed && parsed.occupations) ? parsed.occupations : [];
     const rates = occ.map(o => ({ id: _prId('wd_'), code: String(o.code || '').trim(), title: String(o.title || '').trim(), wage: parseFloat(o.wage) || 0 })).filter(r => r.title && r.wage > 0);
     if (parsed) {
@@ -12640,7 +12702,10 @@ async function pricingParseWd() {
   } catch (e) {
     console.error('WD parse failed:', e);
     showStatus('error', 'Could not read the WD', e.message || String(e));
-  } finally { if (btn) { btn.disabled = false; btn.innerHTML = '\ud83d\udcc4 Read WD & extract rates'; } }
+  } finally {
+    pxProgEnd('pricingWdProgress', 'Wage Determination read.');
+    if (btn) { btn.disabled = false; btn.innerHTML = '\ud83d\udcc4 Read WD & extract rates'; }
+  }
 }
 
 function pricingRenderSca() {
@@ -12664,7 +12729,7 @@ function pricingRenderSca() {
     h += `<button onclick="pricingAddWdRow()" style="margin-top:6px;font-size:11.5px;background:none;border:1px dashed var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;color:var(--text)">+ Add occupation</button>`;
     const wdFiles = pricingWdFiles.map(f => `<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;background:#f1f5f9;border-radius:6px;padding:3px 8px;margin-right:6px">${pricingEsc(f.name)} <span onclick="pricingRemoveWdFile('${pricingEsc(f.name)}')" style="cursor:pointer;color:var(--error)">\u2715</span></span>`).join('');
     const _sam = pricingWdSamLink();
-    const _samLabel = _sam.exact ? `\uD83D\uDD0E Open WD ${pricingEsc(_sam.num)} rev ${pricingEsc(_sam.rev)} on SAM.gov` : `\uD83D\uDD0E Find the WD on SAM.gov`;
+    const _samLabel = _sam.exact ? `\uD83D\uDD0E Click to open WD ${pricingEsc(_sam.num)} rev ${pricingEsc(_sam.rev)} on SAM.gov` : `\uD83D\uDD0E Click to find the WD on SAM.gov`;
     const _samHint = _sam.exact
       ? `Step 1 opens the exact determination the RFP cites. Download its PDF, then drop it in Step 3 \u2014 the tool reads the occupation rates and H&amp;W automatically.`
       : `${_sam.num ? `Search <strong>${pricingEsc(_sam.num)}</strong>` : (sca.locality ? `Search <strong>${pricingEsc(sca.locality)}</strong>` : 'Search by number or locality')} on SAM.gov, download the PDF, then drop it in Step 3 \u2014 the tool reads the rates and H&amp;W automatically.`;
@@ -12675,9 +12740,9 @@ function pricingRenderSca() {
     h += `<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">`;
     h += `${_wdStep(1)}<a href="${_sam.url}" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:600;text-decoration:none;background:#fff;border:1px solid var(--blue);color:var(--blue);border-radius:6px;padding:5px 11px;white-space:nowrap">${_samLabel}</a>`;
     h += `${_wdArrow}${_wdStep(2)}<span style="font-size:11.5px;color:var(--text)">Download the PDF</span>`;
-    h += `${_wdArrow}${_wdStep(3)}<label style="font-size:11.5px;font-weight:600;background:#fff;border:1px solid var(--border);border-radius:6px;padding:5px 11px;cursor:pointer;color:var(--text);white-space:nowrap">Drop the WD file here<input type="file" multiple accept=".pdf,.txt,.docx,.xlsx,.csv" onchange="pricingAddWdFiles(this.files);this.value=''" style="display:none"/></label>`;
+    h += `${_wdArrow}${_wdStep(3)}<div id="pricingWdDz" onclick="document.getElementById('pricingWdFileInput').click()" ondragover="pricingWdDzOver(event)" ondragleave="pricingWdDzLeave(event)" ondrop="pricingWdDzDrop(event)" style="font-size:11.5px;font-weight:700;background:#fff;border:2px dashed var(--mid-blue);border-radius:8px;padding:7px 14px;cursor:pointer;color:var(--blue);white-space:nowrap;text-align:center;transition:background .15s">\u2913 Drop the WD file here \u2014 or click to browse<input id="pricingWdFileInput" type="file" multiple accept=".pdf,.txt,.docx,.xlsx,.csv" onchange="pricingAddWdFiles(this.files);this.value=''" style="display:none"/></div>`;
     h += `</div>`;
-    h += pricingWdFiles.length ? `<div style="margin-top:9px">${wdFiles}</div><button id="pricingWdParseBtn" onclick="pricingParseWd()" style="margin-top:8px;padding:6px 13px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">\uD83D\uDCC4 Read WD &amp; extract rates</button>` : '';
+    h += pricingWdFiles.length ? `<div style="margin-top:9px">${wdFiles}</div><button id="pricingWdParseBtn" onclick="pricingParseWd()" style="margin-top:8px;padding:6px 13px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">\uD83D\uDCC4 Read WD &amp; extract rates</button><div id="pricingWdProgress" style="display:none;margin-top:9px"></div>` : '';
     h += `<div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.4">${_samHint} DOL Wage Determinations are public; you can also enter the rates by hand above.</div>`;
     h += `</div>`;
     const issues = pricingScaIssues();
@@ -13591,6 +13656,30 @@ function pricingRenderLcats() {
   }).join('');
 }
 
+// Display-only shortening for the Step 5 column heads. Deliberately conservative -- it drops
+// detail that is parenthetical or trailing, and never rewrites the words it keeps, so the
+// header can always be traced back to the task it names.
+function pricingTaskShortName(name) {
+  let s = String(name == null ? '' : name).trim();
+  if (!s) return '';
+  // 1. Drop a trailing parenthetical: it is nearly always the enumeration of detail
+  //    ("(workspace, computers, monitors, administrative supplies)").
+  s = s.replace(/\s*\([^()]*\)\s*$/, '').trim();
+  // 2. Cut at the first DASH separator, which in PWS headings introduces the elaboration
+  //    ("Section 508 \u2013 Electronic and Information Technology Standards"). Slashes are
+  //    kept: "Technical Requirements / Tasks" and "Deliverables / Schedule" are the name.
+  const dash = s.search(/\s[\u2014\u2013-]\s/);
+  if (dash > 8) s = s.slice(0, dash).trim();
+  // 3. Last resort, a hard cap on a word boundary so one runaway name cannot still blow up
+  //    the row. The tooltip carries the rest.
+  if (s.length > 42) {
+    const cut = s.slice(0, 42);
+    const sp = cut.lastIndexOf(' ');
+    s = (sp > 20 ? cut.slice(0, sp) : cut).trim() + '\u2026';
+  }
+  return s;
+}
+
 function pricingRenderMatrix() {
   const el = document.getElementById('pricingMatrix'); if (!el) return;
   if (!pricingModel.lcats.length || !pricingModel.tasks.length) {
@@ -13600,13 +13689,20 @@ function pricingRenderMatrix() {
   const th = (txt, bg) => `<th style="padding:5px 5px;border:1px solid var(--border);background:${bg};font-size:11px;text-align:center;white-space:nowrap">${txt}</th>`;
   let h = '<div style="overflow-x:auto;max-width:100%">';
   h += '<table style="border-collapse:collapse;font-size:11.5px"><thead><tr>';
-  h += `<th style="text-align:left;padding:5px 7px;border:1px solid var(--border);background:#f1f5f9;position:sticky;left:0;z-index:1;min-width:115px;max-width:155px;font-size:11px">Labor Category \\ Task</th>`;
+  h += `<th style="text-align:left;padding:5px 7px;border:1px solid var(--border);background:#f1f5f9;position:sticky;left:0;z-index:1;min-width:115px;max-width:155px;font-size:11px;vertical-align:bottom">Labor Category \\ Task</th>`;
   pricingModel.tasks.forEach(t => {
-    const _tc = pricingEsc(t.code || ''), _tn = pricingEsc(t.name || '');
+    const _full = ((t.code ? t.code + ' ' : '') + (t.name || '')).trim();
+    const _tc = pricingEsc(t.code || '');
+    const _short = pricingEsc(pricingTaskShortName(t.name || ''));
+    // Two lines maximum, clamped, so the header row has a predictable height whatever the
+    // solicitation calls its tasks. The tooltip always carries the untouched name.
+    const _nameDiv = _short
+      ? `<div style="font-size:9px;font-weight:400;color:var(--muted);white-space:normal;line-height:1.2;margin:2px auto 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-height:23px">${_short}</div>`
+      : '';
     const _lbl = _tc
-      ? `<div style="font-weight:700">${_tc}</div>${_tn ? `<div style="font-size:9px;font-weight:400;color:var(--muted);white-space:normal;max-width:96px;line-height:1.15;margin:2px auto 0">${_tn}</div>` : ''}`
-      : `<div style="font-weight:600;font-size:10px;white-space:normal;max-width:96px;line-height:1.2">${_tn || '&mdash;'}</div>`;
-    h += `<th style="padding:5px 5px;border:1px solid var(--border);background:#f1f5f9;font-size:11px;text-align:center;vertical-align:bottom;min-width:64px;max-width:110px">${_lbl}</th>`;
+      ? `<div style="font-weight:700">${_tc}</div>${_nameDiv}`
+      : (_nameDiv || '<div style="font-weight:600">&mdash;</div>');
+    h += `<th title="${pricingEsc(_full)}" style="padding:5px 4px;border:1px solid var(--border);background:#f1f5f9;font-size:11px;text-align:center;vertical-align:bottom;width:96px;min-width:96px;max-width:96px">${_lbl}</th>`;
   });
   h += th('Hours/yr', '#e0f2fe') + th('FTE', '#e0f2fe') + th('Price/yr', '#e0f2fe');
   h += '</tr></thead><tbody>';
