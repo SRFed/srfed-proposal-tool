@@ -2060,7 +2060,8 @@
         <div id="bnaQaEmpty" style="font-size:12.5px;color:var(--muted);padding:2px 0 10px">Analyze the opportunity first (Steps 1–2 above), then ask anything about it here.</div>
         <div id="bnaQaMain" style="display:none">
           <label style="display:block;font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:5px">Your question</label>
-          <textarea id="bnaQaInput" placeholder="e.g. What is the page limit for the technical volume? When are questions due? Is this a small-business set-aside? What are the key evaluation factors?" style="width:100%;min-height:66px;resize:vertical;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box"></textarea>
+          <textarea id="bnaQaInput" onkeydown="_bnaQaKey(event)" placeholder="e.g. What is the page limit for the technical volume? When are questions due? Is this a small-business set-aside? What are the key evaluation factors?" style="width:100%;min-height:66px;resize:vertical;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box"></textarea>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Enter to ask &middot; Shift+Enter for a new line</div>
           <div class="btn-row" style="margin-top:10px">
             <button id="bnaQaBtn" onclick="runBnaQa()" style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;font-size:14px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,0.12)">Ask</button>
           </div>
@@ -3170,7 +3171,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '178';
+const APP_VERSION = '179';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -17420,6 +17421,71 @@ function _bnaQaContext() {
   push('Summary', g('summary') || g('description'));
   return lines.join('\n');
 }
+function _bnaQaKey(e) {
+  // Enter asks; Shift+Enter (or a modifier) inserts a newline, matching every other chat box.
+  if (!e || e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+  const btn = document.getElementById('bnaQaBtn');
+  if (btn && btn.disabled) return;    // a question is already in flight
+  runBnaQa();
+}
+
+// Minimal, deliberately narrow markdown renderer for the Q&A answer.
+function _bnaQaMd(raw) {
+  const esc = (typeof escHtml === 'function') ? escHtml : (x => String(x == null ? '' : x));
+  const lines = String(raw == null ? '' : raw).replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let list = null;   // 'ul' | 'ol' | null
+
+  const closeList = () => { if (list) { out.push('</' + list + '>'); list = null; } };
+  const openList = (kind) => {
+    if (list === kind) return;
+    closeList();
+    out.push('<' + kind + ' style="margin:7px 0 0;padding-left:22px">');
+    list = kind;
+  };
+
+  // Inline spans, applied AFTER escaping so no tag can come from the model's text.
+  const inline = (s) => esc(s)
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    // The emphasised run may not begin or end with whitespace -- real markdown requires that
+    // too, and without it "2 * 3 * 4" renders as "2 <em> 3 </em> 4".
+    .replace(/(^|[\s(])\*([^\s*][^*\n]*[^\s*]|[^\s*])\*(?=[\s.,;:)!?]|$)/g, '$1<em>$2</em>')
+    .replace(/`([^`\n]+)`/g, '<code style="background:#eef2f7;border-radius:3px;padding:0 3px;font-size:12px">$1</code>');
+
+  lines.forEach(function (ln) {
+    const t = ln.trim();
+    if (!t) { closeList(); return; }
+
+    // Headings: rendered as a bold lead-in rather than an <h*>, which would be louder than
+    // anything else on the page for what is a scratchpad answer.
+    const hd = t.match(/^(#{1,6})\s+(.*)$/);
+    if (hd) {
+      closeList();
+      out.push('<div style="font-weight:800;font-size:' + (hd[1].length <= 2 ? '13.5' : '12.5')
+             + 'px;color:var(--text);margin:12px 0 2px">' + inline(hd[2].replace(/\s*#+\s*$/, '')) + '</div>');
+      return;
+    }
+    if (/^([-*_])\1{2,}$/.test(t)) { closeList(); out.push('<hr style="border:none;border-top:1px solid var(--border);margin:10px 0">'); return; }
+
+    const ol = t.match(/^(\d{1,3})[.)]\s+(.*)$/);
+    if (ol) { openList('ol'); out.push('<li style="margin:3px 0">' + inline(ol[2]) + '</li>'); return; }
+
+    const ul = t.match(/^[-*\u2022]\s+(.*)$/);
+    if (ul) { openList('ul'); out.push('<li style="margin:3px 0">' + inline(ul[1]) + '</li>'); return; }
+
+    // A plain line continues the current list item rather than breaking out of the list.
+    if (list) { out.push('<div style="margin:2px 0 2px 0">' + inline(t) + '</div>'); return; }
+    out.push('<p style="margin:7px 0 0">' + inline(t) + '</p>');
+  });
+  closeList();
+
+  let html = out.join('');
+  html = html.replace(/^<p style="margin:7px 0 0">/, '<p style="margin:0">');
+  return html || '<p style="margin:0">' + esc(String(raw || '').trim()) + '</p>';
+}
+
 async function runBnaQa() {
   const input = document.getElementById('bnaQaInput');
   const status = document.getElementById('bnaQaStatus');
@@ -17441,6 +17507,9 @@ async function runBnaQa() {
       'You are helping a government-contracting professional understand a specific solicitation they are evaluating. ' +
       'Answer their question about THIS opportunity succinctly and accurately, using the attached solicitation documents (if any) and the extracted details below. ' +
       'Keep the answer tight and directly responsive \u2014 a few sentences or a short list, not an essay. ' +
+      'Write in plain prose. Do NOT use markdown headings (#), bold or italic markers (** or *), or code fences \u2014 ' +
+      'this is displayed as formatted text, so those characters would show up literally. A simple numbered or ' +
+      'dashed list is fine where the answer really is a list. ' +
       'If the documents and details do not contain the answer, say so plainly (e.g. "The solicitation doesn\'t state this") rather than guessing. Do not invent facts.\n\n' +
       'EXTRACTED OPPORTUNITY DETAILS:\n' + (ctx || '(none)') + '\n\n' +
       'QUESTION: ' + q;
@@ -17455,8 +17524,7 @@ async function runBnaQa() {
     if (status) status.style.display = 'none';
     if (answer) {
       answer.style.display = 'block';
-      const safe = escHtml(text).replace(/\n\n+/g, '</p><p style="margin:8px 0 0">').replace(/\n/g, '<br>');
-      answer.innerHTML = '<div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--text);line-height:1.6"><p style="margin:0">' + safe + '</p></div>';
+      answer.innerHTML = '<div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--text);line-height:1.6">' + _bnaQaMd(text) + '</div>';
     }
   } catch (e) {
     if (status) status.style.display = 'none';
