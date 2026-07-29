@@ -2252,6 +2252,7 @@
           <div style="font-size:12.5px;color:var(--text);max-width:560px"><strong>✨ Auto-build the labor structure.</strong> <span style="color:var(--muted)">Your PWS task list above is the input — confirm it first, then build.</span> Claude proposes a labor mix, integer headcount, an hours allocation across your PWS tasks, and the role rules — and, in GSA mode, maps each role to the best-fit Schedule LCAT by education, experience, and scope. It also runs a cost-realism check. <span style="color:var(--muted)">You review and adjust everything; rates are never invented.</span></div>
           <button onclick="pricingAutoBuildStructure()" id="pricingAutoBuildBtn" style="padding:8px 15px;font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:7px;cursor:pointer;white-space:nowrap">✨ Auto-build structure</button>
         </div>
+        <div id="pricingAutoBuildProgress" style="display:none;margin-top:10px"></div>
         <div id="pricingAutoBuildPanel" style="margin-top:12px"></div>
       </div>
 
@@ -2272,7 +2273,7 @@
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap">
           <div style="font-weight:700;font-size:13px">👤 Labor Categories &amp; Rates <span style="color:var(--muted);font-weight:400;font-size:11px">— the rows of your matrix</span></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button id="pxRecommendBtn" onclick="pricingRecommendRates(this)" title="Look up a market rate for each role and drop it in as a proposed starting point. Edit any to make it yours." style="padding:7px 15px;font-size:12px;font-weight:700;border:1px solid #c2410c;color:#fff;background:#ea580c;border-radius:6px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.15)">✨ Recommend rates</button>
+            <button id="pxRecommendBtn" onclick="pricingRecommendRates(this)" title="Look up a market rate for each role and drop it in as a proposed starting point. Edit any to make it yours." style="padding:7px 15px;font-size:12px;font-weight:700;border:1px solid #c2410c;color:#fff;background:#ea580c;border-radius:6px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.15)">✨ Recommend rates</button><div id="pxRecommendProgress" style="display:none;flex-basis:100%;margin-top:8px"></div>
             <button onclick="pricingAddLcat()" style="padding:5px 12px;font-size:12px;font-weight:600;border:1px solid var(--blue);color:var(--blue);background:white;border-radius:6px;cursor:pointer">+ Add Labor Category</button>
           </div>
         </div>
@@ -2348,6 +2349,7 @@
 
       <!-- #5 Wave 4: gap analysis. Its own container, NOT part of pricingRenderSummary(), so a
            routine re-render never wipes a result the user is still reading. -->
+      <div id="pricingGapProgress" style="display:none;margin-bottom:10px"></div>
       <div id="pricingGapPanel" style="margin-bottom:16px"></div>
 
       <!-- Export to Excel -->
@@ -3168,7 +3170,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '171';
+const APP_VERSION = '174';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -4359,7 +4361,7 @@ async function runOutlinePreview() {
   const btn = document.getElementById('previewOutlineBtn');
   if (!btn) return;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> Building outline…';
+  btn.innerHTML = '<span class="spinner-auto" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> Building outline…';
 
   try {
     const apiKey = getApiKey();
@@ -4805,7 +4807,7 @@ function _hsSetFindBtnsBusy(busy, busyLabel) {
     if (busy) {
       if (!b.dataset.label) b.dataset.label = b.innerHTML;
       b.disabled = true; b.style.opacity = '0.6';
-      b.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> ' + (busyLabel || 'Working…');
+      b.innerHTML = '<span class="spinner-auto" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> ' + (busyLabel || 'Working…');
     } else {
       if (b.dataset.label) { b.innerHTML = b.dataset.label; delete b.dataset.label; }
       b.disabled = false; b.style.opacity = '1';
@@ -4917,7 +4919,7 @@ async function runHsMatch() {
   _hsSetFindBtnsBusy(true, 'Scoring…');
   const btn = document.getElementById('hsMatchBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span> Querying CRM…';
+  btn.innerHTML = '<span class="spinner-auto" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span> Querying CRM…';
   showStatus('info', 'Fetching CRM data…', 'Pulling companies from HubSpot and scoring against this opportunity.', true);
   setProgress(5, [{ text: 'Fetching HubSpot companies', status: 'active' }, { text: 'Scoring with AI', status: '' }]);
   _startEtaTimer(50);
@@ -5429,7 +5431,7 @@ function renderCmpFileList(arr, listId, which) {
 async function runCmpExtraction() {
   const btn = document.getElementById('cmpExtractBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> Extracting…';
+  btn.innerHTML = '<span class="spinner-auto" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> Extracting…';
 
   const progressWrap = document.getElementById('cmpExtractProgress');
   const bar = document.getElementById('cmpExtractBar');
@@ -5519,7 +5521,7 @@ async function runCmpExtraction() {
 async function runStandaloneCompliance() {
   const btn = document.getElementById('cmpRunBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span> Checking compliance…';
+  btn.innerHTML = '<span class="spinner-auto" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span> Checking compliance…';
 
   // Gather requirements based on mode
   let requirements = [];
@@ -6278,7 +6280,7 @@ function setRunning(running) {
   if (!btn) return;
   btn.disabled = running;
   if (running) {
-    if (icon) icon.outerHTML = '<span id="runBtnIcon" class="spinner"></span>';
+    if (icon) icon.outerHTML = '<span id="runBtnIcon" class="spinner-auto"></span>';
     if (text) text.textContent = 'Generating…';
   } else {
     const iconEl = document.getElementById('runBtnIcon');
@@ -6351,20 +6353,37 @@ async function extractPdfText(file) {
     if (typeof pdfjsLib === 'undefined') return '';
     const buf = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
-    let text = '';
     const maxPages = Math.min(pdf.numPages, 2000);
-    for (let i = 1; i <= maxPages; i++) {
-      const page = await pdf.getPage(i);
+    // Pages are independent, so they are read CONCURRENTLY -- but written into a slot-indexed
+    // array, so the document still comes back in page order however the promises settle.
+    const pages = new Array(maxPages).fill('');
+    const readPage = async (i) => {
+      const page = await pdf.getPage(i + 1);
       const tc = await page.getTextContent();
-      let last = null, line = '';
+      let last = null, line = '', out = '';
       tc.items.forEach(it => {
         if (!it.str) return;
         // Insert a newline when pdf.js reports a new line (transform y changes a lot).
-        if (last && it.transform && last.transform && Math.abs(it.transform[5] - last.transform[5]) > 2) { text += line.trim() + '\n'; line = ''; }
+        if (last && it.transform && last.transform && Math.abs(it.transform[5] - last.transform[5]) > 2) { out += line.trim() + '\n'; line = ''; }
         line += it.str + (it.hasEOL ? '\n' : ' ');
         last = it;
       });
-      text += line.trim() + '\n';
+      pages[i] = out + line.trim() + '\n';
+      try { page.cleanup(); } catch (e) {}
+    };
+    const _PDF_PAGE_CONCURRENCY = 8;
+    let next = 0;
+    await Promise.all(new Array(Math.min(_PDF_PAGE_CONCURRENCY, maxPages)).fill(0).map(async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= maxPages) return;
+        // One bad page must not lose the other 300.
+        try { await readPage(i); } catch (e) { pages[i] = ''; }
+      }
+    }));
+    let text = '';
+    for (let i = 0; i < maxPages; i++) {
+      text += pages[i];
       if (text.length > 5000000) break;  // hard safety cap
     }
     return text.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
@@ -6372,6 +6391,18 @@ async function extractPdfText(file) {
 }
 
 async function fileToContentBlockLocal(file) {
+  // Parsing is the expensive half of this pipeline (pdf.js / mammoth / SheetJS over a whole
+  // document). The token meter parses every file to count it, and the API call then parsed the
+  // SAME file again to send it -- paying twice for identical work, which is why a single large
+  // past proposal could still be measuring after a whole opportunity had been analysed. The
+  // result is cached on the File object, so whichever runs first warms the other.
+  if (file && file._blockCache) return file._blockCache;
+  const _block = await _fileToContentBlockUncached(file);
+  try { if (file && _block) file._blockCache = _block; } catch (e) {}
+  return _block;
+}
+
+async function _fileToContentBlockUncached(file) {
   const mime = getMimeType(file);
 
   // PDFs: extract the actual text client-side (accurate token count, far smaller payload, and
@@ -7044,7 +7075,7 @@ async function loadSharePointFiles(auto) {
 
   const btn = document.getElementById('spLoadBtn');
   btn.disabled = true;
-  document.getElementById('spLoadIcon').innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px"></div>';
+  document.getElementById('spLoadIcon').innerHTML = '<div class="spinner-auto" style="width:14px;height:14px;border-width:2px"></div>';
   document.getElementById('spLoadText').textContent = 'Loading...';
   showStatus('info', 'Loading SharePoint files...', `Connecting to folder(s)...`, true);
 
@@ -7686,6 +7717,7 @@ async function measureFileTokens(file) {
   if (!file || file._tokens != null) return file && file._tokens;
   let tokens;
   try {
+    // Populates file._blockCache as a side effect, so the send path does not re-parse.
     const block = await fileToContentBlockLocal(file);
     if (block && block.type === 'text' && typeof block.text === 'string') tokens = Math.ceil(block.text.length / 4);
     else tokens = estimateTokensRaw(file);
@@ -7746,7 +7778,7 @@ async function runAnalysis() {
 
   const btn = document.getElementById('analyzeBtn');
   btn.disabled = true;
-  document.getElementById('analyzeBtnIcon').innerHTML = '<div class="spinner"></div>';
+  document.getElementById('analyzeBtnIcon').innerHTML = '<div class="spinner-auto"></div>';
   document.getElementById('analyzeBtnText').textContent = 'Analyzing...';
   window._approvedOutline = null; // clear any previous outline — new analysis = new documents
   const totalFiles = rfpFiles.length + companyFiles.length;
@@ -8139,7 +8171,7 @@ async function runComplianceCheck() {
 
   const btn = document.getElementById('complianceRunBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></span> Checking compliance…';
+  btn.innerHTML = '<span class="spinner-auto" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></span> Checking compliance…';
   document.getElementById('complianceResults').style.display = 'none';
 
   // Show the proposal-tab status bar for compliance progress too
@@ -8297,7 +8329,7 @@ async function populateWinStrategy() {
   }
 
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:7px"></span>Thinking…';
+  btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:7px"></span>Thinking…';
 
   try {
     const apiKey = getApiKey();
@@ -8377,7 +8409,7 @@ async function reviseVolume() {
   const btn = document.getElementById('reviseBtn');
   const status = document.getElementById('reviseStatus');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> Revising…';
+  btn.innerHTML = '<span class="spinner-auto" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> Revising…';
   status.style.display = 'block';
   status.textContent = `Revising Volume ${vol} to address compliance gaps…`;
 
@@ -8656,6 +8688,172 @@ function parseLooseJson(raw) {
   p = tryP(b); if (p) return p;
   return null;
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// PROGRESS SUBSTRATE  (punch-list items 3, 4, 5, 6, 9)
+// ═══════════════════════════════════════════════════════════════════════════
+// Three long operations reported progress badly or not at all: auto-build structure
+// (one 10,000-token call behind a bare spinner), recommend rates (a counter that read
+// "1 of 6" for the whole run and then jumped to 6), and the gap analysis (a spinner
+// only). The counter was not merely mislabelled -- it counted ROLES while the work
+// happened in BATCHES, so it was structurally incapable of moving mid-batch.
+//
+// THE HONESTY RULE, inherited from _beginSegment: elapsed time may only creep the bar
+// ASYMPTOTICALLY toward the next real milestone and may never reach it. Only completed
+// work moves the bar to a milestone. A bar that hits 100% while the work is still
+// running is worse than no bar, because it converts "I don't know" into a false claim.
+
+const _PX_PROG = {};
+
+function _pxProgFmtSecs(s) {
+  s = Math.max(0, Math.round(s));
+  return s < 60 ? (s + 's') : (Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's');
+}
+
+function _pxProgRender(hostId) {
+  const st = _PX_PROG[hostId];
+  const el = document.getElementById(hostId);
+  if (!st || !el) return;
+
+  const floor = st.total > 0 ? (st.done / st.total) : 0;
+  // The ceiling is the NEXT milestone, never the end of everything in flight. Approaching
+  // the far end of a four-call run while zero calls have finished would let the bar sit at
+  // 98% for the entire job -- the same lie as the frozen counter, just prettier.
+  const ceil  = st.total > 0 ? (Math.min(st.done + 1, st.total) / st.total) : 1;
+  // Creep is measured from the LAST MILESTONE, not from the start of the run. Measured
+  // from the start, the exponential saturates within the first segment and the bar stops
+  // moving for the rest of the job.
+  const segSecs = (Date.now() - (st.segAt || st.startedAt)) / 1000;
+  const secs    = (Date.now() - st.startedAt) / 1000;
+  const frac    = 1 - Math.exp(-segSecs / (st.tau || 18));
+  let pct       = (floor + (ceil - floor) * frac) * 100;
+  // Hold clear of the boundary. A single-unit job (one API call) is held further back:
+  // there is no intermediate evidence at all, so 98% would be an outright claim.
+  pct = Math.min(pct, ceil * 100 - (ceil >= 1 ? 8 : 0.5));
+  pct = Math.max(pct, floor * 100, st.shown || 0);
+  if (st.finished) pct = 100;
+  st.shown = pct;
+
+  const eta = (st.done > 0 && !st.finished)
+    ? _pxProgFmtSecs((secs / st.done) * (st.total - st.done))
+    : '';
+  const esc = (typeof escHtml === 'function') ? escHtml : (x => x);
+  el.innerHTML =
+    '<div style="display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--muted);margin-bottom:4px">'
+      + '<span style="font-weight:700;color:var(--text)">' + esc(st.label || 'Working\u2026') + '</span>'
+      + '<span style="margin-left:auto;font-variant-numeric:tabular-nums">' + Math.round(pct) + '%</span>'
+    + '</div>'
+    + '<div style="height:7px;background:#e5e7eb;border-radius:4px;overflow:hidden">'
+      + '<div style="height:100%;width:' + pct + '%;background:' + (st.finished ? 'var(--success)' : 'var(--blue)')
+      + ';border-radius:4px;transition:width .45s ease"></div>'
+    + '</div>'
+    + '<div style="display:flex;gap:10px;font-size:10.5px;color:var(--muted);margin-top:3px">'
+      + '<span>' + esc(st.detail || '') + '</span>'
+      + '<span style="margin-left:auto;font-variant-numeric:tabular-nums">' + _pxProgFmtSecs(secs)
+      + (eta ? (' \u00b7 ~' + eta + ' left') : '') + '</span>'
+    + '</div>';
+}
+
+// total: units of REAL work (calls/batches), not items, unless one item is one call.
+function pxProgStart(hostId, total, label, detail, tau) {
+  const el = document.getElementById(hostId);
+  if (el) el.style.display = 'block';
+  if (_PX_PROG[hostId] && _PX_PROG[hostId].timer) clearInterval(_PX_PROG[hostId].timer);
+  _PX_PROG[hostId] = { total: Math.max(1, total || 1), done: 0,
+                       label: label || 'Working\u2026', detail: detail || '', startedAt: Date.now(),
+                       segAt: Date.now(), shown: 0, finished: false, tau: tau || 18, timer: null };
+  _PX_PROG[hostId].timer = setInterval(function () { _pxProgRender(hostId); }, 500);
+  _pxProgRender(hostId);
+}
+
+function pxProgMark(hostId, done, detail, label) {
+  const st = _PX_PROG[hostId];
+  if (!st) return;
+  // A real milestone restarts the creep clock, so the next segment moves again.
+  if (done != null && Math.min(st.total, done) > st.done) st.segAt = Date.now();
+  if (done != null) st.done = Math.min(st.total, done);
+  if (detail != null) st.detail = detail;
+  if (label != null) st.label = label;
+  _pxProgRender(hostId);
+}
+
+function pxProgEnd(hostId, detail) {
+  const st = _PX_PROG[hostId];
+  if (!st) return;
+  st.finished = true; st.done = st.total;
+  if (detail != null) st.detail = detail;
+  if (st.timer) { clearInterval(st.timer); st.timer = null; }
+  _pxProgRender(hostId);
+  setTimeout(function () {
+    const el = document.getElementById(hostId);
+    if (el && _PX_PROG[hostId] && _PX_PROG[hostId].finished) { el.style.display = 'none'; el.innerHTML = ''; }
+  }, 2500);
+}
+
+// ── streaming variant of callClaudeForJson ─────────────────────────────────
+// A non-streaming call gives NOTHING to report until it is completely finished, which
+// is why auto-build and the gap analysis could only ever show a spinner. Streaming
+// turns "no information" into a real, continuously updating signal: characters
+// actually received, and -- where the caller supplies a counter -- items actually
+// drafted so far. onProgress({chars, items}) is called as the body arrives.
+//
+// The non-streaming callClaudeForJson is deliberately left untouched: every other
+// caller in the file still uses it, and this is not the wave to re-test all of them.
+async function callClaudeForJsonStreaming(apiKey, content, maxTok, timeoutMs, label, onProgress, countRe) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: maxTok, stream: true, messages: [{ role: 'user', content }] })
+    });
+    if (!resp.ok) throw new Error(`${label} failed (${resp.status}): ${(await resp.text().catch(()=>'')).substring(0,200)}`);
+    if (!resp.body || !resp.body.getReader) throw new Error(`${label}: streaming is not available in this browser.`);
+
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', raw = '', lastTick = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        let ev; try { ev = JSON.parse(payload); } catch (e) { continue; }
+        if (ev.type === 'content_block_delta' && ev.delta && typeof ev.delta.text === 'string') raw += ev.delta.text;
+        else if (ev.type === 'error') throw new Error(`${label}: ${(ev.error && ev.error.message) || 'stream error'}`);
+      }
+      // Throttle: the callback repaints the DOM, and a delta can arrive many times a second.
+      const now = Date.now();
+      if (onProgress && now - lastTick > 350) {
+        lastTick = now;
+        let items = null;
+        if (countRe) { try { items = (raw.match(countRe) || []).length; } catch (e) { items = null; } }
+        try { onProgress({ chars: raw.length, items: items }); } catch (e) {}
+      }
+    }
+    clearTimeout(timer);
+    if (onProgress) {
+      let items = null;
+      if (countRe) { try { items = (raw.match(countRe) || []).length; } catch (e) { items = null; } }
+      try { onProgress({ chars: raw.length, items: items, complete: true }); } catch (e) {}
+    }
+    const parsed = parseLooseJson(raw);
+    if (parsed && typeof parsed === 'object' && Object.keys(parsed).length) return parsed;
+    throw new Error(`${label}: the response was empty or could not be parsed.`);
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error(`${label} timed out. Your document bundle may be too large \u2014 keep only the core PWS/SOW (ideally under 500KB) and try again.`);
+    throw e;
+  }
+}
+
 async function callClaudeForJson(apiKey, content, maxTok, timeoutMs, label) {
   let lastErr = null;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -11390,8 +11588,26 @@ function mktToggleRemote() {
 // by the BNA and then thrown away. A cleared TS/SCI security specialist with a degree and eight
 // years is not the same rate as the bare job title, so they are now part of every lookup.
 
-const _MKT_BATCH_SIZE = 5;      // roles per call — small enough that one search budget still covers them
-const _MKT_CONCURRENCY = 3;     // chunks in flight at once
+// Web searches run SERIALLY inside one call and in PARALLEL across calls, and a call's search
+// ceiling is min(8, 3 + rolesInBatch). So the critical path is waves x searches-per-call, and
+// the batch size drives both: bigger batches serialise more searches inside one call, smaller
+// batches add calls -- which costs nothing until they no longer fit in a single wave.
+//
+// Hence: run as many calls at once as we are willing to, then pick the SMALLEST batch that
+// still fits everything into ONE wave. At six roles that is six single-role calls (4 searches
+// on the critical path, versus 6 at batch-3 and 8 at batch-5); at thirty it settles at batch-5
+// (8 searches, versus 18 at a fixed batch-3, which bought extra waves to save searches that
+// were already running in parallel).
+//
+// A single-role call also removes the batch row-to-role mapping entirely: one row, one role,
+// nothing to misattribute. That is the v153 collision class, gone for the common small run.
+const _MKT_MAX_CONCURRENCY = 6;   // calls in flight at once — kept modest for rate limits
+const _MKT_MAX_BATCH = 5;         // never serialise more than this many roles into one call
+
+function _mktPlan(n) {
+  const batch = Math.max(1, Math.min(_MKT_MAX_BATCH, Math.ceil((n || 1) / _MKT_MAX_CONCURRENCY)));
+  return { batch: batch, concurrency: _MKT_MAX_CONCURRENCY };
+}
 function _mktNormName(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 function _mktStrip(v) { return String(v == null ? '' : v).replace(/^\s*\[[^\]]*\]\s*/, '').trim(); }
 
@@ -12054,9 +12270,17 @@ async function pricingRecommendRates(btn) {
 
   let done = 0, failed = 0, cached = 0;
   const total = targets.length;
-  const setLabel = (txt) => { if (btn) btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>' + txt; };
+  const setLabel = (txt) => { if (btn) btn.innerHTML = '<span class="spinner-auto" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>' + txt; };
   if (btn) { btn._html = btn.innerHTML; btn.disabled = true; }
-  setLabel('Recommending 0 of ' + total + '\u2026');
+  setLabel('Recommending\u2026');
+  // Batches completed, not roles: the real unit of work. Set once the chunks are known.
+  let _callsDone = 0, _callsTotal = 1;
+  const _tick = () => {
+    pxProgMark('pxRecommendProgress', _callsDone,
+      (done + failed) + ' of ' + total + ' role' + (total === 1 ? '' : 's') + ' priced'
+      + (cached ? (' \u00b7 ' + cached + ' from cache') : ''));
+    setLabel('Recommending \u2014 ' + (done + failed) + ' of ' + total + '\u2026');
+  };
 
   const apply = (l, rec) => {
     const paid = _mktPaidHourly(rec);
@@ -12079,12 +12303,17 @@ async function pricingRecommendRates(btn) {
       if (hit) { apply(l, hit); cached++; }
       else pending.push({ lcat: l, name: String(l.name).trim(), level: '', clear: '', ctx: ctx, key: key });
     });
-    setLabel('Recommending ' + (done + failed) + ' of ' + total + '\u2026');
 
     // 2. the rest go out in batches, several batches at a time.
     const chunks = [];
-    for (let i = 0; i < pending.length; i += _MKT_BATCH_SIZE) chunks.push(pending.slice(i, i + _MKT_BATCH_SIZE));
-    const results = await _mktMapLimit(chunks, _MKT_CONCURRENCY, async (chunk) => {
+    const _plan = _mktPlan(pending.length);
+    for (let i = 0; i < pending.length; i += _plan.batch) chunks.push(pending.slice(i, i + _plan.batch));
+    _callsTotal = Math.max(1, chunks.length);
+    pxProgStart('pxRecommendProgress', _callsTotal,
+                'Looking up market rates\u2026',
+                (done + failed) + ' of ' + total + ' roles priced', 20);
+    _tick();
+    const results = await _mktMapLimit(chunks, _plan.concurrency, async (chunk) => {
       const map = await marketFetchBatch(apiKey, chunk, loc);
       const missed = [];
       chunk.forEach(t => {
@@ -12092,27 +12321,33 @@ async function pricingRecommendRates(btn) {
         if (rec && _mktPaidHourly(rec) > 0) { _mktCachePut(t.key, rec); apply(t.lcat, rec); }
         else missed.push(t);
       });
-      setLabel('Recommending ' + (done + failed) + ' of ' + total + '\u2026');
+      _tick();
       // 3. a batch that dropped or mangled a role is repaired one role at a time rather than lost.
       for (const t of missed) {
         try {
           const rec = await marketFetch(apiKey, t.name, loc, '', '', t.ctx);
           apply(t.lcat, rec);
         } catch (e) { failed++; }
-        setLabel('Recommending ' + (done + failed) + ' of ' + total + '\u2026');
+        _tick();
       }
+      _callsDone++;
+      _tick();
       return true;
     });
     // a whole chunk that failed outright (network, auth, timeout) is retried role by role.
     for (let ci = 0; ci < results.length; ci++) {
       if (results[ci] && results[ci].ok) continue;
+      // This chunk threw, so it never counted itself done. Count it now, or the bar
+      // would stall short of 100% on a run that actually finished.
+      _callsDone++;
       for (const t of chunks[ci]) {
         try { const rec = await marketFetch(apiKey, t.name, loc, '', '', t.ctx); _mktCachePut(t.key, rec); apply(t.lcat, rec); }
         catch (e) { failed++; }
-        setLabel('Recommending ' + (done + failed) + ' of ' + total + '\u2026');
+        _tick();
       }
     }
   } finally {
+    pxProgEnd('pxRecommendProgress', done + ' of ' + total + ' role' + (total === 1 ? '' : 's') + ' priced.');
     if (btn) { btn.disabled = false; if (btn._html) btn.innerHTML = btn._html; }
     if (typeof pricingRenderAll === 'function') pricingRenderAll();   // render ONCE, not per role
   }
@@ -12125,7 +12360,16 @@ async function pricingRecommendRates(btn) {
   }
 }
 
-function _pxCleanNum(v) { return String(v == null ? '' : v).replace(/[^0-9.\-]/g, ''); }
+function _pxCleanNum(v) {
+  const s = String(v == null ? '' : v).replace(/,/g, '').trim();
+  // Mid-edit fragments the user is still typing.
+  if (/^-?\.?$/.test(s)) return s;
+  // FIRST number only. The old version deleted every non-digit and kept the rest, which glued
+  // every figure in a pasted phrase into one: a $7,500 travel ceiling stated in a sentence
+  // rendered as $750,025,000,000 in the NTE box, wider than the field could display.
+  const m = s.match(/-?\d*\.?\d+/);
+  return m ? m[0] : '';
+}
 function _pxFmtMoney(v) { const c = _pxCleanNum(v); if (c === '' || c === '-' || c === '.') return ''; const n = Number(c); return isNaN(n) ? '' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function pricingResyncAllRates() {
   if (typeof pricingModel === 'undefined' || !pricingModel || !pricingModel.lcats) return;
@@ -12300,7 +12544,24 @@ function pricingApplyBriefing(b) {
       pricingModel.travel.mode = _travNte ? 'nte' : 'open';
       pricingModel.travel.method = 'lump';                       // default to a simple lump-sum NTE, not the detailed per-diem build-up
     }
-    if (_travNte) { pricingModel.travel.nte = _travNte; const _n = (typeof _parseMoney === 'function' ? _parseMoney(_travNte) : parseFloat(_travNte)) || 0; if (_n > 0) { pricingModel.travel.lumpAmount = _n; pricingModel.travel.lumpBasis = 'total'; } }
+    if (_travNte) {
+      const _n = (typeof _parseMoney === 'function' ? _parseMoney(_travNte) : parseFloat(_travNte)) || 0;
+      // Store the NUMBER, never the raw phrase -- the field is a money input, and the prose it
+      // came from is kept in notes so nothing the solicitation said is lost.
+      pricingModel.travel.nte = _n > 0 ? String(_n) : '';
+      if (_n > 0) {
+        pricingModel.travel.lumpAmount = _n;
+        // A ceiling stated PER YEAR is not a contract total. Reading '$7,500 per year' as a
+        // $7,500 total under-prices travel by the number of periods.
+        const _perYear = /\b(per|each|a)\s*(year|annum|annual|period|option year)|\bannually\b|\/\s*(yr|year)\b/i.test(_travNte);
+        pricingModel.travel.lumpBasis = _perYear ? 'perPeriod' : 'total';
+        pricingModel.travel._nteBasisFrom = _perYear ? 'stated per year' : 'read as a contract total';
+      }
+      const _raw = String(_travNte).trim();
+      if (_raw && _raw !== String(_n)) {
+        pricingModel.travel.notes = ('Solicitation stated: ' + _raw + (pricingModel.travel.notes ? (' \u2014 ' + pricingModel.travel.notes) : '')).slice(0, 400);
+      }
+    }
   } else if (_trav === 'no') {
     pricingModel.travel.mode = 'none';
   }
@@ -12355,7 +12616,7 @@ async function pricingParseWd() {
   if (!apiKey) { alert('Enter your Anthropic API key on the Proposal tab (Step 2) first.'); return; }
   if (!pricingWdFiles.length) { alert('Add the Wage Determination file first.'); return; }
   const btn = document.getElementById('pricingWdParseBtn');
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> Reading WD\u2026'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> Reading WD\u2026'; }
   try {
     const { blocks } = await buildContentBlocks(pricingWdFiles);
     if (!blocks.length) throw new Error('Could not read the WD file. Export a clean PDF or text version and try again.');
@@ -12475,7 +12736,7 @@ async function pricingParseGsaSchedule(btnEl) {
   if (!apiKey) { alert('Enter your Anthropic API key on the Proposal tab (Step 2) first.'); return; }
   if (!pricingGsaFiles.length) { alert('Drop your GSA MAS Schedule file in first.'); return; }
   const btn = btnEl || document.getElementById('pricingGsaParseBtn');
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> Reading schedule…'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> Reading schedule…'; }
   try {
     const { blocks, unreadable } = await buildContentBlocks(pricingGsaFiles);
     if (!blocks.length) throw new Error('Could not read the schedule file. If it is a scanned PDF or a protected document, export a clean PDF or an .xlsx price list and try again.');
@@ -12595,7 +12856,7 @@ async function pricingAutoBuildStructure() {
   const gsa = pricingIsGsa();
   if (gsa && !(pricingModel.gsaRateCard || []).length) { alert('Read or add your GSA Schedule rates in Step 1 first, so roles can be mapped to Schedule LCATs.'); return; }
   const btn = document.getElementById('pricingAutoBuildBtn');
-  const setBusy = (busy, msg) => { if (btn) { btn.disabled = busy; btn.innerHTML = busy ? ('<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> ' + (msg || 'Working…')) : '\u2728 Auto-build structure'; } };
+  const setBusy = (busy, msg) => { if (btn) { btn.disabled = busy; btn.innerHTML = busy ? ('<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> ' + (msg || 'Working…')) : '\u2728 Auto-build structure'; } };
   setBusy(true, 'Thinking\u2026');
   try {
     let briefing = cachedBriefing;
@@ -12730,7 +12991,20 @@ Rules:
 - DIRECTED LABOR TABLE OVERRIDES TASK-DERIVED STAFFING. If the solicitation explicitly specifies the required labor categories AND their quantities (a staffing/manning table, or wording such as "the contractor shall provide 1 Project Manager, 2 Data Analysts, and 3 Risk Managers"), then (1) list them in "directed_labor" with the EXACT titles and counts, and (2) make "labor_mix" consist of EXACTLY those categories at EXACTLY those headcounts - same titles, same counts, no additions, no substitutions, no merging, no splitting - no matter how many PWS task areas are listed. The PWS tasks then only govern how each role's hours spread across tasks, never which roles exist or how many. Never add a role just to cover a task the directed table does not staff. If the Government does NOT direct a specific labor mix, return "directed_labor":[] and size the team from scope.
 ${pricingScaActive() ? '- For SCA-covered roles the direct wage must meet or exceed the Wage Determination minimum; treat the WD minimum plus H&W as the cost floor and flag any role whose pricing falls below it.\n' : ''}- Treat market figures as ESTIMATES to be verified against GSA CALC+, BLS OES, and SCA wage determinations \u2014 not authoritative.`;
 
-    const parsed = await callClaudeForJson(apiKey, [{ type: 'text', text: prompt }], 10000, 120000, 'Auto-building structure');
+    // One call, so one unit of work -- the bar creeps asymptotically toward it and only
+    // ARRIVES when the response really lands. The detail line carries the honest signal:
+    // roles actually drafted so far, counted out of the partial JSON as it streams in.
+    pxProgStart('pricingAutoBuildProgress', 1, 'Auto-building the labor structure\u2026',
+                'Reading the PWS and drafting roles\u2026', 30);
+    const parsed = await callClaudeForJsonStreaming(
+      apiKey, [{ type: 'text', text: prompt }], 10000, 120000, 'Auto-building structure',
+      function (p) {
+        const n = p.items || 0;
+        pxProgMark('pricingAutoBuildProgress', null,
+          (n > 0 ? (n + ' role' + (n === 1 ? '' : 's') + ' drafted') : 'Reading the PWS\u2026')
+          + ' \u00b7 ' + p.chars.toLocaleString('en-US') + ' characters received');
+      },
+      /"lcat"\s*:/g);
     if (!parsed || !Array.isArray(parsed.labor_mix) || !parsed.labor_mix.length) throw new Error('The model did not return a usable labor mix. Try again, or pull the RFP / add tasks first.');
     pricingApplyAutoBuild(parsed);
     pricingAutoBuildLast = parsed;
@@ -12739,7 +13013,7 @@ ${pricingScaActive() ? '- For SCA-covered roles the direct wage must meet or exc
   } catch (e) {
     console.error('auto-build failed:', e);
     showStatus('error', 'Auto-build failed', e.message || String(e));
-  } finally { setBusy(false); }
+  } finally { pxProgEnd('pricingAutoBuildProgress', 'Structure built.'); setBusy(false); }
 }
 
 // Map an hours_by_task / allowed_tasks key (a code or a name) to an existing task id.
@@ -13017,7 +13291,11 @@ function pricingRenderAutoBuildPanel() {
   if (!a) { el.innerHTML = ''; return; }
   const badge = (val, map) => { const m = map[(val || '').toLowerCase()] || ['#374151', '#e5e7eb', val || '\u2014']; return `<span style="font-size:10px;font-weight:700;color:${m[0]};background:${m[1]};padding:1px 7px;border-radius:10px;white-space:nowrap">${m[2]}</span>`; };
   const conf = c => badge(c, { high: ['#065f46', '#d1fae5', 'High'], medium: ['#92400e', '#fef3c7', 'Medium'], low: ['#9a3412', '#ffedd5', 'Low'], none: ['#991b1b', '#fee2e2', 'No match'] });
-  const assess = s => badge(s, { in_range: ['#065f46', '#d1fae5', 'In range'], below: ['#92400e', '#fef3c7', 'Below'], above: ['#92400e', '#fef3c7', 'Above'], far_below: ['#991b1b', '#fee2e2', 'Far below'], far_above: ['#991b1b', '#fee2e2', 'Far above'] });
+  // The map is keyed on the model's enum ('in_range'), but the COMPUTED verdict carries a
+  // space ('in range'), so it never matched and fell through to the grey default -- the one
+  // assessment that should have been green rendered as an unstyled lowercase pill. Spaces
+  // normalise to underscores so both spellings land on the same badge.
+  const assess = s => badge(String(s == null ? '' : s).replace(/\s+/g, '_'), { in_range: ['#065f46', '#d1fae5', 'In range'], below: ['#92400e', '#fef3c7', 'Below'], above: ['#92400e', '#fef3c7', 'Above'], far_below: ['#991b1b', '#fee2e2', 'Far below'], far_above: ['#991b1b', '#fee2e2', 'Far above'] });
   const gsa = pricingIsGsa();
   let h = '';
   if (a.fte_basis) h += `<div style="font-size:12px;color:var(--text);margin-bottom:8px"><strong>Team sizing:</strong> ${pricingEsc(a.fte_basis)}</div>`;
@@ -13059,11 +13337,12 @@ function pricingRenderAutoBuildPanel() {
         if (ourRate != null && ourRate > 0 && isFinite(_lo) && isFinite(_hi) && _hi >= _lo && _hi > 0) {
           _verdict = ourRate < _lo ? 'below' : (ourRate > _hi ? 'above' : 'in range');
         }
-        const _claimed = String(r.assessment || '').toLowerCase().replace(/[^a-z ]/g, '').trim();
+        const _human = s => String(s || '').toLowerCase().replace(/_/g, ' ').replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+        const _claimed = _human(r.assessment);
         const _disagrees = _verdict && _claimed && _claimed.indexOf(_verdict) < 0;
         const _assessCell = _verdict
           ? (assess(_verdict) + (_disagrees
-              ? ' <span title="The AI called this ' + pricingEsc(r.assessment || '') + '; the arithmetic says ' + _verdict + '." style="font-size:10px;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:0 3px">AI said ' + pricingEsc(r.assessment || '') + '</span>'
+              ? '<span title="The arithmetic says ' + _verdict + '; the AI called it ' + _human(r.assessment) + '." style="display:block;margin-top:3px;font-size:9.5px;font-weight:700;color:#9a3412;background:#ffedd5;border:1px solid #fdba74;border-radius:4px;padding:1px 5px;white-space:nowrap">AI said ' + pricingEsc(_human(r.assessment)) + '</span>'
               : ''))
           : assess(r.assessment);
         h += `<tr style="border-top:1px solid var(--border)"><td style="padding:3px 6px;font-weight:600">${pricingEsc(r.role_name || '')}</td><td style="padding:3px 6px">${ourCell}</td><td style="padding:3px 6px">${lo} \u2013 ${hi}/hr</td><td style="padding:3px 6px">${_assessCell}</td><td style="padding:3px 6px;color:var(--muted)">${pricingEsc(r.note || '')}</td></tr>`;
@@ -13175,6 +13454,22 @@ function pricingRenderTasks() {
 
 // The header banner. Column widths mirror the row below so labels sit over their controls. Rendered
 // once, above the list, and only when there is at least one non-GSA role to label.
+const PX_GSA_TRACKS = 'minmax(150px,2fr) 210px 78px 188px 26px';
+
+// Schedule mode has different columns from the off-schedule build-up: there is no rate to
+// type, so "Paid Rate" is replaced by the Schedule LCAT the role maps to.
+function pricingGsaLcatHeaderBanner() {
+  const th = (txt, css, tip) => '<div title="' + (tip || '') + '" style="' + css
+    + ';font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)">' + txt + '</div>';
+  return '<div style="display:grid;grid-template-columns:' + PX_GSA_TRACKS + ';gap:6px 8px;align-items:center;padding:2px 10px 4px;border-bottom:1px solid #e5e7eb;margin-bottom:2px">'
+    + th('Labor Category', 'min-width:0;text-align:center', 'The role as you will name it in your proposal')
+    + th('GSA Schedule LCAT', 'min-width:0;text-align:center', 'The Schedule labor category this role is priced from. The rate is fixed by the Schedule \u2014 there is nothing to type.')
+    + th('Proposed FTE', 'min-width:0;text-align:center', 'Full-time-equivalent staffing you propose for this role (base year)')
+    + th('Rate Detail', 'min-width:0;text-align:center', 'Company-implied vs fully-burdened, hourly vs annual. In Schedule mode the burdened rate comes from the Schedule and the company figure is implied back out of it.')
+    + '<div></div>'
+    + '</div>';
+}
+
 function pricingLcatHeaderBanner() {
   const th = (txt, flexBasis, tip) => '<div title="' + (tip || '') + '" style="' + flexBasis
     + ';font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)">' + txt + '</div>';
@@ -13195,8 +13490,14 @@ function pricingLcatHeaderBanner() {
 // to whatever its digits happen to measure — that content-driven width is exactly
 // what pushed every column after it out of alignment.
 function pricingRateMatrixHtml(l) {
-  const paid = parseFloat(l.baseRate) || 0;
   const W = pricingEffectiveWrapFactor(l), H = pricingHpf(l);
+  // Off schedule, the company rate is the input and the burdened rate derives from it. On a
+  // Schedule it runs the other way: the Schedule fixes the burdened rate and the company figure
+  // is implied back out of the wrap. Same grid either way, so both modes read the same.
+  const _gsaMode = (typeof pricingIsGsa === 'function') && pricingIsGsa();
+  const paid = _gsaMode
+    ? ((typeof pricingLoadedRate === 'function' && W > 0) ? (pricingLoadedRate(l, 0) / W) : 0)
+    : (parseFloat(l.baseRate) || 0);
   const cell = (v, strong, tip) => '<td title="' + (tip || '') + '" style="padding:2px 6px;text-align:right;font-size:10.5px;white-space:nowrap;'
     + (strong ? 'font-weight:700;color:var(--text)' : 'color:var(--muted)') + '">' + (v > 0 ? pricingFmtC(v) : '\u2014') + '</td>';
   const rowLbl = (txt, tip) => '<td title="' + (tip || '') + '" style="padding:2px 6px 2px 0;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;color:var(--muted);white-space:nowrap">' + txt + '</td>';
@@ -13208,7 +13509,7 @@ function pricingRateMatrixHtml(l) {
     + '<table style="border-collapse:collapse;width:100%;background:#f8fafc;border:1px solid #eef2f7;border-radius:6px">'
     + '<thead><tr><th></th>' + colLbl('Hourly') + colLbl('Annual') + '</tr></thead>'
     + '<tbody>'
-    + '<tr>' + rowLbl('Company', 'What you pay the employee') + cell(paid, false, 'Company paid hourly rate') + cell(salary, false, 'Paid hourly \u00d7 2,080 payroll hours \u2014 the employee\u2019s salary') + '</tr>'
+    + '<tr>' + rowLbl(_gsaMode ? 'Implied' : 'Company', _gsaMode ? 'Company-paid rate implied by the Schedule rate and your wrap' : 'What you pay the employee') + cell(paid, false, _gsaMode ? 'Implied company paid hourly rate (loaded \u00f7 wrap)' : 'Company paid hourly rate') + cell(salary, false, 'Paid hourly \u00d7 2,080 payroll hours \u2014 the employee\u2019s salary') + '</tr>'
     + '<tr>' + rowLbl('Burdened', 'What you bill the Government') + cell(loaded, true, 'Fully burdened hourly rate (paid \u00d7 ' + W.toFixed(3) + ' wrap)') + cell(annual, false, 'Loaded hourly \u00d7 ' + Math.round(H).toLocaleString() + ' billable Hrs/FTE \u2014 revenue per FTE-year') + '</tr>'
     + '</tbody></table></div>';
 }
@@ -13239,21 +13540,23 @@ function pricingRenderLcats() {
     const disc = Math.max(0, parseFloat(pricingModel.gsaDiscount) || 0);
     const applYear = pricingGsaScheduleYearForPeriod(0);
     const rateAtAppl = r => { const yi = Math.min(Math.max(applYear, 1), (r.rates || []).length) - 1; return parseFloat((r.rates || [])[yi]) || 0; };
-    { const _hb = document.getElementById('pricingLcatHeader'); if (_hb) _hb.innerHTML = ''; }
+    { const _hb = document.getElementById('pricingLcatHeader'); if (_hb) _hb.innerHTML = pricingGsaLcatHeaderBanner(); }
     el.innerHTML = pricingModel.lcats.map(l => {
       const opts = '<option value="">— map to a GSA LCAT —</option>' + card.map(r => `<option value="${pricingEsc(r.lcat)}" ${r.lcat === l.gsaLcat ? 'selected' : ''}>${pricingEsc(r.lcat)} — ${pricingFmtC(rateAtAppl(r))}/hr (Yr ${applYear})</option>`).join('');
       const gsaRate = pricingGsaRateFor(l, applYear);
       const _gld = pricingLoadedRate(l, 0), _gW = pricingEffectiveWrapFactor(l), _gH = pricingHpf(l), _gpd = _gW > 0 ? _gld / _gW : 0;
+      // The four derived figures moved into the 2x2 above; this line now carries only what the
+      // 2x2 cannot -- where the rate CAME FROM, which is the whole point in Schedule mode.
       const rateNote = l.gsaLcat
-        ? `Yr ${applYear} ${pricingFmtC(gsaRate)} − ${disc}% = <strong>${pricingFmtC(_gld)}/hr loaded</strong> <span style="color:var(--muted)">≈ ${pricingFmtC(_gpd)} paid · ${pricingFmtC(_gpd * 2080)}/yr · ${pricingFmtC(_gld * _gH)}/FTE-yr</span>`
+        ? `Schedule rate: Yr ${applYear} ${pricingFmtC(gsaRate)}${disc ? ` − ${disc}%` : ''} = <strong>${pricingFmtC(_gld)}/hr loaded</strong> · billed at ${Math.round(_gH).toLocaleString()} hrs/FTE`
         : '<span style="color:var(--warn)">map to a GSA LCAT →</span>';
-      return `<div id="pxLcat_${l.id}" style="display:grid;grid-template-columns:minmax(150px,2fr) 210px 188px 64px 64px auto;gap:6px 8px;align-items:center;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
-        <input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (as named in your proposal)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box"/>
-        <select onchange="pricingSetGsaLcat('${l.id}',this.value)" style="flex:2;min-width:170px;padding:6px 30px 6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:white;text-overflow:ellipsis">${opts}</select>
-        <div style="display:flex;align-items:center;gap:4px"><span style="font-size:11px;color:var(--muted)" title="Full-time-equivalent staffing you propose for this role (base year)">Proposed FTE</span><input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" style="width:60px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:center"/></div>
-        <span style="font-size:11px;color:var(--muted);white-space:nowrap">${pricingRowFte(l).toFixed(2)} FTE</span>
-        <button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="margin-left:auto;background:none;border:none;color:var(--error);cursor:pointer;font-size:16px">✕</button>
-        <div style="flex-basis:100%;font-size:11px;color:var(--muted);line-height:1.45;padding-left:2px">${rateNote}</div>
+      return `<div id="pxLcat_${l.id}" style="display:grid;grid-template-columns:${PX_GSA_TRACKS};gap:6px 8px;align-items:center;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
+        <input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (as named in your proposal)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
+        <select onchange="pricingSetGsaLcat('${l.id}',this.value)" style="min-width:0;width:100%;padding:6px 26px 6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:white;text-overflow:ellipsis;box-sizing:border-box">${opts}</select>
+        <input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" title="Full-time-equivalent staffing you propose for this role (base year)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
+        ${pricingRateMatrixHtml(l)}
+        <button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px;padding:0;line-height:1">✕</button>
+        <div style="grid-column:1/-1;font-size:10.5px;color:var(--muted);line-height:1.45;padding-left:2px">${rateNote}</div>
       </div>`;
     }).join('');
     return;
@@ -13781,7 +14084,7 @@ function pricingRenderTravel() {
     let inputs;
     if (method === 'lump') {
       const isTot = (t.lumpBasis || 'perPeriod') === 'total';
-      inputs = `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end;margin:8px 0 4px">${catSel}<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Amount basis</label><div style="padding-top:7px">${bradio('perPeriod', 'Per period')}${bradio('total', 'Total')}</div></div>${num('lumpAmount', isTot ? 'Total $ (all periods)' : '$ per period', '$', 120)}</div><div style="font-size:11px;color:var(--muted)">${isTot ? `Split evenly across ${nPer} period${nPer === 1 ? '' : 's'} in the workbook.` : `Applied to each of the ${nPer} period${nPer === 1 ? '' : 's'}.`}</div>`;
+      inputs = `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end;margin:8px 0 4px">${catSel}<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Amount basis</label><div style="padding-top:7px">${bradio('perPeriod', 'Per period')}${bradio('total', 'Total')}</div></div>${num('lumpAmount', isTot ? 'Total $ (all periods)' : '$ per period', '$', 120)}</div><div style="font-size:11px;color:var(--muted)">${isTot ? `Split evenly across ${nPer} period${nPer === 1 ? '' : 's'} in the workbook.` : `Applied to each of the ${nPer} period${nPer === 1 ? '' : 's'}.`}${t._nteBasisFrom ? ` <span style="color:#9a3412">Basis auto-set from the solicitation (${pricingEsc(t._nteBasisFrom)}) \u2014 change it if that is wrong.</span>` : ''}</div>${t.notes ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;font-style:italic">${pricingEsc(t.notes)}</div>` : ''}`;
     } else {
       const perTrip = pricingTravelPerTrip();
       inputs = `<div style="display:flex;gap:14px;flex-wrap:wrap;margin:8px 0 4px">${catSel}${num('tripsPerYear', 'Trips / year')}${num('travelers', 'Travelers / trip')}`;
@@ -14850,6 +15153,14 @@ function pricingGapFacts() {
       shareOfHours: hours > 0 ? r1(100 * rh / hours) : 0,
       paid: r2(paid), loaded: r2(billed),
       rateStatus: String(l.rateStatus || '') || 'blank',
+      // #F: in Schedule mode the rate's provenance is the Schedule, not the rateStatus chip.
+      gsaSourced: !!(gsa && l.gsaLcat && billed > 0),
+      gsaLcat: String(l.gsaLcat || ''),
+      gsaYear: gsa ? ((typeof pricingGsaScheduleYearForPeriod === 'function' ? pricingGsaScheduleYearForPeriod(0) : 1) || 1) : null,
+      gsaRate: (gsa && typeof pricingGsaRateFor === 'function')
+        ? r2(pricingGsaRateFor(l, (typeof pricingGsaScheduleYearForPeriod === 'function' ? pricingGsaScheduleYearForPeriod(0) : 1) || 1)) : null,
+      gsaDiscountPct: gsa ? (parseFloat(M.gsaDiscount) || 0) : null,
+      impliedPaid: (billed > 0 && pricingEffectiveWrapFactor(l) > 0) ? r2(billed / pricingEffectiveWrapFactor(l)) : 0,
       evaluated: !!l.evaluated,
       unrated: rh > 0 && !(billed > 0),
       tasksCovered: covered, tasksAllowed: allowed,
@@ -14969,16 +15280,30 @@ function pricingGapBrief(f) {
          + (r.bandPos ? ('; sits ' + (r.bandPos === 'in' ? 'INSIDE the band' : (r.bandPos.toUpperCase() + ' by ' + pc(r.bandPct)))) : '')
          + (r.toP50Dollars != null ? ('; moving it to the band p50 changes the base year by ' + $(r.toP50Dollars)) : ''))
       : 'no researched band on file';
+    // In GSA mode a blank baseRate/rateStatus is CORRECT, not a data gap: the Schedule sets
+    // the rate. Saying "NO RATE" there invents a problem and buries the real ones.
+    const _paidTxt = r.paid > 0
+      ? ('paid $' + r.paid + '/hr')
+      : (r.gsaSourced ? ('implied paid $' + r.impliedPaid + '/hr (loaded \u00f7 wrap)') : 'NO RATE');
+    const _statusTxt = r.gsaSourced
+      ? ('rate SOURCED FROM THE GSA SCHEDULE \u2014 LCAT \u201c' + r.gsaLcat + '\u201d, Schedule year ' + r.gsaYear
+         + ', Schedule rate $' + r.gsaRate + '/hr' + (r.gsaDiscountPct ? (' less ' + r.gsaDiscountPct + '% discount') : '')
+         + '; a blank rate field is EXPECTED in Schedule mode and is NOT a data gap')
+      : ('rate status ' + r.rateStatus);
     L.push(' ' + (i + 1) + '. ' + r.name
       + ' \u2014 ' + r.fte + ' FTE, ' + r.hours.toLocaleString('en-US') + ' hrs (' + r.shareOfHours + '% of effort), '
-      + (r.paid > 0 ? ('paid $' + r.paid + '/hr') : 'NO RATE') + ', loaded $' + r.loaded + '/hr, cost ' + $(r.cost)
-      + ', rate status ' + r.rateStatus
+      + _paidTxt + ', loaded $' + r.loaded + '/hr, cost ' + $(r.cost)
+      + ', ' + _statusTxt
       + '; covers ' + r.tasksCovered + ' of ' + f.totals.tasks + ' tasks (' + (r.ftePerTask == null ? '\u2014' : (r.ftePerTask + ' FTE/task')) + '); ' + bandTxt);
   });
   L.push('');
   if (f.unrated.length) L.push('UNRATED ROLES CARRYING HOURS (' + f.unrated.length + '): ' + f.unrated.join(', ') + ' \u2014 these cost $0, so they understate the price AND drag the blended rate down.');
+  if (f.totals.gsaMode) L.push('SCHEDULE MODE: every rate above comes from the GSA Schedule rate card already loaded into this model. Rates are FIXED by the Schedule. Do NOT raise a rate-sourcing or missing-rate finding for a role whose rate is marked SOURCED FROM THE GSA SCHEDULE, and do not propose changing a loaded rate figure.');
   if (f.unnamed) L.push('UNNAMED ROLES: ' + f.unnamed);
-  if (f.noBand.length) L.push('NO RESEARCHED BAND ON FILE (' + f.noBand.length + '): ' + f.noBand.join(', ') + ' \u2014 their rates are unverified against the market.');
+  if (f.noBand.length) L.push('NO RESEARCHED BAND ON FILE (' + f.noBand.length + '): ' + f.noBand.join(', ')
+    + (f.totals.gsaMode
+       ? ' \u2014 no market band has been researched for these roles. In Schedule mode this does NOT make the rate unsourced: the Schedule is the rate authority. A band would only be a cross-check on competitiveness.'
+       : ' \u2014 their rates are unverified against the market.'));
   if (f.thinRoles.length) L.push('THIN ROLE COVERAGE (under ' + f.thresholds.ftePerTask + ' FTE per task covered, across ' + f.thresholds.minTasks + '+ tasks): ' + f.thinRoles.map(r => r.name + ' \u2014 ' + r.fte + ' FTE across ' + r.tasksCovered + ' tasks = ' + r.ftePerTask + ' FTE/task').join(' | '));
   if (f.thinTasks.length) L.push('THIN TASKS (under ' + f.thresholds.taskFte + ' FTE total): ' + f.thinTasks.map(x => x.name + ' \u2014 ' + x.fte + ' FTE, ' + x.hours.toLocaleString('en-US') + ' hrs, ' + x.pctOfEffort + '% of effort').join(' | '));
   if (f.uncoveredTasks.length) L.push('TASKS WITH NO HOURS AT ALL (' + f.uncoveredTasks.length + '): ' + f.uncoveredTasks.join(' | '));
@@ -15008,6 +15333,15 @@ async function pricingAnalyzeGap(btn) {
 + '- name a specific role, task, or parameter. "Review the rates" and "revisit staffing" are useless; "raise X from $a to $b" and "Y carries N of M tasks at Z FTE" are the standard.\n'
 + '- carry the actual figures from the facts \u2014 from-value, to-value, and the base-year dollar effect where one is given above.\n'
 + '- be actionable inside this tool (rate per role, FTE per role, hours per task, travel/ODC, task coverage, or researching a missing rate).\n\n'
++ 'THE apply BLOCK \u2014 this is what makes a move clickable:\n'
++ '- set_rate: you are setting the COMPANY PAID hourly rate for one role. "to" is that paid rate, NOT the loaded rate. Never use set_rate in GSA Schedule mode.\n'
++ '- set_fte: "to" is the proposed FTE for one role. set_hours: "to" is hours for one role on ONE named task.\n'
++ '- set_nonlabor: "to" is the base-year travel/ODC dollar figure.\n'
++ '- lookup_rate: use this when the right value is NOT KNOWN YET and must be researched \u2014 e.g. a role with no rate on file. Leave "to" null. This is not a weaker move; it is the honest one when no number exists to write.\n'
++ '- goto_task: use when the fix is a judgement about scope that no single number expresses. Leave "to" null and name the task.\n'
++ '- none: only when the move genuinely cannot be actioned in this tool.\n'
++ '- "role" and "task" MUST match the spelling in the facts above EXACTLY, or the move cannot be applied and will be shown as advisory only.\n'
++ '- Never invent a "to" you cannot derive from the facts. A wrong number that is one click from being written into the price model is far worse than no button.\n\n'
 + 'HARD CONSTRAINTS:\n'
 + '- NEVER propose scaling every role by a uniform multiplier, or "increase all FTE by N%". That approach was removed from this tool precisely because it destroys the staffing rationale. Uniform moves are disqualified.\n'
 + '- The stated FTE-to-anchor and uniform-rate figures are given only so you can size a targeted move against them. Do not recommend either as a move.\n'
@@ -15020,6 +15354,11 @@ async function pricingAnalyzeGap(btn) {
 + '{"diagnosis":"1\u20132 sentences naming the single biggest reason the price sits where it does",'
 + '"moves":[{"rank":<int from 1>,"headline":"<=12 words, imperative","detail":"1\u20133 sentences, quantified, naming the figures",'
 + '"lever":"rates|staffing|hours|non-labor|scope|data","role":"<exact role name from the facts, or null>",'
++ '"apply":{"action":"<one of: set_rate | set_fte | set_hours | set_nonlabor | lookup_rate | goto_task | none>",'
++ '"role":"<the EXACT role name as spelled in the facts above, or null>",'
++ '"task":"<the EXACT task label as spelled in the facts above, or null \u2014 required for set_hours and goto_task>",'
++ '"to":<the new value as a plain number: a PAID hourly rate for set_rate, an FTE for set_fte, HOURS for set_hours, base-year DOLLARS for set_nonlabor; null if the action writes nothing>,'
++ '"from":<the current value of that same field as a plain number, or null>},'
 + '"impact_dollars":<signed base-year dollar effect as a number, or null where it cannot be derived from the facts>,'
 + '"confidence":"high|medium|low","basis":"which fact(s) above this rests on"}],'
 + '"residual":"what would still be unexplained after every move above, in one sentence (empty string if nothing)",'
@@ -15027,9 +15366,19 @@ async function pricingAnalyzeGap(btn) {
 
   _pxGapBusy = true;
   const prev = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Analyzing\u2026'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Analyzing\u2026'; }
   try {
-    const parsed = await callClaudeForJson(apiKey, [{ type: 'text', text: prompt }], 4000, 120000, 'Gap analysis');
+    pxProgStart('pricingGapProgress', 1, 'Analyzing the price model\u2026',
+                'Reading the computed facts\u2026', 22);
+    const parsed = await callClaudeForJsonStreaming(
+      apiKey, [{ type: 'text', text: prompt }], 4000, 120000, 'Gap analysis',
+      function (p) {
+        const n = p.items || 0;
+        pxProgMark('pricingGapProgress', null,
+          (n > 0 ? (n + ' move' + (n === 1 ? '' : 's') + ' drafted') : 'Diagnosing\u2026')
+          + ' \u00b7 ' + p.chars.toLocaleString('en-US') + ' characters received');
+      },
+      /"headline"\s*:/g);
     const moves = (parsed && Array.isArray(parsed.moves)) ? parsed.moves.filter(m => m && (m.headline || m.detail)) : [];
     if (!moves.length) throw new Error('the analysis came back with no usable moves \u2014 try again.');
     moves.sort((a, b) => (parseInt(a.rank) || 99) - (parseInt(b.rank) || 99));
@@ -15047,6 +15396,7 @@ async function pricingAnalyzeGap(btn) {
     if (typeof showStatus === 'function') showStatus('error', 'Gap analysis failed', e.message || String(e));
   } finally {
     _pxGapBusy = false;
+    pxProgEnd('pricingGapProgress', 'Analysis complete.');
     if (btn) { btn.disabled = false; btn.innerHTML = prev; }
     pricingRenderGapPanel();
   }
@@ -15057,6 +15407,200 @@ function pricingGapDismiss() { _pxGapResult = null; pricingRenderGapPanel(); }
 // ── the panel ─────────────────────────────────────────────────────────────────
 // Its own container, not part of pricingRenderSummary(), so a routine re-render does not wipe an
 // analysis the user is still reading.
+// ── item 10: resolving a move against the LIVE model ───────────────────────
+// The model returns names; this turns them into real ids and re-checks the numbers. A move
+// that cannot be resolved is shown advisory-only WITH ITS REASON, never as a dead button.
+let _pxGapUndoSnap = null;
+
+function _pxGapFindRole(name) {
+  const key = String(name || '').toLowerCase().trim();
+  if (!key) return null;
+  const ls = (pricingModel && pricingModel.lcats) || [];
+  return ls.find(l => String(l.name || '').toLowerCase().trim() === key)
+      || ls.find(l => { const k = String(l.name || '').toLowerCase().trim();
+                        return k && (k.indexOf(key) === 0 || key.indexOf(k) === 0); })
+      || null;
+}
+
+function _pxGapFindTask(label) {
+  const key = String(label || '').toLowerCase().trim();
+  if (!key) return null;
+  const ts = (pricingModel && pricingModel.tasks) || [];
+  const full = t => ((t.code ? t.code + ' ' : '') + (t.name || '')).toLowerCase().trim();
+  return ts.find(t => full(t) === key)
+      || ts.find(t => String(t.code || '').toLowerCase().trim() === key)
+      || ts.find(t => full(t).indexOf(key) >= 0 || key.indexOf(full(t)) >= 0)
+      || null;
+}
+
+// -> { kind:'write'|'run'|'goto'|'none', verb, reason, role, task, to, from }
+function _pxGapResolveMove(m) {
+  const a = (m && m.apply) || {};
+  const act = String(a.action || 'none').toLowerCase();
+  const gsa = (typeof pricingIsGsa === 'function') && pricingIsGsa();
+  const to = (a.to == null || a.to === '' || isNaN(parseFloat(a.to))) ? null : parseFloat(a.to);
+  const role = a.role ? _pxGapFindRole(a.role) : (m.role ? _pxGapFindRole(m.role) : null);
+  const task = a.task ? _pxGapFindTask(a.task) : null;
+  const no = reason => ({ kind: 'none', reason: reason });
+
+  if (act === 'none' || !act) return no('The analysis did not attach an action to this one.');
+
+  if (act === 'lookup_rate') {
+    if (!role) return no('The role named here does not match a labor category in the model.');
+    if (gsa) return no('In Schedule mode the rate comes from your GSA rate card, not a market lookup.');
+    return { kind: 'run', verb: 'Look up rate', role: role,
+             reason: 'Researches this role on Market Rates and fills the result in.' };
+  }
+  if (act === 'goto_task') {
+    if (!task) return no('The task named here does not match a PWS task in the model.');
+    return { kind: 'goto', verb: 'Go to task', task: task,
+             reason: 'Takes you to this task in the hours matrix \u2014 the call is a judgement, not a figure.' };
+  }
+  if (act === 'set_rate') {
+    // The v143 GSA rule survives the reversal: on a Schedule the rate is not ours to move.
+    if (gsa) return no('Rates are fixed by your GSA Schedule, so this cannot be applied here.');
+    if (!role) return no('The role named here does not match a labor category in the model.');
+    if (!(to > 0)) return no('No usable target rate was given.');
+    if (to > 500) return no('The target rate looks wrong (over $500/hr paid), so it will not be applied automatically.');
+    return { kind: 'write', verb: 'Apply rate', role: role, to: to,
+             from: parseFloat(role.baseRate) || null, field: 'rate',
+             reason: 'Sets the company PAID rate for ' + (role.name || 'this role') + '.' };
+  }
+  if (act === 'set_fte') {
+    if (!role) return no('The role named here does not match a labor category in the model.');
+    if (to == null || to < 0) return no('No usable target FTE was given.');
+    if (to > 500) return no('The target FTE looks wrong, so it will not be applied automatically.');
+    return { kind: 'write', verb: 'Apply FTE', role: role, to: to,
+             from: (role.advertised === '' || role.advertised == null) ? null : parseFloat(role.advertised),
+             field: 'fte', reason: 'Sets proposed FTE for ' + (role.name || 'this role') + '.' };
+  }
+  if (act === 'set_hours') {
+    if (!role) return no('The role named here does not match a labor category in the model.');
+    if (!task) return no('The task named here does not match a PWS task in the model.');
+    if (to == null || to < 0) return no('No usable target hours were given.');
+    return { kind: 'write', verb: 'Apply hours', role: role, task: task, to: to,
+             from: (typeof pricingCell === 'function') ? pricingCell(role.id, task.id) : null,
+             field: 'hours', reason: 'Sets hours for this role on this task.' };
+  }
+  if (act === 'set_nonlabor') {
+    if (to == null || to < 0) return no('No usable travel/ODC figure was given.');
+    return { kind: 'write', verb: 'Apply travel/ODC', to: to, field: 'nonlabor',
+             from: null, reason: 'Sets the base-year travel/ODC amount.' };
+  }
+  return no('That action is not something this tool can apply.');
+}
+
+function _pxGapSnapshot() {
+  try { _pxGapUndoSnap = JSON.stringify({ lcats: pricingModel.lcats, hours: pricingModel.hours,
+                                          mask: pricingModel.mask, travel: pricingModel.travel }); }
+  catch (e) { _pxGapUndoSnap = null; }
+}
+
+function pricingGapUndo() {
+  if (!_pxGapUndoSnap) return;
+  try {
+    const s = JSON.parse(_pxGapUndoSnap);
+    pricingModel.lcats = s.lcats; pricingModel.hours = s.hours;
+    pricingModel.mask = s.mask;   pricingModel.travel = s.travel;
+    _pxGapUndoSnap = null;
+    if (typeof pricingRenderAll === 'function') pricingRenderAll();
+    if (typeof showStatus === 'function') showStatus('info', 'Reverted', 'The price model is back to where it was before the moves were applied.');
+  } catch (e) {}
+}
+
+// Writes ONE resolved move through the ordinary setters. Returns true if the model changed.
+function _pxGapApply(r) {
+  if (!r || r.kind !== 'write') return false;
+  if (r.field === 'rate') {
+    r.role.rateBasis = 'paid';
+    pricingSetLcatRate(r.role.id, 'rateInput', String(r.to));
+    return true;
+  }
+  if (r.field === 'fte')      { pricingSetLcat(r.role.id, 'advertised', String(r.to)); return true; }
+  if (r.field === 'hours')    { pricingSetHours(r.role.id, r.task.id, String(r.to)); if (typeof pricingRenderAll === 'function') pricingRenderAll(); return true; }
+  if (r.field === 'nonlabor') {
+    const t = pricingTravel();
+    if (!t.mode || t.mode === 'none') t.mode = 'open';
+    t.method = 'lump'; t.lumpBasis = 'perPeriod';
+    pricingSetTravel('lumpAmount', String(r.to));
+    return true;
+  }
+  return false;
+}
+
+function pricingGapApplyMove(i) {
+  const g = _pxGapResult; if (!g || !g.moves || !g.moves[i]) return;
+  const r = _pxGapResolveMove(g.moves[i]);
+  if (r.kind === 'run') {
+    if (typeof switchTab === 'function') switchTab('market');
+    if (typeof marketLookupRole === 'function') marketLookupRole(r.role.id, null);
+    return;
+  }
+  if (r.kind === 'goto') {
+    if (typeof switchTab === 'function') switchTab('pricing');
+    const el = document.getElementById('pricingMatrix');
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  if (r.kind !== 'write') return;
+  if (!_pxGapUndoSnap) _pxGapSnapshot();
+  if (_pxGapApply(r)) {
+    g.moves[i]._applied = true;
+    if (typeof showStatus === 'function') showStatus('success', 'Move applied', r.reason + ' Use Revert on the panel to undo.');
+    pricingRenderGapPanel();
+  }
+}
+
+function pricingGapApplyAll() {
+  const g = _pxGapResult; if (!g || !g.moves) return;
+  const resolved = g.moves.map(_pxGapResolveMove);
+  const writes = resolved.filter(r => r.kind === 'write');
+  const runs   = resolved.filter(r => r.kind === 'run');
+  if (!writes.length && !runs.length) {
+    if (typeof showStatus === 'function') showStatus('info', 'Nothing to apply', 'None of these moves carries a value this tool can write.');
+    return;
+  }
+  if (!confirm('Apply ' + writes.length + ' move' + (writes.length === 1 ? '' : 's') + ' to the price model'
+    + (runs.length ? (', and queue ' + runs.length + ' rate lookup' + (runs.length === 1 ? '' : 's')) : '') + '?'
+    + '\n\nThe model is snapshotted first \u2014 Revert puts it back.')) return;
+  _pxGapSnapshot();
+  let n = 0;
+  writes.forEach((r, idx) => { if (_pxGapApply(r)) { n++; } });
+  resolved.forEach((r, idx) => { if (r.kind === 'write') g.moves[idx]._applied = true; });
+  if (typeof pricingRenderAll === 'function') pricingRenderAll();
+  pricingRenderGapPanel();
+  if (typeof showStatus === 'function') {
+    showStatus('success', 'Moves applied',
+      n + ' change' + (n === 1 ? '' : 's') + ' written to the price model.'
+      + (runs.length ? ' ' + runs.length + ' role' + (runs.length === 1 ? '' : 's') + ' still need a rate looked up \u2014 use the button on each card.' : '')
+      + ' Re-run the analysis to see where that leaves you, or Revert to undo.');
+  }
+}
+
+// One button per move, chosen by what the move can actually DO. A move whose value does not
+// exist yet gets the button that CREATES it (a rate lookup) rather than no button at all.
+function _pxGapMoveActionHtml(m, i) {
+  const esc = (typeof pricingEsc === 'function') ? pricingEsc : (x => String(x == null ? '' : x));
+  const r = _pxGapResolveMove(m);
+  if (m._applied) {
+    return '<div style="margin-top:8px;font-size:11px;font-weight:700;color:#065f46;background:#dcfce7;border:1px solid #86efac;border-radius:6px;padding:4px 9px;display:inline-block">\u2713 Applied</div>';
+  }
+  if (r.kind === 'none') {
+    return '<div style="margin-top:8px;font-size:10.5px;color:var(--muted);font-style:italic">Advisory \u2014 ' + esc(r.reason) + '</div>';
+  }
+  const from = (r.from != null && !isNaN(r.from)) ? esc(String(r.from)) : null;
+  const to   = (r.to != null && !isNaN(r.to)) ? esc(String(r.to)) : null;
+  const delta = (from != null && to != null) ? (' <span style="color:var(--muted);font-weight:400">' + from + ' \u2192 ' + to + '</span>') : '';
+  const style = r.kind === 'write'
+    ? 'background:var(--blue);color:#fff;border:1px solid var(--blue)'
+    : 'background:#fff;color:var(--blue);border:1px solid var(--blue)';
+  return '<div style="margin-top:8px;display:flex;align-items:center;gap:9px;flex-wrap:wrap">'
+    + '<button onclick="pricingGapApplyMove(' + i + ')" style="' + style + ';font-size:11px;font-weight:800;border-radius:6px;padding:5px 11px;cursor:pointer;white-space:nowrap">'
+    + esc(r.verb) + delta + '</button>'
+    + '<span style="font-size:10.5px;color:var(--muted)">' + esc(r.reason) + '</span>'
+    + '</div>';
+}
+
 function pricingRenderGapPanel() {
   const el = document.getElementById('pricingGapPanel'); if (!el) return;
   const esc = (typeof pricingEsc === 'function') ? pricingEsc : (x => String(x == null ? '' : x));
@@ -15095,12 +15639,19 @@ function pricingRenderGapPanel() {
       + (m.confidence ? '<span style="font-size:10.5px;font-weight:700;color:' + (conf[String(m.confidence).toLowerCase()] || 'var(--muted)') + '">' + esc(m.confidence) + ' confidence</span>' : '')
       + '</div>'
       + (m.basis ? '<div style="font-size:10.5px;color:var(--muted);margin-top:5px">Rests on: ' + esc(m.basis) + '</div>' : '')
+      + _pxGapMoveActionHtml(m, i)
       + '</div>';
   }).join('');
+  const _resolved = g.moves.map(_pxGapResolveMove);
+  const _nWrite = _resolved.filter(r => r.kind === 'write').length;
+  const _nRun   = _resolved.filter(r => r.kind === 'run').length;
   el.innerHTML = '<div style="border:1px solid #c7d2fe;background:#f8fafc;border-radius:10px;padding:13px 15px">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
     + '<div style="font-weight:800;font-size:13px;color:#3730a3">\uD83D\uDD0E Gap analysis \u2014 ' + g.moves.length + ' ranked move' + (g.moves.length === 1 ? '' : 's') + '</div>'
-    + '<div style="display:flex;gap:7px"><button onclick="pricingAnalyzeGap(this)" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:5px 11px;cursor:pointer">Re-run</button>'
+    + '<div style="display:flex;gap:7px">'
+    + ((_nWrite + _nRun) ? '<button onclick="pricingGapApplyAll()" style="font-size:11px;font-weight:800;background:var(--blue);color:#fff;border:1px solid var(--blue);border-radius:6px;padding:5px 11px;cursor:pointer">Accept all \u2014 ' + _nWrite + ' change' + (_nWrite === 1 ? '' : 's') + (_nRun ? (' + ' + _nRun + ' lookup' + (_nRun === 1 ? '' : 's')) : '') + '</button>' : '')
+    + (_pxGapUndoSnap ? '<button onclick="pricingGapUndo()" style="font-size:11px;font-weight:700;background:#fff;color:#92400e;border:1px solid #fdba74;border-radius:6px;padding:5px 11px;cursor:pointer">\u21A9 Revert</button>' : '')
+    + '<button onclick="pricingAnalyzeGap(this)" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:5px 11px;cursor:pointer">Re-run</button>'
     + '<button onclick="pricingGapDismiss()" style="font-size:11px;font-weight:700;background:#fff;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:5px 11px;cursor:pointer">Dismiss</button></div></div>'
     + (stale ? '<div style="margin-top:8px;font-size:11.5px;font-weight:600;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:7px;padding:7px 11px">\u26a0 The price model has changed since this ran, so the figures below no longer describe it. Re-run the analysis.</div>' : '')
     + (g.diagnosis ? '<div style="font-size:12.5px;color:var(--text);line-height:1.55;margin-top:8px"><strong>Diagnosis.</strong> ' + esc(g.diagnosis) + '</div>' : '')
@@ -15109,7 +15660,7 @@ function pricingRenderGapPanel() {
     + (g.caution ? '<div style="font-size:12px;color:#92400e;line-height:1.5;margin-top:6px;background:#fffbeb;border:1px solid #fde68a;border-radius:7px;padding:8px 11px"><strong>Caution:</strong> ' + esc(g.caution) + '</div>' : '')
     + '<details style="margin-top:10px"><summary style="font-size:11px;color:var(--muted);cursor:pointer">Show the exact figures this analysis was given</summary>'
     + '<pre style="font-size:10.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid var(--border);border-radius:7px;padding:10px 12px;margin-top:6px;color:var(--text)">' + esc(g.brief) + '</pre></details>'
-    + '<div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.5">Advisory only \u2014 nothing here is applied to the model; every change is yours to make. The figures above are computed by the tool; the ranking and wording are the model\u2019s. Thin-coverage flags use a threshold of ' + _PX_THIN_FTE_PER_TASK + ' FTE per task (roles covering ' + _PX_THIN_TASK_MIN_TASKS + '+ tasks) and ' + _PX_THIN_TASK_FTE + ' FTE per task overall.</div>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.5">Nothing is applied until you click Apply \u2014 and every value is re-checked against the live model before it is written, so a figure the analysis got wrong cannot reach your price build unchallenged. The figures above are computed by the tool; the ranking and wording are the model\u2019s. Thin-coverage flags use a threshold of ' + _PX_THIN_FTE_PER_TASK + ' FTE per task (roles covering ' + _PX_THIN_TASK_MIN_TASKS + '+ tasks) and ' + _PX_THIN_TASK_FTE + ' FTE per task overall.</div>'
     + '</div>';
 }
 function pricingTieOutHtml() {
@@ -15524,7 +16075,18 @@ function _oppBarHtml(bottom) {
   return '<div class="opp-bar' + (bottom ? ' opp-bar-bottom' : '') + '" role="group" aria-label="Opportunity workspace controls">' +
     '<span class="opp-bar-label">\uD83D\uDCC1 Opportunity workspace</span>' +
     '<div class="opp-bar-actions">' +
-      '<button type="button" class="btn btn-secondary btn-sm opp-clear" onclick="clearOpportunity()" title="Clear the uploaded files, Bid/No-Bid analysis, win strategy, pricing model and drafts for this opportunity so you can start a new one. The current opportunity is saved — use Restore to bring it back.">\uD83E\uDDF9 Clear for new opportunity</button>' +
+      '<span style="position:relative;display:inline-block">' +
+        '<button type="button" class="btn btn-secondary btn-sm opp-clear" onclick="_oppToggleMenu(this)" title="Choose how much to clear.">\uD83E\uDDF9 Clear\u2026 \u25be</button>' +
+        '<div class="opp-clear-menu" style="display:none;position:absolute;top:100%;left:0;z-index:400;margin-top:4px;min-width:330px;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.14);padding:6px;text-align:left">' +
+          _oppMenuItem('docs',     '\uD83D\uDCC4 Loaded documents and drafts', 'Keeps your pricing model, win strategy and assumptions.') +
+          _oppMenuItem('bna',      '\uD83C\uDFAF Bid/No-Bid analysis and win strategy', 'Also clears assumptions, win themes, discriminators and notes. Keeps the pricing model.') +
+          _oppMenuItem('pricing',  '\uD83D\uDCB0 Pricing model', 'Also clears labor categories, tasks, hours, rates and periods. Keeps the win strategy.') +
+          _oppMenuItem('all',      '\uD83E\uDDF9 Everything for this opportunity', 'The whole workspace. Saved to Restore first.') +
+          '<div style="border-top:1px solid var(--border);margin:5px 2px"></div>' +
+          _oppMenuItem('factory',  '\u26A0\uFE0F Factory reset', 'Also clears Settings, API keys and saved resume positions. CANNOT be restored.', true) +
+          '<div style="font-size:10.5px;color:var(--muted);padding:5px 9px 3px;line-height:1.45">Every option reloads the page, so uploaded files are dropped either way \u2014 browsers cannot save them. The options differ in which <em>saved</em> work survives.</div>' +
+        '</div>' +
+      '</span>' +
       '<button type="button" class="btn btn-secondary btn-sm opp-restore" onclick="restoreOpportunity()" disabled title="Nothing has been cleared yet.">\u21A9 Restore previous</button>' +
     '</div>' +
   '</div>';
@@ -15547,6 +16109,84 @@ function _oppRefreshButtons() {
     b.title = has ? 'Bring back the opportunity you last cleared (its files will need re-uploading).' : 'Nothing has been cleared yet — this becomes available after you clear an opportunity.';
   });
 }
+function _oppMenuItem(scope, label, sub, danger) {
+  return '<button type="button" onclick="_oppClearScoped(\'' + scope + '\', this)" '
+    + 'style="display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;padding:7px 9px;border-radius:7px;font-size:12px;font-weight:700;color:' + (danger ? '#991b1b' : 'var(--text)') + '" '
+    + 'onmouseover="this.style.background=\'' + (danger ? '#fef2f2' : '#f1f5f9') + '\'" onmouseout="this.style.background=\'none\'">'
+    + label
+    + '<span style="display:block;font-weight:400;font-size:10.5px;color:var(--muted);margin-top:1px;line-height:1.4">' + sub + '</span>'
+    + '</button>';
+}
+
+function _oppCloseMenus() {
+  try { document.querySelectorAll('.opp-clear-menu').forEach(function (m) { m.style.display = 'none'; }); } catch (e) {}
+}
+
+function _oppToggleMenu(btn) {
+  const menu = btn && btn.parentNode ? btn.parentNode.querySelector('.opp-clear-menu') : null;
+  const wasOpen = menu && menu.style.display === 'block';
+  _oppCloseMenus();
+  if (menu && !wasOpen) menu.style.display = 'block';
+}
+try { document.addEventListener('click', function (e) {
+  if (e && e.target && e.target.closest && e.target.closest('.opp-bar')) return;
+  _oppCloseMenus();
+}); } catch (e) {}
+
+// What each scope removes. A key listed here is deleted; anything not listed survives the reload.
+const OPP_CLEAR_SCOPES = {
+  docs:    { keys: [],                               label: 'Loaded documents and drafts' },
+  bna:     { keys: ['srfed_session'],                label: 'Bid/No-Bid analysis and win strategy' },
+  pricing: { keys: [PRICING_KEY],                    label: 'Pricing model' },
+  all:     { keys: [PRICING_KEY, 'srfed_session'],   label: 'Everything for this opportunity' },
+};
+
+function _oppClearScoped(scope, btn) {
+  _oppCloseMenus();
+  if (scope === 'factory') return _oppFactoryReset();
+  const spec = OPP_CLEAR_SCOPES[scope];
+  if (!spec) return;
+  if (!_oppHasData()) { showStatus('info', 'Nothing to clear', 'This opportunity workspace is already empty.'); return; }
+  if (!confirm('Clear: ' + spec.label + '?\n\nThe page reloads, so any loaded documents are dropped \u2014 browsers cannot save uploaded files.\n\nYour current work is backed up first: use \u201cRestore previous\u201d on any tab to bring it back.')) return;
+  try {
+    if (typeof _pricingWrite === 'function') _pricingWrite();
+    if (typeof saveSession === 'function') saveSession();
+    const backup = { v: 1, ts: Date.now(), pricing: localStorage.getItem(PRICING_KEY), session: localStorage.getItem('srfed_session') };
+    localStorage.setItem(OPP_BACKUP_KEY, JSON.stringify(backup));
+  } catch (e) {
+    // Backup failed (e.g. storage full) -- abort so we never clear without a saved copy.
+    showStatus('error', 'Could not clear', 'Saving the current opportunity failed, so nothing was cleared \u2014 your work is untouched.');
+    return;
+  }
+  _oppReloading = true;                       // no unload flush may write the old model back
+  try { if (typeof _pricingSaveTimer !== 'undefined' && _pricingSaveTimer) clearTimeout(_pricingSaveTimer); } catch (e) {}
+  try {
+    spec.keys.forEach(function (k) { localStorage.removeItem(k); });
+    sessionStorage.setItem('opp_flash', 'cleared');
+  } catch (e) {}
+  location.reload();
+}
+
+// Everything, including Settings and API keys. No backup is taken, because a backup that
+// silently survived a "factory reset" would make the label a lie.
+function _oppFactoryReset() {
+  if (!confirm('FACTORY RESET\n\nThis clears the whole workspace AND your Settings, saved API keys and saved resume positions.\n\nIt is NOT backed up and cannot be restored. Continue?')) return;
+  if (!confirm('Last check \u2014 your Anthropic and HubSpot keys and every company setting will be erased. Reset now?')) return;
+  _oppReloading = true;
+  try { if (typeof _pricingSaveTimer !== 'undefined' && _pricingSaveTimer) clearTimeout(_pricingSaveTimer); } catch (e) {}
+  try {
+    const doomed = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf('srfed_') === 0) doomed.push(k);
+    }
+    doomed.forEach(function (k) { localStorage.removeItem(k); });
+    try { sessionStorage.clear(); } catch (e) {}
+    sessionStorage.setItem('opp_flash', 'factory');
+  } catch (e) {}
+  location.reload();
+}
+
 function clearOpportunity() {
   if (!_oppHasData()) { showStatus('info', 'Nothing to clear', 'This opportunity workspace is already empty.'); return; }
   if (!confirm('Start a new opportunity?\n\nThis clears the uploaded files, Bid/No-Bid analysis, win strategy, pricing model and generated drafts for the current opportunity.\n\nYour current work is saved — use "Restore previous" on any tab to bring it back. (Uploaded files can\u2019t be saved and would need re-uploading.)')) return;
@@ -16522,7 +17162,7 @@ async function runBnaCoverageGap() {
   if (results) results.style.display = 'none';
   const _gapBtn = document.getElementById('bnaGapRunBtn');
   const _gapOrig = _gapBtn ? _gapBtn.innerHTML : '';
-  if (_gapBtn) { _gapBtn.disabled = true; _gapBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span>Analyzing\u2026'; }
+  if (_gapBtn) { _gapBtn.disabled = true; _gapBtn.innerHTML = '<span class="spinner-auto" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span>Analyzing\u2026'; }
   if (status) {
     status.style.display = 'block'; status.style.color = 'var(--muted)';
     status.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:10px"><span class="spinner-dark" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></span><span>Analyzing coverage against your capability profile\u2026 this can take up to ~90 seconds.</span></div><div class="indet-bar" style="margin:10px auto 0;max-width:440px"></div>';
@@ -16696,7 +17336,7 @@ async function runBnaQa() {
   if (!apiKey) { showErr('Enter your Anthropic API key (top of the page) first.'); return; }
   const btn = document.getElementById('bnaQaBtn');
   const orig = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Thinking\u2026'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Thinking\u2026'; }
   if (answer) answer.style.display = 'none';
   if (status) { status.style.display = 'block'; const t = document.getElementById('bnaQaStatusText'); if (t) t.textContent = 'Reading the solicitation\u2026'; }
   try {
@@ -17098,7 +17738,7 @@ async function runResume() {
   if (!apiKey) { resumeMsg('Enter your Anthropic API key (top of the page) first.', true); return; }
   var res = document.getElementById('resResults'); if (res) { res.style.display = 'none'; res.innerHTML = ''; }
   var _rb = document.getElementById('resumeGenBtn'); var _rbOrig = _rb ? _rb.innerHTML : '';
-  if (_rb) { _rb.disabled = true; _rb.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Writing\u2026'; }
+  if (_rb) { _rb.disabled = true; _rb.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Writing\u2026'; }
   if (status) { status.style.display = 'block'; var _rst = document.getElementById('resStatusText'); if (_rst) _rst.textContent = 'Writing the resume\u2026'; }
   try {
     var data = await callClaudeForJson(apiKey, _resumeContent(role.trim(), req.trim(), overrides, uploadedText), 4000, 150000, 'Resume');
@@ -17434,7 +18074,7 @@ async function runConstrainedDetect() {
   if (results) { results.style.display = 'none'; results.innerHTML = ''; }
   const _detBtn = document.getElementById('constrainedDetectBtn');
   const _detOrig = _detBtn ? _detBtn.innerHTML : '';
-  if (_detBtn) { _detBtn.disabled = true; _detBtn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Detecting\u2026'; }
+  if (_detBtn) { _detBtn.disabled = true; _detBtn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Detecting\u2026'; }
   show('Detecting which pricing stages are already populated\u2026', false);
   try {
     const data = await callClaudeForJson(apiKey, [{ type: 'text', text: _constrainedDetectContent(window._constrainedCsv) }], 1800, 90000, 'Constrained-pricing detection');
@@ -17585,7 +18225,7 @@ async function runConstrainedSolve() {
   add('Scope', b.scope_summary || b.requirement_summary); add('Periods', b.period_structure); add('Estimated FTEs', b.estimated_ftes);
   const ctx = ctxBits.join('\n') || '(no structured briefing available \u2014 work from the spreadsheet and the task areas)';
 
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Solving\u2026'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Solving\u2026'; }
   if (results) { results.style.display = 'none'; results.innerHTML = ''; }
   show('Solving the blank stages while holding the fixed ones\u2026', false);
   try {
@@ -17683,7 +18323,7 @@ async function runConstrainedPwsCheck() {
   if (!apiKey) { show('Enter your Anthropic API key (top of the page) first.', true); return; }
   const pws = _constrainedPwsContext();
   if (!pws || pws.trim().length < 10) { show('No PWS/RFP requirements are loaded to check against. Pull your RFP analysis on Pricing Step 2 (or the Proposal tab) first.', true); return; }
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Checking\u2026'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Checking\u2026'; }
   if (results) { results.style.display = 'none'; results.innerHTML = ''; }
   show('Checking the sheet against the PWS requirements\u2026', false);
   try {
@@ -18122,7 +18762,7 @@ async function runBnaCombined() {
   // not just the scoring phase — otherwise it looks idle while details are being extracted.
   const _runBtn = document.getElementById('bnaRunBtn');
   const _runBtnHtml = _runBtn ? _runBtn.innerHTML : '';
-  if (_runBtn) { _runBtn.disabled = true; _runBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></span> Analyzing…'; }
+  if (_runBtn) { _runBtn.disabled = true; _runBtn.innerHTML = '<span class="spinner-auto" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></span> Analyzing…'; }
   try {
     // 1) Opportunity details — renders into the card above as soon as it returns.
     try { await runOpportunityIntel(); } catch (e) { console.error('Opportunity intel failed', e); }
@@ -18157,7 +18797,7 @@ async function runBidNoBid() {
 
   const btn = document.getElementById('bnaRunBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></span> Analyzing…';
+  btn.innerHTML = '<span class="spinner-auto" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></span> Analyzing…';
 
   showBnaStatus('info', 'Analyzing opportunity…', 'Reading solicitation documents and scoring against your company profile. Takes ~45 seconds.', true);
   startBnaEta(50);
@@ -19003,7 +19643,7 @@ async function runOpportunityIntel() {
     return;
   }
 
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span> Extracting…'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span> Extracting…'; }
 
   showBnaStatus('info', 'Extracting opportunity intelligence…', 'Reading solicitation documents and extracting all 31 fields. Takes ~30 seconds.', true);
   startBnaEta(35);
@@ -19999,7 +20639,7 @@ function renderOpportunityIntel(intel, container) {
         displayHtml = valContent + badge;
         if (f.key === 'incumbent' && intel) {
           const _ls = intel.incumbent_lookup;
-          if (_ls === 'searching') displayHtml += ' <span style="font-size:11px;color:var(--blue)"><span class="spinner" style="width:9px;height:9px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:3px"></span>checking federal award records\u2026</span>';
+          if (_ls === 'searching') displayHtml += ' <span style="font-size:11px;color:var(--blue)"><span class="spinner-auto" style="width:9px;height:9px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:3px"></span>checking federal award records\u2026</span>';
           else if (_ls === 'none') displayHtml += ' <span title="An automated web search of federal award records (USASpending, FPDS, SAM, and GovCon trackers) ran but found no credible source naming the incumbent. The value above is the document-extraction result." style="font-size:10px;font-weight:600;background:#f1f5f9;border:1px solid var(--border);border-radius:8px;padding:1px 6px;color:var(--muted);margin-left:4px">web lookup: no credible source</span>';
           else if (_ls === 'error') displayHtml += ' <span title="The automated web lookup could not run \u2014 the API request failed. The most common cause is that web search is not enabled for this Anthropic API key." style="font-size:10px;font-weight:600;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:1px 6px;color:#b91c1c;margin-left:4px">web lookup unavailable</span>';
         }
@@ -20110,7 +20750,7 @@ async function runSectionEdit() {
 
   const btn = document.getElementById('editorRunBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></span> Rewriting…';
+  btn.innerHTML = '<span class="spinner-auto" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></span> Rewriting…';
   showStatus('info', 'Rewriting section…', 'Claude is revising your section. Takes ~20 seconds.', true);
   setProgress(5, [{ text: 'Rewriting section', status: 'active' }]);
   _startEtaTimer(25);
