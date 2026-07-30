@@ -3171,7 +3171,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '179';
+const APP_VERSION = '180';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -12537,8 +12537,14 @@ function pricingApplyBriefing(b) {
   let cyNum = parseInt(String(_intel.contract_years || '').replace(/[^0-9]/g, ''));
   if (!isNaN(cyNum) && cyNum > 11) cyNum = _bnaContractPeriods(_intel);  // a non-year value (hours/$/date) leaked in — re-derive a sane length
   const haveStructured = (!isNaN(baseMoNum) && baseMoNum > 0) || (!isNaN(optCntNum) && optCntNum > 0);
+  // LAST RESORT: the derived base length off the analyzed opportunity. Without it, a base
+  // period the briefing failed to quantify fell through every branch below and the model
+  // kept its 12-month default — pricing a full year of labour for a shorter order, with
+  // nothing on screen to say so.
+  const _derivedBase = (typeof _bnaBaseLength === 'function') ? _bnaBaseLength(_intel) : { months: 0 };
   const baseMonths = (!isNaN(baseMoNum) && baseMoNum > 0) ? Math.min(baseMoNum, 120)
-                   : (baseMoMatch ? Math.min(parseInt(baseMoMatch[1]) || 12, 60) : 12);
+                   : (baseMoMatch ? Math.min(parseInt(baseMoMatch[1]) || 12, 60)
+                   : ((_derivedBase.months >= 1 && _derivedBase.months <= 60) ? _derivedBase.months : 12));
   const optMonths  = (!isNaN(optMoNum) && optMoNum > 0) ? Math.min(optMoNum, 120)
                    : (optMoMatch ? Math.min(parseInt(optMoMatch[1]) || 12, 60) : 12);
   let nOpt = haveStructured
@@ -12546,7 +12552,7 @@ function pricingApplyBriefing(b) {
            : (optMatch ? Math.min(parseInt(optMatch[1]) || 0, 10) : 0);
   // Fallback: if nothing above yielded option periods, derive them from contract_years (total years).
   if (nOpt === 0 && !isNaN(cyNum) && cyNum >= 2) nOpt = Math.min(cyNum - 1, 12);
-  if (haveStructured || optMatch || baseMoMatch || (!isNaN(cyNum) && cyNum >= 2)) {
+  if (haveStructured || optMatch || baseMoMatch || (!isNaN(cyNum) && cyNum >= 2) || baseMonths !== 12) {
     const baseName = (baseMonths === 12) ? 'Base Year' : 'Base Period';
     const optName  = (optMonths === 12) ? 'Option Year ' : 'Option Period ';
     pricingModel.periods = [{ id: 'p_base', name: baseName, escalation: 0, months: baseMonths }];
@@ -19638,8 +19644,8 @@ function downloadBnaPdf() {
   ]);
 
   const groups = [
-    ['Dates & Timeline', [['Next Due Date', 'next_due_date'], ['Period of Performance', 'period_of_performance'], ['Contract Duration (years)', 'contract_years'], ['Period of Performance Start Date', 'pop_start_date'], ['Base Period End Date', 'pop_end_date'], ['Last Possible Performance Date (incl. options)', 'last_possible_performance_date']]],
-    ['Size & Value', [['Number of FTEs', 'fte_count'], ['Base Year Value', 'base_year_value'], ['Total Contract Value', 'total_contract_value'], ['Award Value Rationale', 'award_value_rationale']]],
+    ['Dates & Timeline', [['Next Due Date', 'next_due_date'], ['Period of Performance', 'period_of_performance'], [_bnaLengthLabel(), 'contract_years'], ['Period of Performance Start Date', 'pop_start_date'], ['Base Period End Date', 'pop_end_date'], ['Last Possible Performance Date (incl. options)', 'last_possible_performance_date']]],
+    ['Size & Value', [['Number of FTEs', 'fte_count'], [_bnaBaseValueLabel(), 'base_year_value'], ['Total Contract Value', 'total_contract_value'], ['Award Value Rationale', 'award_value_rationale']]],
     ['Scope & Place of Performance', [['Place of Performance', 'place_of_performance'], ['In-Person / Remote / Hybrid', 'work_setting']]],
     ['Acquisition & Codes', [['Set-Aside', 'set_aside'], ['Contract Vehicle', 'contract_vehicle'], ['Contract Type', 'contract_type'], ['Service Contract Act', 'sca_coverage'], ['NAICS Code', 'naics_code'], ['SIN', 'sin'], ['PSC', 'psc']]],
     ['Clearances', [['Facility Clearance Required', 'facility_clearance_required'], ['Personnel Clearance Required', 'personnel_clearance_required']]],
@@ -19648,7 +19654,7 @@ function downloadBnaPdf() {
   ];
   groups.forEach(([title, fields]) => {
     subheading(title);
-    kvTable(fields.map(([label, key]) => [label, key === 'incumbent' ? incumbentCell() : (key === 'base_year_value' || key === 'total_contract_value') ? valueCell(key) : fcell(key)]));
+    kvTable(fields.map(([label, key]) => [label, key === 'incumbent' ? incumbentCell() : key === 'contract_years' ? _bnaLengthCell() : (key === 'base_year_value' || key === 'total_contract_value') ? valueCell(key) : fcell(key)]));
   });
 
   // Requirements: certifications + labor categories
@@ -20154,6 +20160,105 @@ async function lookupIncumbentViaWeb(intel, apiKey) {
 // multiplying an annual rate of spend by the period COUNT overstates the contract by
 // 11%. This is the same distinction pricingValueTieOut() already draws; the BNA
 // surface needed its own copy because it has no period array to sum, only dates.
+// Months stated in prose. Handles "Nine (9) month", "9-month", "nine months", "9 mo".
+// The plain \d+\s*month pattern used elsewhere misses "(9) month" entirely, because the
+// closing parenthesis sits between the digit and the word -- which is exactly how the
+// solicitation that exposed this wrote it.
+const _BNA_MONTH_WORDS = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8,
+                           nine:9, ten:10, eleven:11, twelve:12, eighteen:18, twentyfour:24 };
+
+function _bnaMonthsFromText(s) {
+  const t = String(s == null ? '' : s).toLowerCase();
+  if (!t.trim()) return 0;
+  // digits, tolerating any non-digit punctuation between the number and the word
+  let m = t.match(/(\d{1,3})\s*[)\]\-\u2013\u2014.,]*\s*month/);
+  if (m) { const n = parseInt(m[1], 10); if (n >= 1 && n <= 120) return n; }
+  // spelled out
+  const words = Object.keys(_BNA_MONTH_WORDS).join('|');
+  m = t.match(new RegExp('\\b(' + words + ')\\b[\\s()\\d\\-\\u2013\\u2014.,]*month'));
+  if (m) return _BNA_MONTH_WORDS[m[1]];
+  return 0;
+}
+
+// The REAL length of the base period, and whether the documents contradict themselves
+// about it. Returns months (rounded to a whole month for display), the exact fraction of
+// a year, where the figure came from, and any conflict between the dates and the prose.
+function _bnaBaseLength(intel) {
+  intel = intel || {};
+  const strip = s => String(s == null ? '' : s).replace(/^\s*\[[^\]]*\]\s*/, '');
+  const out = { months: 0, years: 0, source: 'unknown', statedMonths: 0, conflict: null };
+
+  const ds = Date.parse(strip(intel.pop_start_date)), de = Date.parse(strip(intel.pop_end_date));
+  let dateYears = 0;
+  if (!isNaN(ds) && !isNaN(de) && de > ds) {
+    const y = (de - ds) / (365.25 * 86400000);
+    if (y > 0.04 && y <= 5) dateYears = y;
+  }
+  // The base period length as the prose states it, from either field.
+  const prose = _bnaMonthsFromText(String(intel.period_of_performance || '').replace(/option[\s\S]*$/i, ''))
+             || _bnaMonthsFromText(intel.contract_years);
+  out.statedMonths = prose || 0;
+
+  if (dateYears > 0) {
+    out.years = dateYears;
+    out.months = Math.round(dateYears * 12);
+    out.source = 'dates';
+    // A one-month disagreement is worth surfacing rather than resolving silently: the
+    // dates and the prose are both from the solicitation, and we cannot know which the
+    // Government meant.
+    if (prose && Math.abs(prose - out.months) >= 1) {
+      out.conflict = 'The documents state a ' + prose + '-month base period, but the stated dates ('
+        + strip(intel.pop_start_date) + ' to ' + strip(intel.pop_end_date) + ') span '
+        + out.months + '. Figures below use the DATES \u2014 confirm which is right before quoting.';
+    }
+  } else if (prose) {
+    out.years = prose / 12;
+    out.months = prose;
+    out.source = 'stated';
+  }
+  return out;
+}
+
+// The extracted contract_years is a PLAIN INTEGER by prompt design — there is no correct
+// integer for a nine-month contract, so the model rounds and the readout claimed a
+// twelve-month contract. These render the DERIVED length instead, and only ever say "year"
+// when the period really is a year.
+// Renderer 1's cell for the same derived length.
+function _bnaLengthCell() {
+  const intel = (typeof window !== 'undefined' && window._lastBnaIntel) || {};
+  const txt = _bnaLengthText(intel);
+  const esc = (typeof escHtml === 'function') ? escHtml : (x => String(x == null ? '' : x));
+  if (!txt) {
+    const cy = String(intel.contract_years || '').trim();
+    return cy ? esc(cy) : '<span style="color:var(--muted);font-style:italic">Not stated in documents</span>';
+  }
+  const cl = intel._contractLength || {};
+  return esc(txt) + (cl.conflict
+    ? '<div style="margin-top:4px;font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:5px 8px;line-height:1.45">\u26A0 ' + esc(cl.conflict) + '</div>'
+    : '');
+}
+
+function _bnaLengthLabel() {
+  const cl = (typeof window !== 'undefined' && window._lastBnaIntel && window._lastBnaIntel._contractLength) || null;
+  return (cl && cl.partial) ? 'Contract Length' : 'Contract Duration (years)';
+}
+
+function _bnaBaseValueLabel() {
+  const cl = (typeof window !== 'undefined' && window._lastBnaIntel && window._lastBnaIntel._contractLength) || null;
+  return (cl && cl.partial) ? ('Base Period Value (' + cl.months + ' months)') : 'Base Year Value';
+}
+
+function _bnaLengthText(intel) {
+  const cl = (intel && intel._contractLength) || null;
+  if (!cl || !cl.months) return null;
+  const parts = [];
+  parts.push(cl.months + ' month' + (cl.months === 1 ? '' : 's')
+             + (cl.partial ? '' : ' (' + cl.years + ' year' + (cl.years === 1 ? '' : 's') + ')') + ' base period');
+  if (cl.periods > 1) parts.push(cl.periods + ' ordering periods, ' + cl.contractYears + ' contract years in total');
+  else parts.push('single ordering period, no options');
+  return parts.join(' \u00b7 ');
+}
+
 function _bnaContractYears(intel) {
   intel = intel || {};
   const periods = _bnaContractPeriods(intel);
@@ -20517,21 +20622,42 @@ function reconcileStaffing(intel) {
     intel.fte_count = (source === 'government-workload' ? '[GovEst] ' : '[Proposed] ') + (Math.round(totalFte * 100) / 100);
 
     const fmt = v => v >= 1e6 ? ('$' + (Math.round(v / 1e5) / 10) + 'M') : ('$' + Math.round(v / 1000) + 'K');
-    const anchorVal = statedHard ? anchorTarget : labor;   // the base-year $ the total ties to
-    // The base-year figure is an ANNUAL RATE OF SPEND, so the contract total is that
-    // rate times the real contract LENGTH — never times the number of ordering periods.
+    const anchorVal = statedHard ? anchorTarget : labor;   // the annual rate the total ties to
+    // The base figure is an ANNUAL RATE OF SPEND, so the contract total is that rate times
+    // the real contract LENGTH — never times the number of ordering periods.
     const contractYears = _bnaContractYears(intel);
+    // A base period shorter than a year must never be reported as a year. `labor` is a
+    // full-year rate by construction; the base PERIOD costs that rate times its own
+    // fraction of a year, and the hours behind it scale the same way.
+    const _bl = _bnaBaseLength(intel);
+    const _baseFrac = (_bl.years > 0 && _bl.years < 0.995) ? _bl.years : 1;
+    const _partial = _baseFrac < 1;
+    const _perLbl = _partial ? (_bl.months + '-month base period') : 'base year';
+    intel._contractLength = { months: _bl.months, years: Math.round(_bl.years * 100) / 100,
+                              periods: periods, statedMonths: _bl.statedMonths,
+                              conflict: _bl.conflict, contractYears: contractYears,
+                              partial: _partial };
     if (statedHard) {                        // keep the hard base (stated OR incumbent-sourced) verbatim; derive the total from IT
       if (!hasNum(intel.total_contract_value) || isInf(intel.total_contract_value)) intel.total_contract_value = '[Inferred] ~' + fmt(anchorVal * contractYears);
+      // The stated figure is left verbatim — it is the Government's number, not ours — but
+      // a partial base period gets the derived period figure appended so the reader is not
+      // left to assume an annual figure covers a period that is shorter than a year.
+      if (_partial) intel.base_year_value = String(intel.base_year_value || '').trim()
+        + ' \u2014 \u2248' + fmt(anchorVal * _baseFrac) + ' over the ' + _bl.months + '-month base period';
     } else {                                 // derive the value from the reconciled team - always ties out
-      intel.base_year_value = '[Inferred] ~' + fmt(labor) + '/yr';
+      // For a partial base period the headline figure is what the BASE PERIOD costs. The
+      // annual rate is still shown, but explicitly as a rate rather than as a period value.
+      intel.base_year_value = _partial
+        ? ('[Inferred] ~' + fmt(labor * _baseFrac) + ' for the ' + _bl.months + '-month base period (\u2248' + fmt(labor) + '/yr annualised)')
+        : ('[Inferred] ~' + fmt(labor) + '/yr');
       intel.total_contract_value = '[Inferred] ~' + fmt(labor * contractYears);
-      intel.award_value_rationale = 'Reconciled from a ' + (source === 'government-workload' ? 'government-stated workload of ' : 'proposed ' + cats.length + '-role team, ') + (Math.round(totalFte * 100) / 100) + ' FTE (' + Math.round(totalFte * HPF).toLocaleString() + ' base-year hours) at a blended ~$' + Math.round(blended) + '/hr fully-loaded' + (rateSourceOf() === 'priced'
+      intel.award_value_rationale = 'Reconciled from a ' + (source === 'government-workload' ? 'government-stated workload of ' : 'proposed ' + cats.length + '-role team, ') + (Math.round(totalFte * 100) / 100) + ' FTE (' + Math.round(totalFte * HPF * _baseFrac).toLocaleString() + ' hours over the ' + _perLbl + (_partial ? ', ' + Math.round(totalFte * HPF).toLocaleString() + ' at a full-year run rate' : '') + ') at a blended ~$' + Math.round(blended) + '/hr fully-loaded' + (rateSourceOf() === 'priced'
         ? ', priced from the rates in the Pricing tab.'
         : rateSourceOf() === 'mixed'
           ? ' \u2014 some roles priced from the Pricing tab, the rest ASSUMED. Build out Pricing to replace the assumptions.'
           : ' \u2014 rates are ASSUMED for sizing only, not priced. Build the Pricing tab and this figure will be recomputed from your real rates.')
-        + (contractYears !== periods ? ' Contract total = that annual rate \u00d7 ' + contractYears + ' contract years (' + periods + ' ordering periods, base period shorter than 12 months).' : '') + (_govHpf ? ' The solicitation\u2019s workload table is built on ' + _govHpf.hpf.toLocaleString() +
+        + (contractYears !== periods ? ' Contract total = that annual rate \u00d7 ' + contractYears + ' contract year' + (contractYears === 1 ? '' : 's') + ' (' + periods + ' ordering period' + (periods === 1 ? '' : 's') + ', base period shorter than 12 months).' : '')
+        + (_bl.conflict ? ' \u26A0 ' + _bl.conflict : '') + (_govHpf ? ' The solicitation\u2019s workload table is built on ' + _govHpf.hpf.toLocaleString() +
         ' hours per FTE-year, not the ' + _govHpf.currentHpf.toLocaleString() + ' this tool bills at (' +
         _govHpf.clean + ' of ' + _govHpf.total + ' categories divide to whole FTE on it), so these figures use ' +
         _govHpf.hpf.toLocaleString() + ' \u2014 which is why they read as whole positions rather than ' +
@@ -20625,14 +20751,14 @@ function renderOpportunityIntel(intel, container) {
     { title:'Dates & Timeline', fields:[
       { key:'next_due_date',                label:'Next Due Date' },
       { key:'period_of_performance',        label:'Period of Performance' },
-      { key:'contract_years',               label:'Contract Duration (years)' },
+      { key:'contract_years',               label:'Contract Length', derive:'length' },
       { key:'pop_start_date',               label:'Period of Performance Start Date' },
       { key:'pop_end_date',                 label:'Period of Performance End Date' },
       { key:'last_possible_performance_date',label:'Last Possible Performance Date' },
     ]},
     { title:'Size & Value', fields:[
       { key:'fte_count',                    label:'Number of FTEs' },
-      { key:'base_year_value',              label:'Base Year Value' },
+      { key:'base_year_value',              label:'Base Period Value', dynLabel:'baseValue' },
       { key:'total_contract_value',         label:'Total Contract Value' },
       { key:'award_value_rationale',        label:'Award Value Rationale' },
     ]},
@@ -20669,7 +20795,22 @@ function renderOpportunityIntel(intel, container) {
 
   const renderField = (f) => {
     let raw = intel[f.key];
+    // A DERIVED row: contract_years is a rounded integer by prompt design, so for a partial
+    // base period it claimed a twelve-month contract. Show the real length instead, and only
+    // ever say "year" when the period actually is one.
+    if (f.derive === 'length') {
+      const _lt = (typeof _bnaLengthText === 'function') ? _bnaLengthText(intel) : null;
+      if (_lt) raw = _lt;
+    }
     if (raw === undefined || raw === null) raw = 'Not stated in documents';
+    // "Base Year Value" is a lie when the base period is nine months. The label follows the
+    // real period length; a full-year base keeps the original wording.
+    if (f.dynLabel === 'baseValue' && typeof _bnaBaseValueLabel === 'function') {
+      f = Object.assign({}, f, { label: _bnaBaseValueLabel() });
+    }
+    if (f.derive === 'length' && typeof _bnaLengthLabel === 'function') {
+      f = Object.assign({}, f, { label: _bnaLengthLabel() });
+    }
 
     // Format the value based on field type and data type
     let displayHtml;
