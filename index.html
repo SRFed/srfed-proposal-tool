@@ -3171,7 +3171,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '180';
+const APP_VERSION = '181';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -16785,6 +16785,132 @@ function _vehicleMatch(held, req) {
 }
 
 // opp fields come from the analysis extraction (window._bnaOpp)
+// ── LCAT table helpers ─────────────────────────────────────────────────────
+// The unit belongs in the column HEADER, not repeated in every cell ("3 yrs", "4 FTE").
+// Repeating it costs width in a table that is already wide and reads as noise.
+function _bnaExpYears(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  const m = s.match(/(\d+(?:\.\d+)?)/);
+  return m ? m[1] : s;      // a stated range or prose survives verbatim rather than being lost
+}
+
+// Minimum education, shortened to fit a column. The full text stays on the tooltip.
+function _bnaEduShort(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s || /^(null|n\/a|none|not stated)/i.test(s)) return '';
+  const t = s.toLowerCase();
+  if (/\bph\.?d\b|doctora|\bj\.?d\b|\bm\.?d\b/.test(t)) return 'Doctorate';
+  if (/\bmaster|\bm\.?s\.?\b|\bm\.?a\.?\b|\bmba\b/.test(t)) return "Master's";
+  if (/\bbachelor|\bb\.?s\.?\b|\bb\.?a\.?\b|baccalaur/.test(t)) return "Bachelor's";
+  if (/\bassociate|\ba\.?a\.?\b|\ba\.?s\.?\b/.test(t)) return "Associate's";
+  if (/high school|\bhs\b|\bged\b|secondary/.test(t)) return 'High school';
+  return s.length > 18 ? (s.slice(0, 17).trim() + '\u2026') : s;
+}
+
+// ── set-aside fit ──────────────────────────────────────────────────────────
+// The score was binary: 2 if a gate blocked, otherwise 9. So a narrow set-aside we hold
+// outright, a total-small-business competition against every small firm in the market, and
+// a full-and-open competition against the whole industry all scored the same 9 — on the
+// heaviest-weighted factor on the board at 20%.
+//
+// Specific-and-held is the strongest position in federal contracting and should read as
+// such; total small business means eligible but competing broadly; unrestricted means the
+// set-aside confers nothing either way; and ineligible is a floor, not a 2.
+const _BNA_SA_SPECIFIC = [
+  // ORDER MATTERS: SDVOSB before VOSB (it contains "veteran-owned") and EDWOSB before WOSB.
+  { key: 'sdvosb',  label: 'SDVOSB',  re: /service.?disabled|\bsdvosb\b|52\.219-27/ },
+  { key: 'vosb',    label: 'VOSB',    re: /\bvosb\b|veteran.?owned/ },
+  { key: '8a',      label: '8(a)',    re: /\b8\s*\(?\s*a\s*\)?\b|52\.219-18/ },
+  { key: 'hubzone', label: 'HUBZone', re: /hub.?zone|52\.219-3\b/ },
+  { key: 'edwosb',  label: 'EDWOSB',  re: /\bedwosb\b|economically.?disadvantaged.?women|52\.219-29/ },
+  { key: 'wosb',    label: 'WOSB',    re: /\bwosb\b|women.?owned|52\.219-30/ },
+];
+
+// Holding a certification satisfies the categories it implies: an SDVOSB is also a VOSB,
+// an EDWOSB is also a WOSB, and every one of them is a small business.
+const _BNA_SA_IMPLIES = {
+  sdvosb: ['sdvosb', 'vosb', 'small'], vosb: ['vosb', 'small'],
+  '8a': ['8a', 'small'], hubzone: ['hubzone', 'small'],
+  edwosb: ['edwosb', 'wosb', 'small'], wosb: ['wosb', 'small'], small: ['small'],
+};
+
+function _bnaSaKeys(list) {
+  const out = new Set();
+  (list || []).forEach(function (raw) {
+    const s = String(raw || '').toLowerCase();
+    if (!s.trim()) return;
+    let hit = null;
+    for (const c of _BNA_SA_SPECIFIC) { if (c.re.test(s)) { hit = c.key; break; } }
+    if (!hit && /small business/.test(s)) hit = 'small';
+    (_BNA_SA_IMPLIES[hit] || []).forEach(k => out.add(k));
+  });
+  return out;
+}
+
+// -> { score, category, label, eligible, rationale }
+function _bnaSetAsideFit(setAside, cap) {
+  cap = cap || {};
+  const raw = String(setAside == null ? '' : setAside).trim();
+  const sa = raw.toLowerCase();
+  const held = _bnaSaKeys(cap.setAsides || []);
+  const isSmall = String(cap.businessSize || '').toLowerCase().indexOf('small') === 0
+               || held.has('small');
+
+  if (!sa) {
+    return { score: 5, category: 'unknown', label: '', eligible: null,
+             rationale: 'The set-aside is not stated in the documents, so it neither helps nor hurts. Confirm it on SAM.gov before committing \u2014 a socioeconomic set-aside would change this materially.' };
+  }
+
+  // Which specific categories does the notice name? A more specific certification SUBSUMES
+  // the broader one it contains: "Service-Disabled Veteran-Owned Small Business" matches both
+  // the SDVOSB and the VOSB patterns, and counting that as two categories made a plain SDVOSB
+  // set-aside look like an open small-business competition.
+  let named = _BNA_SA_SPECIFIC.filter(c => c.re.test(sa));
+  const _keys = new Set(named.map(c => c.key));
+  const _subsumed = new Set();
+  if (_keys.has('sdvosb')) _subsumed.add('vosb');
+  if (_keys.has('edwosb')) _subsumed.add('wosb');
+  named = named.filter(c => !_subsumed.has(c.key));
+
+  const totalSB = /total small business|small business set.?aside|\b52\.219-6\b/.test(sa);
+  // A notice open to ALL small-business categories, or with the determination still pending,
+  // is a small-business competition rather than a specific one however many it lists.
+  const openToAll = named.length > 1
+    || /all small business|any small business|pending|to be determined|determination/.test(sa);
+
+  // Order matters below: a notice may OPEN with "Not stated in documents" and then go on to
+  // describe the competition ("...open to all small business categories (8(a), SDVOSB,
+  // HUBZone, WOSB); final determination pending"). Testing not-stated first threw all of
+  // that away and scored it as unknown, so the substantive checks run first.
+  if (!named.length && !totalSB && !openToAll) {
+    if (/unrestricted|full.?and.?open|open competition|no set.?aside|\bnone\b/.test(sa)) {
+      return { score: 5, category: 'unrestricted', label: 'Unrestricted', eligible: true,
+               rationale: 'Unrestricted / full and open \u2014 anyone may bid, so the set-aside confers no advantage and no barrier. You compete against large primes on merit alone.' };
+    }
+    return { score: 5, category: 'unknown', label: '', eligible: null,
+             rationale: 'The set-aside is not stated in the documents, so it neither helps nor hurts. Confirm it on SAM.gov before committing \u2014 a socioeconomic set-aside would change this materially.' };
+  }
+
+  if (totalSB || openToAll) {
+    if (!isSmall) {
+      return { score: 0, category: 'ineligible', label: 'Small business', eligible: false,
+               rationale: 'Set aside for small business, and the company profile is not recorded as a small business. Not eligible to prime.' };
+    }
+    return { score: 8, category: 'small-business', label: openToAll && named.length > 1 ? 'Small business (multiple categories named)' : 'Total small business', eligible: true,
+             rationale: 'Set aside for small business, which the company qualifies for \u2014 large primes are excluded. But the field is every small firm in this market, not a narrow one, so eligibility alone is not a discriminator.' };
+  }
+
+  // Exactly one specific socioeconomic category.
+  const want = named[0];
+  if (held.has(want.key)) {
+    return { score: 10, category: 'specific-held', label: want.label, eligible: true,
+             rationale: 'Set aside for ' + want.label + ', which the company holds. This is the strongest eligibility position available: the field is limited to firms with the same certification.' };
+  }
+  return { score: 0, category: 'ineligible', label: want.label, eligible: false,
+           rationale: 'Set aside for ' + want.label + ', which the company does not hold. Not eligible to prime \u2014 a teaming or subcontract route is the only way in.' };
+}
+
 function evaluateBnaGates(opp, cap) {
   opp = opp || {}; cap = cap || {};
   const primeBlockers = [];   // block PRIME → redirect to sub
@@ -19225,13 +19351,18 @@ async function runBidNoBid() {
     if (typeof refreshBnaQaAvailability === 'function') refreshBnaQaAvailability();   // Phase 7: reveal the ad-hoc Q&A box once an opportunity is analyzed
     // Eligibility is now a GATE, not an AI-scored fit factor. Derive its bar from the
     // prime gate so the legacy display stays coherent (the verdict uses gates directly).
-    const _gatePreview = evaluateBnaGates(window._bnaOpp, (CLIENT_CONFIG && CLIENT_CONFIG.capacity) || {});
+    const _capElig = (CLIENT_CONFIG && CLIENT_CONFIG.capacity) || {};
+    const _gatePreview = evaluateBnaGates(window._bnaOpp, _capElig);
     const _setAsideBlocked = _gatePreview.primeBlockers.some(b => /set-aside|eligib/i.test(b));
-    bna_tier1_scores['eligibility'] = _setAsideBlocked ? 2 : 9;
+    // Graded rather than binary. The GATE stays authoritative for the verdict, so a gate
+    // block floors the score no matter what the classifier concluded — the two can never
+    // disagree in the direction of overstating eligibility.
+    const _saFit = _bnaSetAsideFit(window._bnaOpp.set_aside, _capElig);
+    bna_tier1_scores['eligibility'] = _setAsideBlocked ? 0 : _saFit.score;
     if (factors['eligibility']) {
       factors['eligibility'].rationale = _setAsideBlocked
         ? `Prime-ineligible — ${(window._bnaOpp.prime_ineligibility_reason || 'see verdict').trim()}. Routed to subcontract/pass per the verdict.`
-        : `No set-aside barrier to priming (see verdict for full gate check).`;
+        : _saFit.rationale;
     }
 
     // Persist the full scoring result so the PDF report can read factor rationales
@@ -19671,15 +19802,16 @@ function downloadBnaPdf() {
         sca: (it.is_sca === true || it.is_sca === 'true') ? 'Yes' : (it.is_sca === false || it.is_sca === 'false') ? 'No' : '-',
         rate: it.min_hourly_rate || it.wage_rate || '',
         clr: it.clearance || '',
-        exp: (it.experience_yrs || it.experience_years) ? String(it.experience_yrs || it.experience_years) + ' yr' : '',
+        exp: _bnaExpYears(it.experience_yrs || it.experience_years),
+        edu: _bnaEduShort(it.education || it.min_education),
         fte: it.base_year_fte || it.base_fte || '',
       })).filter(r => r.lcat && r.lcat !== 'null' && r.lcat !== 'Exact Labor Category Title').sort((a, b) => String(a.lcat).localeCompare(String(b.lcat)))
     : [];
   if (lcats.length) {
     y += 2;
     table(
-      [{ header: 'Labor Category', w: 196, bold: true }, { header: 'Key', w: 36, align: 'center' }, { header: 'SCA', w: 36, align: 'center' }, { header: 'Min Rate', w: 60, align: 'center' }, { header: 'Clearance', w: 78 }, { header: 'Exp', w: 42, align: 'center' }, { header: 'FTE', w: CW - 448, align: 'center' }],
-      lcats.map(r => [r.lcat, r.key, r.sca, r.rate || '-', r.clr || '-', r.exp || '-', r.fte || '-']),
+      [{ header: 'Labor Category', w: 168, bold: true }, { header: 'Key', w: 30, align: 'center' }, { header: 'SCA', w: 30, align: 'center' }, { header: 'Min Rate', w: 56, align: 'center' }, { header: 'Clearance', w: 66 }, { header: 'Min Education', w: 74 }, { header: 'Min Exp (yrs)', w: 44, align: 'center' }, { header: 'FTE', w: CW - 468, align: 'center' }],
+      lcats.map(r => [r.lcat, r.key, r.sca, r.rate || '-', r.clr || '-', r.edu || '-', r.exp || '-', r.fte || '-']),
       { zebra: true, fontSize: 8.5 }
     );
   } else {
@@ -20828,6 +20960,7 @@ function renderOpportunityIntel(intel, container) {
             min_hourly_rate:item.min_hourly_rate || item.wage_rate || '',
             clearance:      item.clearance || '',
             experience_yrs: item.experience_yrs || item.experience_years || '',
+            education:      item.education || item.min_education || '',
             base_year_fte:  item.base_year_fte || item.base_fte || '',
             notes:          item.notes || item.duties || '',
           };
@@ -20870,8 +21003,9 @@ function renderOpportunityIntel(intel, container) {
                 ${th('SCA?', 'Subject to Service Contract Act')}
                 ${th('Min. Hourly Rate', 'Verbatim from solicitation or Wage Determination only')}
                 ${th('Clearance')}
-                ${th('Exp.')}
-                ${th('Base Yr FTE')}
+                ${th('Minimum Education', 'Minimum education stated in the solicitation \u2014 hover a value for the full wording')}
+                ${th('Minimum Experience (years)', 'Minimum years of relevant experience stated in the solicitation')}
+                ${th('Base Year FTE')}
                 ${th('Notes')}
               </tr></thead>
               <tbody>
@@ -20881,8 +21015,9 @@ function renderOpportunityIntel(intel, container) {
                   ${td(scaBadge(r.is_sca))}
                   ${td(rateBadge(r.min_hourly_rate, r.is_sca))}
                   ${td(escHtml(r.clearance || '—'))}
-                  ${td(r.experience_yrs ? escHtml(r.experience_yrs) + ' yrs' : '—')}
-                  ${td(r.base_year_fte ? escHtml(r.base_year_fte) + ' FTE' : '—')}
+                  ${td(_bnaEduShort(r.education) ? `<span title="${escHtml(r.education)}">${escHtml(_bnaEduShort(r.education))}</span>` : '—')}
+                  ${td(_bnaExpYears(r.experience_yrs) ? escHtml(_bnaExpYears(r.experience_yrs)) : '—', 'text-align:center')}
+                  ${td(r.base_year_fte ? escHtml(String(r.base_year_fte)) : '—', 'text-align:center')}
                   ${td(escHtml(r.notes || '—'))}
                 </tr>`).join('')}
               </tbody>
