@@ -2298,6 +2298,7 @@
       <div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto">
         <div style="font-weight:700;font-size:13px;margin-bottom:4px">🗂️ Hours Allocation Matrix</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5">Enter billable hours per labor category, per task. Zero cells are <strong>greyed</strong> so the real allocation stands out; cells with hours show white. Type hours into any cell to use it. Row and column totals, costs, and FTE-equivalents update live. Column heads are shortened to keep the table readable &mdash; hover any one for the task's full text, or edit it in Step 3.</div>
+        <div id="pricingMaskNote" style="display:none;font-size:11.5px;color:var(--muted);margin-bottom:8px;line-height:1.5"></div>
         <div id="pricingMatrix"></div>
       </div>
     </div>
@@ -3171,7 +3172,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '181';
+const APP_VERSION = '183';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -5831,42 +5832,9 @@ function renderProposalCalendar(briefing) {
 // ═══════════════════════════════════════════════════════════════════════════
 // SUBMISSION CHECKLIST
 // ═══════════════════════════════════════════════════════════════════════════
-async function buildSubmissionChecklist(briefing) {
-  const card = document.getElementById('checklistCard');
-  const itemsEl = document.getElementById('checklistItems');
-  if (!card || !itemsEl) return;
 
-  // Base items always present
-  const baseItems = [
-    'Volumes are within page limits specified in Section L',
-    'Cover page includes solicitation number, company name, CAGE, UEI, and submission date',
-    'All required volumes are included and properly named',
-    'Business card / letterhead does not imply Government affiliation',
-    'Key personnel resumes included and within page limits',
-    'Company is registered and active in SAM.gov',
-    'Pricing / Schedule B Excel is completed with all required fields',
-    'All certifications and representations are signed and dated',
-  ];
 
-  // Add Section L specific items from briefing
-  const sectionLItems = (briefing.section_l_instructions || []).slice(0, 10);
-  const allItems = [...baseItems, ...sectionLItems.filter(i => !baseItems.includes(i))];
 
-  card.style.display = 'block';
-  itemsEl.innerHTML = allItems.map((item, i) => `
-    <div class="check-item" id="checkItem${i}" onclick="toggleCheckItem(${i})">
-      <input type="checkbox" id="chk${i}" onclick="event.stopPropagation();toggleCheckItem(${i})"/>
-      <label for="chk${i}">${escHtml(item)}</label>
-    </div>`).join('');
-}
-
-function toggleCheckItem(i) {
-  const item = document.getElementById(`checkItem${i}`);
-  const chk  = document.getElementById(`chk${i}`);
-  if (!item || !chk) return;
-  chk.checked = !chk.checked;
-  item.classList.toggle('done', chk.checked);
-}
 
 function copyChecklist() {
   const items = document.querySelectorAll('#checklistItems .check-item');
@@ -5943,7 +5911,10 @@ function postProcessDocXml(xml) {
 // These are called from within runGeneration after briefing is parsed
 function onBriefingExtracted(briefing) {
   renderProposalCalendar(briefing);
-  buildSubmissionChecklist(briefing);
+  // The submission checklist that used to be called here was superseded by the
+  // mandatory-items panel (buildMandatoryItems / renderMandatoryItems), which renders
+  // into the downloads panel. Its host elements were removed with the old markup, so the
+  // call had been a silent no-op ever since.
 }
 
 // ─── API KEY MANAGEMENT ───────────────────────────────────────────────────────
@@ -8533,7 +8504,7 @@ async function reviseVolume() {
         const buffer = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
         const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
         const url = URL.createObjectURL(blob);
-        const prefix = revisedProposalData.output_prefix || CLIENT_CONFIG.companyShortName;
+        const prefix = _safeFilePrefix(revisedProposalData.output_prefix || CLIENT_CONFIG.companyShortName, CLIENT_CONFIG.companyShortName);
         const fname = `${prefix}_Volume_${vol}_${volLabels[vol].replace(/\s/g,'_')}_REVISED.docx`;
 
         document.getElementById('revisedDownload').style.display = 'block';
@@ -9731,7 +9702,7 @@ Do not over-format — most content stays as prose. The goal is a document a per
       if (typeof pricingBuildWorkbook === 'function' && typeof XLSX !== 'undefined') {
         const _wb = pricingBuildWorkbook();
         if (_wb) {
-          const _pfx = proposalData.output_prefix || (CLIENT_CONFIG.companyShortName + '_Proposal');
+          const _pfx = _safeFilePrefix(proposalData.output_prefix, CLIENT_CONFIG.companyShortName + '_Proposal');
           const _buf = XLSX.write(_wb, { type: 'array', bookType: 'xlsx' });
           const _url = URL.createObjectURL(new Blob([_buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
           docs['xlsx'] = { label: 'Pricing Workbook (Excel)', filename: `${_pfx}_Pricing_Workbook.xlsx`, url: _url };
@@ -9762,7 +9733,7 @@ Do not over-format — most content stays as prose. The goal is a document a per
 async function generateDocsClientSide(proposalData, volumes) {
   const docs   = {};
   const errors = [];
-  const prefix = proposalData.output_prefix || (CLIENT_CONFIG.companyShortName + '_Proposal');
+  const prefix = _safeFilePrefix(proposalData.output_prefix, CLIENT_CONFIG.companyShortName + '_Proposal');
 
   const volLabels = {
     '0': 'Volume 0 \u2013 Executive Summary',
@@ -11028,6 +10999,18 @@ function applyDownloadName(linkId, val) {
   a.download = v;
 }
 
+// Model-generated text becomes a FILENAME here, so it is reduced to characters that are
+// safe on every OS as well as inside an HTML attribute. Escaping at render alone would
+// still leave a download called `Q3"; rm -rf.docx` on the user's disk.
+function _safeFilePrefix(s, fallback) {
+  const out = String(s == null ? '' : s)
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^[_.]+|[_.]+$/g, '')
+    .slice(0, 80);
+  return out || fallback || 'Proposal';
+}
+
 function renderDownloads(docs) {
   const card = document.getElementById('downloadCard');
   const list = document.getElementById('downloadList');
@@ -11063,10 +11046,10 @@ function renderDownloads(docs) {
         <div style="min-width:0;flex:1">
           <div class="download-name">${doc.label}</div>
           <div class="download-desc">${volDescs[vol] || ''}</div>
-          <input type="text" value="${doc.filename}" onchange="applyDownloadName('${dlId}', this.value)" title="Rename this file before downloading" style="margin-top:5px;width:100%;max-width:380px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--text)" />
+          <input type="text" value="${escHtml(doc.filename)}" onchange="applyDownloadName('${dlId}', this.value)" title="Rename this file before downloading" style="margin-top:5px;width:100%;max-width:380px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--text)" />
         </div>
       </div>
-      <a id="${dlId}" data-ext="${doc.filename.slice(doc.filename.lastIndexOf('.'))}" href="${doc.url}" download="${doc.filename}" class="btn btn-secondary btn-sm">⬇ Download</a>`;
+      <a id="${dlId}" data-ext="${escHtml(doc.filename.slice(doc.filename.lastIndexOf('.')))}" href="${escHtml(doc.url)}" download="${escHtml(doc.filename)}" class="btn btn-secondary btn-sm">⬇ Download</a>`;
     list.appendChild(item);
   });
 
@@ -13687,8 +13670,50 @@ function pricingTaskShortName(name) {
   return s;
 }
 
+// One line above the matrix, so the restrictions the solicitation imposed are stated rather
+// than merely obeyed. Hidden entirely when nothing is restricted.
+function pricingRenderMaskNote() {
+  const el = document.getElementById('pricingMaskNote');
+  if (!el) return;
+  const M = pricingModel;
+  let n = 0, roles = 0;
+  (M.lcats || []).forEach(l => {
+    if (!M.mask[l.id]) return;
+    const c = (M.tasks || []).reduce((s, t) => s + (M.mask[l.id][t.id] === false ? 1 : 0), 0);
+    if (c > 0) { n += c; roles++; }
+  });
+  if (!n) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'block';
+  el.innerHTML = '<span style="color:#475569">\u2013 <strong>' + n + ' cell' + (n === 1 ? '' : 's')
+    + '</strong> across <strong>' + roles + ' role' + (roles === 1 ? '' : 's')
+    + '</strong> are restricted by the solicitation \u2014 those roles may not bill those tasks, so no hours are '
+    + 'allocated there and the coverage check does not count them as gaps. '
+    + 'Click a restricted cell to allow it, or type hours into it.</span> '
+    + '<button type="button" onclick="pricingClearMask()" style="font-size:11px;font-weight:700;background:#fff;'
+    + 'color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:3px 9px;cursor:pointer;margin-left:4px">'
+    + 'Clear all restrictions</button>';
+}
+
+// One action, not one per cell. Restrictions only ever suppress hours, so clearing them can
+// never lose an allocation -- it just lets the matrix be filled anywhere.
+function pricingClearMask() {
+  const M = pricingModel;
+  let n = 0;
+  (M.lcats || []).forEach(l => {
+    if (!M.mask[l.id]) return;
+    (M.tasks || []).forEach(t => { if (M.mask[l.id][t.id] === false) n++; });
+    delete M.mask[l.id];
+  });
+  if (!n) return;
+  pricingRenderAll();
+  if (typeof showStatus === 'function') showStatus('info', 'Restrictions cleared',
+    n + ' task restriction' + (n === 1 ? '' : 's') + ' removed. Every role can now bill every task. '
+    + 'Re-run Auto-build structure to take them from the solicitation again.');
+}
+
 function pricingRenderMatrix() {
   const el = document.getElementById('pricingMatrix'); if (!el) return;
+  pricingRenderMaskNote();   // before the early return, so the note clears with the matrix
   if (!pricingModel.lcats.length || !pricingModel.tasks.length) {
     el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px">Add at least one labor category and one PWS task to build the matrix.</div>';
     return;
@@ -13719,6 +13744,18 @@ function pricingRenderMatrix() {
     pricingModel.tasks.forEach(t => {
       const v = pricingCell(l.id, t.id);            // effective hours (0 when none)
       const zero = !(v > 0);
+      // A cell the SOLICITATION restricts is not the same thing as one nobody has staffed
+      // yet, and until now they looked identical. Restricted cells are drawn as restricted,
+      // so the constraint the tool is already applying is visible.
+      const restricted = !!(pricingModel.mask[l.id] && pricingModel.mask[l.id][t.id] === false);
+      if (restricted) {
+        h += `<td title="${pricingEsc(l.name || 'This role')} is not permitted to bill ${pricingEsc(pricingTaskLabel(t))} \u2014 taken from the solicitation when the structure was built. Click to allow it." ` +
+          `onclick="pricingToggleMask('${l.id}','${t.id}')" ` +
+          `style="padding:1px;border:1px solid var(--border);cursor:pointer;text-align:center;` +
+          `background:repeating-linear-gradient(45deg,#eef2f7 0 5px,#e2e8f0 5px 10px)">` +
+          `<span style="display:inline-block;font-size:10px;color:#64748b;line-height:20px">\u2013</span></td>`;
+        return;
+      }
       h += `<td style="padding:1px;border:1px solid var(--border);background:${zero ? '#f1f5f9' : '#ffffff'}">` +
         `<input type="number" min="0" step="1" value="${v > 0 ? v : 0}" onfocus="this.select()" oninput="pricingSetHours('${l.id}','${t.id}',this.value);pricingCellPaint(this)" style="width:42px;padding:3px 2px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;text-align:center;background:transparent;color:${zero ? 'var(--muted)' : 'var(--text)'}"/></td>`;
     });
@@ -16078,7 +16115,10 @@ function saveSession() {
       spTemplates:     document.getElementById('spTemplates')?.value || '',
       spTone:          document.getElementById('spTone')?.value || '',
     };
-    localStorage.setItem('srfed_session', JSON.stringify(data));
+    // Storage can be full or blocked (private browsing, enterprise policy). Failing to save
+    // must not abort the caller — the user keeps working, and only the save is lost.
+    try { localStorage.setItem('srfed_session', JSON.stringify(data)); }
+    catch (e) { console.warn('Session save failed (storage full or blocked):', e && e.message); }
   } catch(e) { console.warn('Session save failed:', e); }
 }
 
@@ -16290,29 +16330,7 @@ function _oppFactoryReset() {
   location.reload();
 }
 
-function clearOpportunity() {
-  if (!_oppHasData()) { showStatus('info', 'Nothing to clear', 'This opportunity workspace is already empty.'); return; }
-  if (!confirm('Start a new opportunity?\n\nThis clears the uploaded files, Bid/No-Bid analysis, win strategy, pricing model and generated drafts for the current opportunity.\n\nYour current work is saved — use "Restore previous" on any tab to bring it back. (Uploaded files can\u2019t be saved and would need re-uploading.)')) return;
-  try {
-    // Flush current work into the live keys, then copy them into the backup slot.
-    if (typeof _pricingWrite === 'function') _pricingWrite();
-    if (typeof saveSession === 'function') saveSession();
-    var backup = { v: 1, ts: Date.now(), pricing: localStorage.getItem(PRICING_KEY), session: localStorage.getItem('srfed_session') };
-    localStorage.setItem(OPP_BACKUP_KEY, JSON.stringify(backup));
-  } catch (e) {
-    // Backup failed (e.g. storage full) — abort so we never clear without a saved copy.
-    showStatus('error', 'Could not clear', 'Saving the current opportunity failed, so nothing was cleared \u2014 your work is untouched.');
-    return;
-  }
-  _oppReloading = true;                       // no unload flush may write the old model back
-  try { if (typeof _pricingSaveTimer !== 'undefined' && _pricingSaveTimer) clearTimeout(_pricingSaveTimer); } catch (e) {}
-  try {
-    localStorage.removeItem(PRICING_KEY);
-    localStorage.removeItem('srfed_session');
-    sessionStorage.setItem('opp_flash', 'cleared');
-  } catch (e) {}
-  location.reload();
-}
+
 function restoreOpportunity() {
   var raw = null;
   try { raw = localStorage.getItem(OPP_BACKUP_KEY); } catch (e) {}
@@ -18368,9 +18386,8 @@ async function runConstrainedDetect() {
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
   if (!apiKey) { show('Enter your Anthropic API key (top of the page) first.', true); return; }
   if (results) { results.style.display = 'none'; results.innerHTML = ''; }
-  const _detBtn = document.getElementById('constrainedDetectBtn');
-  const _detOrig = _detBtn ? _detBtn.innerHTML : '';
-  if (_detBtn) { _detBtn.disabled = true; _detBtn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Detecting\u2026'; }
+  // Detection runs automatically when a spreadsheet is chosen — there is no button to spin.
+  // The status line below is the only feedback surface, and it already reports progress.
   show('Detecting which pricing stages are already populated\u2026', false);
   try {
     const data = await callClaudeForJson(apiKey, [{ type: 'text', text: _constrainedDetectContent(window._constrainedCsv) }], 1800, 90000, 'Constrained-pricing detection');
@@ -19931,7 +19948,7 @@ function toggleBnaCapStatement() {
 }
 
 async function runOpportunityIntel() {
-  const btn = document.getElementById('bnaIntelBtn');
+  // No button drives this — it runs from the analysis flow, and bnaIntelBody already shows progress.
   const body = document.getElementById('bnaIntelBody');
   const apiKey  = window._lastBnaApiKey || getApiKey();
 
@@ -19944,8 +19961,6 @@ async function runOpportunityIntel() {
     if (body) body.innerHTML = '<div style="padding:14px;font-size:13px;color:var(--error)">Enter your Anthropic API key on the Proposal tab (Step 2) first.</div>';
     return;
   }
-
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span> Extracting…'; }
 
   showBnaStatus('info', 'Extracting opportunity intelligence…', 'Reading solicitation documents and extracting all 31 fields. Takes ~30 seconds.', true);
   startBnaEta(35);
@@ -19969,7 +19984,7 @@ async function runOpportunityIntel() {
 async function extractOpportunityIntel(docContent, apiKey) {
   const body = document.getElementById('bnaIntelBody');
   if (!body) return;
-  const btn = document.getElementById('bnaIntelBtn');
+  // No button drives this — it runs from the analysis flow, and bnaIntelBody already shows progress.
 
   const _coName = CLIENT_CONFIG.companyFullName ? `${CLIENT_CONFIG.companyFullName}${CLIENT_CONFIG.companyShortName ? ' (' + CLIENT_CONFIG.companyShortName + ')' : ''}${CLIENT_CONFIG.businessType ? ', a ' + CLIENT_CONFIG.businessType : ''}` : 'a government contractor';
   const prompt = `You are analyzing a US Government solicitation document for ${_coName}.\n\n` +
@@ -20134,7 +20149,6 @@ Respond with ONLY a raw JSON object. No markdown. No backticks. Start with { end
     stopBnaEta();
     showBnaStatus('error', 'Extraction failed', e.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = '📊 Extract Opportunity Details'; }
   }
 }
 
@@ -21544,7 +21558,8 @@ function _persistGsaScheduleDefault(card, scheduleStart, years, contractNumber) 
     CLIENT_CONFIG.gsaScheduleDefault = { scheduleStart: scheduleStart || '', years: years || 5, contractNumber: contractNumber || (CLIENT_CONFIG.gsaScheduleDefault && CLIENT_CONFIG.gsaScheduleDefault.contractNumber) || '', lcats: lcats };
     var saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     saved.gsaScheduleDefault = CLIENT_CONFIG.gsaScheduleDefault;
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(saved));
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(saved)); }
+    catch (e) { console.warn('Settings save failed (storage full or blocked):', e && e.message); }
   } catch (_) {}
   renderGsaScheduleSummary();
 }
@@ -21630,7 +21645,8 @@ function syncSpLinkField(kind, val) {
     CLIENT_CONFIG[key] = val;
     var saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     saved[key] = val;
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(saved));
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(saved)); }
+    catch (e) { console.warn('Settings save failed (storage full or blocked):', e && e.message); }
     var settingsFieldId = kind === 'pastPerformance' ? 's_pastPerfLink'
                         : kind === 'templates'      ? 's_templatesLink'
                         : kind === 'tone'           ? 's_toneLink'
@@ -21888,7 +21904,6 @@ function saveSettings() {
     clearances:       document.getElementById('s_clearances')?.value.trim(),
     cmmc:             document.getElementById('s_cmmc')?.value.trim(),
     dcaa:             document.getElementById('s_dcaa')?.value.trim(),
-    appTitle:         document.getElementById('s_appTitle')?.value.trim(),
     model:            document.getElementById('s_model')?.value.trim(),
     primaryColor:     normalizeHexColor(document.getElementById('s_primaryColor')?.value),
     logoBg:           document.getElementById('s_logoBg')?.value || 'auto',
@@ -21951,7 +21966,8 @@ function saveSettings() {
   if (_stagedLogoData) overrides.logoBase64 = _stagedLogoData;
   const _logoUrlVal = document.getElementById('s_logoUrl')?.value.trim();
   if (_logoUrlVal) overrides.logoUrl = _logoUrlVal;
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(overrides));
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(overrides)); }
+  catch (e) { console.warn('Settings save failed (storage full or blocked):', e && e.message); }
 
   // Apply immediately to CLIENT_CONFIG
   Object.assign(CLIENT_CONFIG, overrides);
