@@ -3172,7 +3172,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '183';
+const APP_VERSION = '190';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -8434,8 +8434,21 @@ async function reviseVolume() {
     const volLabels = {'0':'Executive Summary','1':'Technical','2':'Past Performance','3':'Price Narrative','4':'Contract Docs'};
     const briefingText = window._lastBriefingText || 'See briefing context.';
 
+    // The revision must see the SAME price model the original generation wrote against.
+    // Without it a red-team pass over Volume III rewrites dollar figures blind — and the only
+    // numbers in its context would be the solicitation's own estimate, which is the
+    // Government's IGCE, not our offer.
+    const _revPricing = (vol === '3' && typeof buildPricingContextForVol3 === 'function')
+      ? buildPricingContextForVol3() : '';
+    const _revPriceRule = _revPricing
+      ? `The real pricing model is provided below. Every dollar figure, rate, hour count and total you write MUST come from it. Do NOT introduce placeholders, and do NOT use the solicitation's estimated value as the proposed price \u2014 that figure is the Government's own estimate, not this offer.${_revPricing}\n\n`
+      : (vol === '3'
+          ? `No pricing model is available. Keep every dollar figure as a placeholder ([RATE], [LCAT], [HOURS], [TOTAL], [BASE YEAR TOTAL], [GRAND TOTAL]) exactly as the existing draft has them \u2014 do NOT invent figures, and do NOT substitute the solicitation's estimated value, which is the Government's estimate rather than this offer.\n\n`
+          : '');
+
     const prompt = `You are performing a RED TEAM revision of Volume ${vol} (${volLabels[vol]}) of a government proposal by ${CLIENT_CONFIG.companyShortName}.\n\n` +
       `COMPLIANCE GAPS identified by reviewer:\n${gapsText}\n\n` +
+      _revPriceRule +
       `Your task: Rewrite or add content to this volume to address EVERY gap above. ` +
       `For each missing item, add explicit narrative that addresses it. ` +
       `For each partial item, strengthen the existing content.\n\n` +
@@ -9355,7 +9368,8 @@ async function runGeneration() {
       `POC: ${briefing.agency_poc} | ${briefing.agency_poc_email} | ${briefing.agency_poc_phone}\n` +
       `Due: ${briefing.submission_date} | Contract: ${briefing.contract_type} | Period: ${briefing.period_of_performance}\n` +
       `Place: ${briefing.place_of_performance} | Set-aside: ${briefing.set_aside} | NAICS: ${briefing.naics}\n` +
-      `FTEs: ${briefing.estimated_ftes} | Value: ${briefing.estimated_value}\n\n` +
+      `Government's estimated level of effort: ${briefing.estimated_ftes} | Government's estimated value: ${briefing.estimated_value}\n` +
+      `(These are the SOLICITATION'S OWN estimates, not this offer. Never present either figure as ${CLIENT_CONFIG.companyShortName}'s proposed staffing or price \u2014 the proposed figures come from the pricing model where one is supplied.)\n\n` +
 
       `EVALUATION FACTORS (Section M):\n` +
       (briefing.evaluation_factors||[]).map(f =>
@@ -16572,6 +16586,22 @@ let bna_tier2_scores = {};
 
 // calcBnaScore is defined below after weight helpers — uses editable bna_weights
 
+// The printed weight has to match the weight that acts. Eligibility is a GATE — excluded
+// from the fit score entirely — and the other nine renormalise over the remaining 0.80, so
+// each acts 25% heavier than its raw share. Printing the raw share for both was misleading
+// in two different directions at once.
+function _bnaWeightLabel(f) {
+  // Every factor including eligibility now contributes at its stated weight, so the plain
+  // figure is the honest one. Eligibility carries an extra note because it does a second
+  // job on top of scoring.
+  const raw = (bna_weights[f.key] != null) ? bna_weights[f.key] : Math.round(f.weight * 100);
+  const tip = (f.key === 'eligibility')
+    ? 'Scored at ' + raw + '% like any other factor \u2014 a narrower set-aside means a smaller field and a better win probability. It ALSO acts as a gate: a set-aside you do not hold blocks a prime bid outright, whatever the score says.'
+    : '';
+  return '<span' + (tip ? ' title="' + tip + '"' : '') + '>Weight: ' + raw + '%'
+    + (f.key === 'eligibility' ? ' \u00b7 also a gate' : '') + '</span>';
+}
+
 function updateBnaLiveScore() {
   const { t1, t2, t1raw, t2raw, total } = calcBnaScore();
   // The decisive verdict (fit) is authoritative — derive display from it so the
@@ -16629,7 +16659,7 @@ function renderTier2Inputs() {
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <div style="font-size:13px;font-weight:700">${escHtml(f.label)}</div>
         <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:11px;color:var(--muted)">Weight: ${bna_weights[f.key] || Math.round(f.weight*100)}%</span>
+          <span style="font-size:11px;color:var(--muted)">${_bnaWeightLabel(f)}</span>
           <span id="tier2val_${f.key}" style="font-size:20px;font-weight:900;min-width:28px;text-align:right;color:var(--blue)">5</span>
         </div>
       </div>
@@ -16814,6 +16844,29 @@ function _bnaExpYears(v) {
 }
 
 // Minimum education, shortened to fit a column. The full text stays on the tooltip.
+// Contract-level SCA coverage, reduced to a decision: 'yes' | 'no' | 'unknown'.
+function _bnaScaCoverage(intel) {
+  const raw = String((intel && (intel.sca_coverage || intel.sca)) || '').toLowerCase().trim();
+  if (!raw || /not stated|unknown|n\/a|^$/.test(raw)) return 'unknown';
+  if (/^no\b|exempt|not covered|not subject/.test(raw)) return 'no';
+  if (/yes|covered|scls|applies|52\.222-41/.test(raw)) return 'yes';
+  return 'unknown';
+}
+
+// Did the SOLICITATION give us these labor categories, or did the tool propose them?
+// loe_basis is extracted for exactly this: 'government' when a workload/staffing table is
+// supplied, 'quoter' when the offeror proposes the team. The table never showed it, so a
+// reader could not tell an extracted requirement from a generated suggestion.
+function _bnaLcatProvenance(intel) {
+  const b = String((intel && intel.loe_basis) || '').toLowerCase().trim();
+  if (/gov/.test(b)) return { key: 'government', label: 'stated in the solicitation',
+    note: 'These labor categories, qualifications and FTE counts are taken from the solicitation\u2019s own staffing or workload table.' };
+  if (/quot|offer|contractor/.test(b)) return { key: 'quoter', label: 'PROPOSED \u2014 not stated in the solicitation',
+    note: 'The solicitation did not supply a staffing table, so these labor categories are the tool\u2019s proposed team shape derived from the scope. Treat every qualification below as a suggestion to confirm, not as a stated requirement.' };
+  return { key: 'unknown', label: 'source not established',
+    note: 'The solicitation did not clearly state whether it supplies the staffing or expects the offeror to propose it. Confirm before relying on the qualifications below.' };
+}
+
 function _bnaEduShort(v) {
   const s = String(v == null ? '' : v).trim();
   if (!s || /^(null|n\/a|none|not stated)/i.test(s)) return '';
@@ -16847,6 +16900,24 @@ const _BNA_SA_SPECIFIC = [
 
 // Holding a certification satisfies the categories it implies: an SDVOSB is also a VOSB,
 // an EDWOSB is also a WOSB, and every one of them is a small business.
+// How narrow the field is for each category. Higher = smaller pool of eligible competitors.
+// This encodes the regulatory nesting above, and is the whole basis of the tiered score.
+const _BNA_SA_TIER = { small: 0, '8a': 1, hubzone: 1, vosb: 1, wosb: 1, sdvosb: 2, edwosb: 2 };
+
+// The categories the company DIRECTLY holds, before implication is applied. Needed
+// separately from the implied set: to know whether a firm is over-qualified for a set-aside
+// we must know which certification it actually carries, not merely that it qualifies.
+function _bnaSaHeldKeys(list) {
+  const out = new Set();
+  (list || []).forEach(function (raw) {
+    const s = String(raw || '').toLowerCase();
+    if (!s.trim()) return;
+    for (const c of _BNA_SA_SPECIFIC) { if (c.re.test(s)) { out.add(c.key); return; } }
+    if (/small business/.test(s)) out.add('small');
+  });
+  return out;
+}
+
 const _BNA_SA_IMPLIES = {
   sdvosb: ['sdvosb', 'vosb', 'small'], vosb: ['vosb', 'small'],
   '8a': ['8a', 'small'], hubzone: ['hubzone', 'small'],
@@ -16867,6 +16938,22 @@ function _bnaSaKeys(list) {
 }
 
 // -> { score, category, label, eligible, rationale }
+// A near miss is worth explaining: a VOSB firm barred from an SDVOSB set-aside is a very
+// different situation from a firm with no relevant certification at all.
+function direct_hint(cap, want) {
+  const direct = _bnaSaHeldKeys(cap.setAsides || []);
+  const wantTier = _BNA_SA_TIER[want.key] || 0;
+  let broader = null;
+  direct.forEach(function (h) {
+    if (h === 'small') return;
+    // the held cert sits ABOVE the required one in the same chain: broader, so it cannot qualify
+    if ((_BNA_SA_IMPLIES[want.key] || []).indexOf(h) >= 0 && (_BNA_SA_TIER[h] || 0) < wantTier) broader = h;
+  });
+  if (!broader) return '';
+  const bl = (_BNA_SA_SPECIFIC.find(c => c.key === broader) || {}).label || broader;
+  return 'the company holds ' + bl + ', which is broader than ' + want.label + ' and does not qualify';
+}
+
 function _bnaSetAsideFit(setAside, cap) {
   cap = cap || {};
   const raw = String(setAside == null ? '' : setAside).trim();
@@ -16874,6 +16961,16 @@ function _bnaSetAsideFit(setAside, cap) {
   const held = _bnaSaKeys(cap.setAsides || []);
   const isSmall = String(cap.businessSize || '').toLowerCase().indexOf('small') === 0
                || held.has('small');
+
+  // #3: no company profile at all is NOT the same as a company that fails the test. With
+  // Settings unconfigured every set-aside scored 0 / ineligible, which is exactly what a
+  // large business scores — so the tool asserted a hard bar from missing data. This is the
+  // retail build's default state.
+  const profiled = !!(String(cap.businessSize || '').trim() || (cap.setAsides || []).length);
+  if (!profiled && sa && !/unrestricted|full.?and.?open|open competition|no set.?aside/.test(sa)) {
+    return { score: 5, category: 'unknown-profile', label: '', eligible: null,
+             rationale: 'This opportunity is restricted, but no business size or set-aside certifications are recorded in Settings, so eligibility cannot be judged. Fill in your company profile \u2014 until then this factor is scored neutrally rather than for or against.' };
+  }
 
   if (!sa) {
     return { score: 5, category: 'unknown', label: '', eligible: null,
@@ -16891,7 +16988,12 @@ function _bnaSetAsideFit(setAside, cap) {
   if (_keys.has('edwosb')) _subsumed.add('wosb');
   named = named.filter(c => !_subsumed.has(c.key));
 
-  const totalSB = /total small business|small business set.?aside|\b52\.219-6\b/.test(sa);
+  // #1: every specific set-aside's OFFICIAL name ends in "Small Business", so the generic
+  // pattern matches all of them. It may only be consulted when NO specific category was
+  // named — otherwise "Women-Owned Small Business Set-Aside" reads as a plain small-business
+  // competition and an SDVOSB firm is told it can prime it.
+  const genericSB = /total small business|small business set.?aside|\b52\.219-6\b/.test(sa);
+  const totalSB = genericSB && !named.length;
   // A notice open to ALL small-business categories, or with the determination still pending,
   // is a small-business competition rather than a specific one however many it lists.
   const openToAll = named.length > 1
@@ -16901,10 +17003,10 @@ function _bnaSetAsideFit(setAside, cap) {
   // describe the competition ("...open to all small business categories (8(a), SDVOSB,
   // HUBZone, WOSB); final determination pending"). Testing not-stated first threw all of
   // that away and scored it as unknown, so the substantive checks run first.
-  if (!named.length && !totalSB && !openToAll) {
+  if (!named.length && !genericSB && !openToAll) {
     if (/unrestricted|full.?and.?open|open competition|no set.?aside|\bnone\b/.test(sa)) {
-      return { score: 5, category: 'unrestricted', label: 'Unrestricted', eligible: true,
-               rationale: 'Unrestricted / full and open \u2014 anyone may bid, so the set-aside confers no advantage and no barrier. You compete against large primes on merit alone.' };
+      return { score: 0, category: 'unrestricted', label: 'Unrestricted', eligible: true,
+               rationale: 'Unrestricted / full and open \u2014 nothing bars you from bidding, but the field is everyone, including the large primes. On competitive position alone this is the worst case, so it scores 0 here. It does NOT block the pursuit: a strong fit elsewhere can still carry it.' };
     }
     return { score: 5, category: 'unknown', label: '', eligible: null,
              rationale: 'The set-aside is not stated in the documents, so it neither helps nor hurts. Confirm it on SAM.gov before committing \u2014 a socioeconomic set-aside would change this materially.' };
@@ -16915,18 +17017,43 @@ function _bnaSetAsideFit(setAside, cap) {
       return { score: 0, category: 'ineligible', label: 'Small business', eligible: false,
                rationale: 'Set aside for small business, and the company profile is not recorded as a small business. Not eligible to prime.' };
     }
-    return { score: 8, category: 'small-business', label: openToAll && named.length > 1 ? 'Small business (multiple categories named)' : 'Total small business', eligible: true,
-             rationale: 'Set aside for small business, which the company qualifies for \u2014 large primes are excluded. But the field is every small firm in this market, not a narrow one, so eligibility alone is not a discriminator.' };
+    return { score: 7, category: 'small-business', label: openToAll && named.length > 1 ? 'Small business (multiple categories named)' : 'Total small business', eligible: true,
+             rationale: 'Set aside for small business, which the company qualifies for \u2014 the large primes are excluded, so the win probability is materially better than an open competition. The field is still every small firm in this market rather than a narrow one, so it scores well without scoring top.' };
   }
 
   // Exactly one specific socioeconomic category.
   const want = named[0];
   if (held.has(want.key)) {
-    return { score: 10, category: 'specific-held', label: want.label, eligible: true,
-             rationale: 'Set aside for ' + want.label + ', which the company holds. This is the strongest eligibility position available: the field is limited to firms with the same certification.' };
+    // Which certification actually qualifies us, and is it narrower than the one required?
+    // Holding SDVOSB qualifies for a VOSB set-aside, but the field then includes every plain
+    // VOSB too — a weaker position than an SDVOSB set-aside, where the field is only firms
+    // like us. A VOSB-only firm on that same solicitation is at its narrowest possible field.
+    const direct = _bnaSaHeldKeys(cap.setAsides || []);
+    const wantTier = _BNA_SA_TIER[want.key] || 0;
+    let bestTier = -1, via = null;
+    direct.forEach(function (h) {
+      if ((_BNA_SA_IMPLIES[h] || []).indexOf(want.key) < 0) return;   // does not qualify us
+      const t = _BNA_SA_TIER[h] || 0;
+      if (t > bestTier) { bestTier = t; via = h; }
+    });
+    const viaLabel = (_BNA_SA_SPECIFIC.find(c => c.key === via) || {}).label || '';
+
+    if (bestTier > wantTier) {
+      const gap = bestTier - wantTier;
+      return { score: Math.max(8, 10 - gap), category: 'specific-overqualified',
+               label: want.label, eligible: true, heldVia: via,
+               rationale: 'Set aside for ' + want.label + ', which the company qualifies for through its '
+                 + viaLabel + ' status. Eligible to prime, and the large primes are excluded \u2014 but the field is every '
+                 + want.label + ', not only ' + viaLabel + ' firms, so it is a wider competition than a '
+                 + viaLabel + ' set-aside would be.' };
+    }
+    return { score: 10, category: 'specific-held', label: want.label, eligible: true, heldVia: via,
+             rationale: 'Set aside for ' + want.label + ', which the company holds. This is the strongest position available: the field is limited to firms with the same certification, and nothing narrower would qualify.' };
   }
   return { score: 0, category: 'ineligible', label: want.label, eligible: false,
-           rationale: 'Set aside for ' + want.label + ', which the company does not hold. Not eligible to prime \u2014 a teaming or subcontract route is the only way in.' };
+           rationale: 'Set aside for ' + want.label + ', which the company does not hold'
+             + (direct_hint(cap, want) ? ' (' + direct_hint(cap, want) + ')' : '')
+             + '. Not eligible to prime \u2014 a teaming or subcontract route is the only way in.' };
 }
 
 function evaluateBnaGates(opp, cap) {
@@ -16940,17 +17067,17 @@ function evaluateBnaGates(opp, cap) {
   const restrictive = sa && !/unrestricted|full.and.open|open competition|not stated|none|n\/a/.test(sa);
   const totalSB = /total small business|small business set.?aside/.test(sa);
   if (restrictive) {
-    const held = (cap.setAsides || []).map(x => x.toLowerCase());
-    let eligible;
-    if (totalSB) {
-      eligible = cap.businessSize === 'Small';
-    } else {
-      eligible = held.some(h => {
-        const hk = h.replace(/[^a-z0-9]/g, ''), sk = sa.replace(/[^a-z0-9]/g, '');
-        return hk && (sk.includes(hk) || hk.includes(sk.replace('setaside', '').replace('set', '')));
-      });
+    // #2: ONE implementation of this rule, not two. The gate previously ran its own
+    // substring matching against the raw strings while the score used the regex taxonomy
+    // plus certification implication (SDVOSB satisfies VOSB, EDWOSB satisfies WOSB). Two
+    // independent implementations of the same rule can only drift apart, and they did.
+    const _fit = _bnaSetAsideFit(opp.set_aside, cap);
+    if (_fit.eligible === false) {
+      primeBlockers.push(`set-aside (${opp.set_aside}) — ${co} doesn't hold a qualifying certification`);
+    } else if (_fit.eligible === null && _fit.category === 'unknown-profile') {
+      // Missing configuration is not a bar. Flag it as something to confirm instead.
+      perfConstraints.push(`set-aside (${opp.set_aside}) — no certifications are recorded in Settings, so prime eligibility could not be verified. Confirm before bidding.`);
     }
-    if (!eligible) primeBlockers.push(`set-aside (${opp.set_aside}) — ${co} doesn't hold a qualifying certification`);
   }
   // AI holistic eligibility judgment — catches amendments and nuances the structured
   // set-aside field can miss (e.g. an 8(a) set-aside added by amendment in free text).
@@ -17007,8 +17134,17 @@ function evaluateBnaGates(opp, cap) {
 // Spread/contrast calibration: amplifies a score's distance from the midpoint so honest factor
 // scores resolve toward a clear PASS or PURSUE rather than all clustering near 6-7. Tunable via K.
 function bnaSpreadScore(x) {
-  const MID = 5.5, K = 1.5;
-  return Math.max(0.5, Math.min(9.8, MID + (x - MID) * K));
+  // A LINEAR gain clipped at 9.8 was not a scale: everything above a blended 8.37 displayed
+  // 9.8, so the two strongest bids in a pipeline were indistinguishable at exactly the moment
+  // you had to choose between them — and 10 was unreachable while 0 was too.
+  //
+  // This is a monotonic S-curve that maps [0,10] onto [0,10] exactly: 0 stays 0, 10 stays 10,
+  // 5 stays 5, and no two different inputs share an output. It still expands the muddy middle
+  // (slope ~1.4x at the centre, close to the old 1.5x) but tapers toward the ends instead of
+  // clipping, so the whole range stays usable and every value remains reachable.
+  const K = 1.2;
+  const y = 5 + 5 * Math.tanh(K * (x - 5) / 5) / Math.tanh(K);
+  return Math.max(0, Math.min(10, y));
 }
 
 // Build the decisive verdict from fit factors + scope coverage + gates.
@@ -17027,9 +17163,11 @@ function computeDecisiveVerdict() {
   const fteNum = parseInt(String(opp.fte_count || '').replace(/[^0-9]/g, '')) || null;
   let scopeCov = (window._bnaScopeCoverage != null) ? Number(window._bnaScopeCoverage) : null;
 
-  // Fit factors = all factors EXCEPT eligibility (eligibility is now a gate).
+  // Set-aside is BOTH scored and gating. It is included here at its full stated weight —
+  // a narrow set-aside you hold is a real competitive advantage and the score must show it —
+  // while evaluateBnaGates separately decides whether priming is possible at all.
   const t2keys = new Set(BNA_TIER2.map(f => f.key));
-  const fitKeys = [...BNA_TIER1, ...BNA_TIER2].filter(f => f.key !== 'eligibility');
+  const fitKeys = [...BNA_TIER1, ...BNA_TIER2];
   let wsum = 0, acc = 0;
   fitKeys.forEach(f => {
     const s = t2keys.has(f.key)
@@ -17044,8 +17182,8 @@ function computeDecisiveVerdict() {
   const criticalKeys = ['technical_capability', 'past_performance', 'scope_clarity'];
   const criticalScores = criticalKeys.map(k => bna_tier1_scores[k]).filter(v => v != null);
   const minCritical = criticalScores.length ? Math.min(...criticalScores) : base;
-  const blended = 0.55 * base + 0.45 * minCritical; // decisive blend
-  const ceiling = Math.min(10, minCritical + 1.5);                // weakest-link cap: one genuinely weak critical factor caps the upside
+  const blended = 0.70 * base + 0.30 * minCritical; // decisive blend — weighted toward the whole picture
+  const ceiling = Math.min(10, minCritical + 3.0);                // weakest-link cap: a genuinely BAD critical factor still caps the upside, a merely thin one does not
   const ceilingBinding = blended > ceiling;         // true when the cap (not the blend) is what limits the score
   let fit = Math.min(blended, ceiling);             // apply the weakest-link ceiling
   // Spread calibration pushes muddy-middle scores toward a clear decision. Skip it when the
@@ -19398,7 +19536,7 @@ async function runBidNoBid() {
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${rationale ? '8px' : '4px'}">
             <div style="font-size:13px;font-weight:700">${escHtml(f.label)}</div>
             <div style="display:flex;align-items:center;gap:8px">
-              <span style="font-size:11px;color:var(--muted)">Weight: ${bna_weights[f.key] || Math.round(f.weight*100)}%</span>
+              <span style="font-size:11px;color:var(--muted)">${_bnaWeightLabel(f)}</span>
               <span style="font-size:20px;font-weight:900;color:${fc}">${s}</span>
             </div>
           </div>
@@ -19965,11 +20103,31 @@ async function runOpportunityIntel() {
   showBnaStatus('info', 'Extracting opportunity intelligence…', 'Reading solicitation documents and extracting all 31 fields. Takes ~30 seconds.', true);
   startBnaEta(35);
 
-  // Only send RFP documents (bnaFiles) + any pasted text, not company docs — smaller request
+  // Only send RFP documents (bnaFiles) + any pasted text, not company docs — smaller request.
+  // Bounded by a TOKEN budget, not a file count: a fixed count of 6 silently dropped the
+  // seventh document, and in a real bundle the late documents are the amendments — the ones
+  // most likely to change the very fields the verdict then treats as canonical.
+  const INTEL_INPUT_BUDGET = 150000;
   const rfpContent = [];
-  for (const file of bnaFiles.slice(0, 6)) {
+  const _intelSkipped = [];
+  let _intelTok = 0;
+  for (const file of bnaFiles) {
     const block = await fileToContentBlock(file);
-    if (block) rfpContent.push(block);
+    if (!block) continue;
+    const _bt = (typeof blockTokens === 'function') ? blockTokens(block) : 0;
+    // Always send the first document, whatever its size — a bundle of one huge PWS must not
+    // come back empty.
+    if (rfpContent.length && _intelTok + _bt > INTEL_INPUT_BUDGET) { _intelSkipped.push(file.name); continue; }
+    _intelTok += _bt;
+    rfpContent.push(block);
+  }
+  if (_intelSkipped.length) {
+    // Never silent. The user decides what to trim; the tool only reports what it could not fit.
+    showBnaStatus('warn', 'Some documents were too large to include',
+      _intelSkipped.length + ' document' + (_intelSkipped.length === 1 ? '' : 's') + ' did not fit the extraction request and '
+      + (_intelSkipped.length === 1 ? 'was' : 'were') + ' NOT read: ' + _intelSkipped.join(', ')
+      + '. If any of them is an amendment, re-upload it on its own or paste its key terms into the text box \u2014 '
+      + 'the extracted details below may be out of date without it.', false);
   }
   const bnaText = (document.getElementById('bnaTextInput')?.value || '').trim();
   if (bnaText.length >= 30) rfpContent.push({ type: 'text', text: `=== USER-PROVIDED CONTEXT (typed directly by the user \u2014 treat as AUTHORITATIVE; map every fact here to its matching field even if the formal documents do not mention it) ===\n${bnaText}\n=== END USER-PROVIDED CONTEXT ===` });
@@ -20983,6 +21141,21 @@ function renderOpportunityIntel(intel, container) {
         // Sort alphabetically by LCAT name
         rows.sort((a, b) => a.lcat.localeCompare(b.lcat));
 
+        // Reconcile the per-role SCA flag against contract-level coverage. A role cannot
+        // be SCA-covered on a contract that is not, and when coverage was never
+        // established the flag is an inference rather than an extracted fact.
+        const _scaCov = _bnaScaCoverage(intel);
+        const _scaClaimed = rows.filter(r => r.is_sca === true || /^(y|true)/i.test(String(r.is_sca == null ? '' : r.is_sca))).length;
+        const _prov = _bnaLcatProvenance(intel);
+        const _scaCell = (v, cov) => {
+          const claimed = v === true || /^(y|true)/i.test(String(v == null ? '' : v));
+          if (!claimed) return scaBadge(v);
+          if (cov === 'yes') return scaBadge(v);
+          // claimed, but the contract is not established as SCA-covered
+          return '<span title="The solicitation does not establish Service Contract Act coverage \u2014 no Wage Determination is referenced. This flag is the analysis\u2019s own read of the occupation, not a stated requirement." '
+            + 'style="font-size:10px;font-weight:700;color:#9a3412;background:#ffedd5;border:1px solid #fdba74;border-radius:4px;padding:1px 5px;white-space:nowrap">SCA?\u00a0inferred</span>';
+        };
+
         if (rows.length === 0) {
           displayHtml = '<span style="color:var(--muted);font-style:italic">Not stated in documents</span>';
         } else {
@@ -21009,7 +21182,18 @@ function renderOpportunityIntel(intel, container) {
             ? `<span style="font-size:11px;font-weight:700;color:var(--blue)">★ Yes</span>`
             : `<span style="font-size:11px;color:var(--muted)">—</span>`;
 
+          // Say where these labor categories CAME FROM. A proposed team shape and an extracted
+          // requirement look identical in a table, and only one of them is binding.
+          const _provColor = _prov.key === 'government' ? '#065f46' : '#9a3412';
+          const _provBg    = _prov.key === 'government' ? '#dcfce7' : '#ffedd5';
+          const _provBd    = _prov.key === 'government' ? '#86efac' : '#fdba74';
           displayHtml = `<div style="overflow-x:auto;margin:-4px 0">
+            <div style="font-size:11px;line-height:1.5;color:${_provColor};background:${_provBg};border:1px solid ${_provBd};border-radius:6px;padding:6px 10px;margin-bottom:8px">
+              <strong>Source: ${escHtml(_prov.label)}.</strong> ${escHtml(_prov.note)}${
+                _scaClaimed && _scaCov !== 'yes'
+                  ? ` <br><strong>SCA:</strong> the solicitation does not establish Service Contract Act coverage${_scaCov === 'no' ? ' (it states the work is exempt)' : ' \u2014 no Wage Determination is referenced'}, so the ${_scaClaimed} SCA flag${_scaClaimed === 1 ? '' : 's'} below ${_scaClaimed === 1 ? 'is' : 'are'} the analysis\u2019s own read of the occupation, not a stated requirement.`
+                  : ''}
+            </div>
             <table style="width:100%;border-collapse:collapse;font-size:12px">
               <thead><tr>
                 ${th('Labor Category (LCAT)')}
@@ -21026,8 +21210,8 @@ function renderOpportunityIntel(intel, container) {
                 ${rows.map((r, i) => `<tr style="background:${i%2===0?'white':'#fafafa'}">
                   ${td(escHtml(r.lcat), 'font-weight:600')}
                   ${td(keyBadge(r.key_personnel))}
-                  ${td(scaBadge(r.is_sca))}
-                  ${td(rateBadge(r.min_hourly_rate, r.is_sca))}
+                  ${td(_scaCell(r.is_sca, _scaCov))}
+                  ${td(rateBadge(r.min_hourly_rate, _scaCov === 'yes' && r.is_sca))}
                   ${td(escHtml(r.clearance || '—'))}
                   ${td(_bnaEduShort(r.education) ? `<span title="${escHtml(r.education)}">${escHtml(_bnaEduShort(r.education))}</span>` : '—')}
                   ${td(_bnaExpYears(r.experience_yrs) ? escHtml(_bnaExpYears(r.experience_yrs)) : '—', 'text-align:center')}
