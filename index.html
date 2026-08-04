@@ -2211,7 +2211,8 @@
         <div style="font-size:12.5px;color:var(--muted);max-width:540px">Pull the PWS tasks, period of performance, FTE basis, and the required pricing methodology straight from your RFP analysis — or add tasks by hand below.</div>
         <button class="btn btn-primary" onclick="pricingPullBriefing()" id="pricingPullBtn" style="padding:7px 16px;font-size:12.5px;font-weight:700;width:auto;white-space:nowrap">⤵ Pull RFP Analysis from Proposal tab</button>
       </div>
-      <div id="pricingContextBox" style="font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.6">No opportunity loaded. <strong>Pull RFP Analysis from Proposal tab</strong> reads the RFP/PWS you uploaded on the <strong>Proposal</strong> tab in Step 4 (not the Bid/No-Bid or Partners tabs) and brings in PWS tasks, the FTE count, period structure, and the pricing methodology the Government asked for — or add tasks manually below.</div>
+      <div id="pricingPullProgress" style="display:none;margin-top:10px"></div>
+        <div id="pricingContextBox" style="font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.6">No opportunity loaded. <strong>Pull RFP Analysis from Proposal tab</strong> reads the RFP/PWS you uploaded on the <strong>Proposal</strong> tab in Step 4 (not the Bid/No-Bid or Partners tabs) and brings in PWS tasks, the FTE count, period structure, and the pricing methodology the Government asked for — or add tasks manually below.</div>
       <div style="margin-top:14px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
         <div style="flex:1;min-width:220px">
           <label style="display:block;font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px">Pricing Methodology <span style="color:var(--muted);font-weight:400">(how the Government wants it)</span></label>
@@ -3172,7 +3173,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '202';
+const APP_VERSION = '203';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -6815,12 +6816,13 @@ function _canonSummaryLine(briefing) {
     return 'Figures read from the RFP on this tab. Analyze the opportunity on the Bid/No-Bid tab first and the two will be reconciled to a single set.';
   }
   const inf = Object.keys(c.prov).filter(k => c.prov[k] === 'inferred').length;
-  let s = 'Figures reconciled with the Bid/No-Bid analysis \u2014 both tabs are now using the same numbers.';
+  let s = 'Reconciled with the Bid/No-Bid analysis \u2014 both tabs now use the same figures.';
   if (c.applied.length) {
-    s += ' ' + c.applied.length + ' differed and ' + (c.applied.length === 1 ? 'was' : 'were') + ' taken from the analysis: '
-       + c.applied.map(a => a.label + ' (' + a.was + ' \u2192 ' + a.now + ')').join('; ') + '.';
+    // Name the FIELDS, not their values. The values are on screen just below, and a period
+    // of performance alone can run to five option-period date ranges.
+    s += ' Updated: ' + c.applied.map(a => a.label).join(', ') + '.';
   }
-  if (inf) s += ' ' + inf + ' of them ' + (inf === 1 ? 'is' : 'are') + ' derived rather than stated in the solicitation \u2014 marked [Inferred].';
+  if (inf) s += ' ' + inf + ' ' + (inf === 1 ? 'figure is' : 'figures are') + ' derived, not stated \u2014 marked [Inferred].';
   return s;
 }
 
@@ -12562,10 +12564,16 @@ async function pricingPullBriefing() {
     if (!rfpFiles || rfpFiles.length === 0) { showStatus('warn', 'No RFP loaded', 'Add your RFP/PWS documents on the Proposal tab (Step 4), then click Pull again — or add tasks manually below.'); return; }
     const apiKey = getApiKey();
     if (!apiKey) { showStatus('warn', 'API key needed', 'Enter your Anthropic API key on the Proposal tab (Step 2) to read the PWS, or add tasks manually.'); return; }
-    if (btn) { btn.disabled = true; btn.textContent = 'Reading PWS…'; }
+    if (btn) {
+    btn.disabled = true;
+    // textContent wiped the button's markup, so there was nowhere for a spinner to live.
+    btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:7px"></span>Reading PWS\u2026';
+  }
+  pxProgStart('pricingPullProgress', 1, 'Reading the PWS\u2026', 'Pulling tasks, period of performance and pricing method\u2026', 20);
     try { b = await ensureBriefing(apiKey); }
-    catch (e) { showStatus('warn', 'Could not read the PWS', e.message); if (btn) { btn.disabled = false; btn.textContent = '⤵ Pull RFP Analysis from Proposal tab'; } return; }
-    if (btn) { btn.disabled = false; btn.textContent = '⤵ Pull RFP Analysis from Proposal tab'; }
+    catch (e) { pxProgEnd('pricingPullProgress'); showStatus('warn', 'Could not read the PWS', e.message); if (btn) { btn.disabled = false; btn.innerHTML = '⤵ Pull RFP Analysis from Proposal tab'; } return; }
+    pxProgEnd('pricingPullProgress', 'PWS read.');
+  if (btn) { btn.disabled = false; btn.innerHTML = '⤵ Pull RFP Analysis from Proposal tab'; }
   }
   pricingApplyBriefing(b);
   pricingStampOpp();                          // #32: seeded from THIS opportunity's analysis
@@ -13907,7 +13915,7 @@ function pricingRenderMatrix() {
       // so the constraint the tool is already applying is visible.
       const restricted = !!(pricingModel.mask[l.id] && pricingModel.mask[l.id][t.id] === false);
       if (restricted) {
-        h += `<td title="${pricingEsc(l.name || 'This role')} is not permitted to bill ${pricingEsc(pricingTaskLabel(t))} \u2014 taken from the solicitation when the structure was built. Click to allow it." ` +
+        h += `<td title="${pricingEsc(l.name || 'This role')} is not permitted to bill ${pricingEsc(((t.code ? t.code + ' ' : '') + pricingTaskShortName(t.name || '')).trim())} \u2014 taken from the solicitation when the structure was built. Click to allow it." ` +
           `onclick="pricingToggleMask('${l.id}','${t.id}')" ` +
           `style="padding:1px;border:1px solid var(--border);cursor:pointer;text-align:center;` +
           `background:repeating-linear-gradient(45deg,#eef2f7 0 5px,#e2e8f0 5px 10px)">` +
@@ -19137,7 +19145,6 @@ async function runConstrainedDetect() {
   } catch (e) {
     show('Detection failed: ' + (e && e.message ? e.message : e), true);
   } finally {
-    if (_detBtn) { _detBtn.disabled = false; _detBtn.innerHTML = _detOrig; }
   }
 }
 
