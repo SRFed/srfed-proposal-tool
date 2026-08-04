@@ -3172,7 +3172,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '199';
+const APP_VERSION = '200';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -4369,9 +4369,7 @@ function getTeamingContext() {
 }
 
 // Hook teaming context into companyCtx during generation — called from runGeneration
-function buildCompanyCtxWithTeaming(base) {
-  return base + getTeamingContext();
-}
+
 
 // Teaming card lock is handled via setStepLocked directly after updateStepLocks
 // We add teamingCard to the existing updateStepLocks by patching the bottom of it
@@ -6246,14 +6244,7 @@ function _clearEtaTimer() {
   if (_etaInterval) { clearInterval(_etaInterval); _etaInterval = null; }
 }
 // Call this to give the timer a calibrated estimate so ETA counts down accurately
-function _setEtaEstimate(seconds) {
-  _totalEstSecs = seconds;
-  // Reset start time so countdown is from now
-  if (_genStartTime) {
-    // keep the ratio: remaining = total - elapsed_so_far
-    // just update totalEstSecs, keeping genStartTime — the countdown math handles it
-  }
-} 
+ 
 
 function log(msg, type = '') {
   // Internal only — log box hidden from users
@@ -6944,14 +6935,7 @@ async function getSpAccessToken() {
 // One entry point every tab uses for credentials + Microsoft session, so entering a
 // key or signing in once is reflected everywhere. Recruiting tabs plug into this in a
 // later phase rather than carrying their own key/session state.
-const AppAuth = {
-  getApiKey,                                 // Anthropic API key (getter)
-  setApiKey: (v, src) => saveApiKey(v, src), // Anthropic API key (setter; syncs all key fields)
-  getGraphToken,                             // Microsoft Graph token (optional scopes)
-  getAccount: () => msAccount,               // signed-in Microsoft account, or null
-  isSignedIn: () => !!msAccount,             // Microsoft sign-in state
-  signIn: () => msLogin(),                   // trigger Microsoft sign-in
-};
+;
 
 async function fetchSpFolderFiles(folderUrl, token) {
   const parsed = spUrlToGraphPath(folderUrl);
@@ -8721,11 +8705,7 @@ function populateShallsFromAnalysis(shallsText) {
 }
 
 // Call extractShalls whenever RFP files change
-function onRfpFilesChanged() {
-  updateTokenMeter();
-  updateStepLocks();
-  extractAndDisplayShalls();
-}
+
 
 function updateClarifyAnswer(id, value) {
   const q = clarifyingQuestions.find(x => x.id === id);
@@ -10289,23 +10269,7 @@ function replaceContent(xml, placeholder, content) {
 }
 
 // Legacy alias — used in a few places
-function replaceXmlText(xml, placeholder, replacement) {
-  // Use content replacement (whole paragraph) for known content placeholders,
-  // inline replacement for everything else
-  const contentPlaceholders = ['{{UNDERSTANDING}}','{{TECHNICAL_APPROACH}}','{{METHODOLOGY}}',
-    '{{MANAGEMENT_APPROACH}}','{{STAFFING_PLAN}}','{{KEY_PERSONNEL_INTRO}}',
-    '{{PERSONNEL_ROWS}}','{{PRICING_PHILOSOPHY}}','{{BOE_NARRATIVE}}','{{WRAP_RATE}}',
-    '{{TOTAL_PRICE}}','{{COMPLIANCE}}','{{COVER_LETTER}}','{{CLEARANCE_PLAN}}',
-    '{{FACILITY_CLEARANCE}}','{{GFP}}','{{CMMC}}','{{FILL_INS}}','{{OCI_PLAN}}',
-    '{{REF_OVERVIEW}}','{{REF_SCOPE}}','{{REF_RELEVANCE}}','{{REF_SIMILARITY}}',
-    '{{PAYROLL_SECTION}}',
-  ];
-  const isContent = contentPlaceholders.includes(placeholder) ||
-    /REF\d+_(OVERVIEW|SCOPE|RELEVANCE|SIMILARITY)/.test(placeholder);
-  return isContent
-    ? replaceContent(xml, placeholder, replacement)
-    : replaceMeta(xml, placeholder, replacement);
-}
+
 
 // Inject only metadata placeholders — used for headers and footers
 function injectMetaOnly(xml, data) {
@@ -10420,10 +10384,7 @@ function buildPricingTotalTableOoxml() {
 }
 
 // Combined block (used as a fallback when the template has no dedicated table placeholders).
-function buildPricingTablesOoxml() {
-  const a = buildPricingLaborTablesOoxml(), b = buildPricingTotalTableOoxml();
-  return (a || b) ? (a + b) : '';
-}
+
 
 // Replace the entire paragraph that contains a placeholder with a raw OOXML block
 // (used for dedicated table placeholders the user can position in their template).
@@ -11740,7 +11701,7 @@ function pricingClinScheduleRows() {
   }
   return rows;
 }
-function pricingClinGrandTotal() { const g = pricingClinScheduleRows().find(x => x.grand); return g ? g.total : 0; }
+
 function pricingFmt(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
 function pricingFmtC(n) { return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
@@ -14659,30 +14620,25 @@ function pricingBuildWorkbook() {
     [_coName + 'Pricing Workbook — how to use'],
     [''],
     ['Tabs in this workbook'],
-    ['•  Price Summary  —  the bottom line: total evaluated price per period and overall. Start here.'],
+    ['•  Inputs (grey tab)  —  every assumption this workbook is built from: wrap components, base rates, discounts, escalation. The Fully Burdened Rate Table reads these cells LIVE, so editing one recalculates it.'],
+    ['•  Price Summary (teal)  —  the bottom line: total evaluated price per period and overall. Start here.'],
     ['•  Line-Item Detail (green tab)  —  the master dataset: one row per labor category × task × period, plus Travel/ODC and Materials rows, each carrying its CLIN when the CLIN layer is on. The single source for any custom breakout.'],
     ['•  By Labor Category / By PWS Task  —  pre-built dollar rollups with per-period totals.'],
     ['•  Fully Burdened Rate Table  —  fully-burdened hourly rate per labor category, for each period.'],
     ['•  Hours by Task / FTE by Task  —  effort matrices (labor category × task).'],
     ['•  Labor + Wrap  —  the cost build-up (direct labor → fringe / overhead / G&A / fee → loaded → travel → total).'],
+    ['•  Reconciliation (red tab)  —  the audit trail: how the solicitation\u2019s stated value reconciles to this priced model, line by line.'],
     [''],
     ['The Line-Item Detail tab is an Excel Table'],
     ['Click any cell in it, then use the header filter arrows to sort or filter, or the Table Design ribbon to restyle. Nothing is locked.'],
     [''],
     ['Build any view the Government wants (PivotTable)'],
-    ['1.  Click any cell inside the Line-Item Detail table.'],
-    ['2.  Insert  ▸  PivotTable  ▸  OK   (the table is already selected as the source).'],
-    ['3.  Drag fields into Rows / Columns / Values. Common cuts:'],
-    ['        •  Price by CLIN / task, per year:    Task / CLIN Code → Rows,    Period → Columns,    Price → Values'],
-    ['        •  Price by labor category:             Labor Category → Rows,    Period → Columns,    Price → Values'],
-    ['        •  Hours or FTE by category:            Labor Category → Rows,    Task / CLIN Code → Columns,    Hours (or FTE) → Values'],
-    ['        •  Cost by type (labor vs travel/ODC):  Category → Rows,    Period → Columns,    Price → Values'],
-    ['        •  Rate & discount build-up:              Labor Category → Rows,    Paid Rate / Salary / Fully Burdened Rate pre-disc / Discount (%) / Price → Values'],
-    [''],
-    ['The "Category" column tags every row Labor, Travel, ODC, or Materials, so you can show or hide whole cost types in any breakout.'],
+    ['Click any cell in Line-Item Detail, then Insert ▸ PivotTable ▸ OK. Drag fields into Rows / Columns / Values — for example Task / CLIN Code → Rows and Period → Columns with Price in Values gives price by task per year.'],
+    ['Every row is tagged Labor, Travel, ODC or Materials in the Category column, so any cut can show or hide whole cost types.'],
     [''],
     ['Notes'],
     ['•  Hours and FTE are full-year-equivalent; partial periods are already term-scaled in the Price column.'],
+    ['•  Off a GSA Schedule the third column is Base Rate ($/hr); on a Schedule bid it is GSA LCAT instead. The workbook swaps the column rather than leaving an empty one.'],
     ['•  Derived columns (per row): Paid Rate & Salary (direct labor, term-escalated), Fully Burdened Rate pre-disc (full burden before your competitive discount), Discount (%), COLA (%), Pinned Anchor (the rate input you locked in Step 3), and Gov Price pre-disc (price before the discount). Fully Burdened Rate pre-disc × (1 − Discount%) = the billed rate; Gov Price pre-disc × (1 − Discount%) = Price.'],
     ['•  Travel/ODC rows carry no hours — they are dollar lines tagged with their cost category.'],
     ['•  Figures are estimates for proposal pricing — verify rates against GSA CALC+, BLS OES, and applicable wage determinations before relying on them.']
@@ -14701,6 +14657,39 @@ function pricingBuildWorkbook() {
   // ---- Inputs (single source of truth; the Fully Burdened Rate Table's cells are live formulas that read
   // from here, so editing any assumption recalculates the rates). Stage 1: non-GSA fully-burdened build. ----
   let _ixRole = {}, _ixPer = {}, _ixFringe = '', _ixOH = '', _ixGA = '', _ixFee = '', _ixHW = '', _ixHolDisc = '';
+  if (gsa) {
+    // On a Schedule the wage build-up is not ours to state — the Schedule rate is the input.
+    // What IS ours is the discount stack and the escalation curve, and those had no home at
+    // all: the Inputs tab was built only in the non-GSA branch, so a Schedule bid shipped a
+    // workbook with no assumptions tab.
+    const _gi = [];
+    _gi.push(['Pricing Inputs — the assumptions every other tab is built from']);
+    _gi.push(['On a GSA Schedule the hourly rates come from your Schedule rate card, not from a wage build-up, so the inputs below are the discounts and the escalation applied on top of them.']);
+    _gi.push(['']);
+    _gi.push(['Rate basis']);
+    _gi.push(['Source', 'GSA Schedule rate card']);
+    _gi.push(['Schedule discount off ceiling', (parseFloat(pricingModel.gsaDiscount) || 0) / 100]);
+    _gi.push(['Competitive discount mode', pricingModel.discountMode || 'none']);
+    _gi.push(['']);
+    _gi.push(['Hours basis']);
+    _gi.push(['Billable hours per FTE-year', defaultHpf()]);
+    _gi.push(['']);
+    _gi.push(['Non-labor treatment']);
+    _gi.push(['Travel escalation', (typeof _pxStreamEscLabel === 'function') ? _pxStreamEscLabel(pricingTravel()) : 'held flat']);
+    _gi.push(['Travel wrap', (pricingTravel().markup === 'markup') ? ('G&A ' + (parseFloat(pricingTravel().gaPct) || 0) + '%') : 'pass-through (no markup)']);
+    _gi.push(['ODC escalation', (typeof _pxStreamEscLabel === 'function') ? _pxStreamEscLabel(pricingOdc()) : 'held flat']);
+    _gi.push(['ODC wrap', (pricingOdc().markup === 'markup') ? ('G&A ' + (parseFloat(pricingOdc().gaPct) || 0) + '%') : 'pass-through (no markup)']);
+    _gi.push(['']);
+    _gi.push(['Period', 'Term (months)', 'Schedule year', 'Escalation multiplier']);
+    P.forEach((p, i) => _gi.push([pNames[i], pricingPeriodMonths(p),
+      (typeof pricingGsaScheduleYearForPeriod === 'function') ? pricingGsaScheduleYearForPeriod(i) : '',
+      (mult[i] || 1)]));
+    const wsGi = XLSX.utils.aoa_to_sheet(_gi);
+    wsGi['!cols'] = [{ wch: 44 }, { wch: 18 }, { wch: 16 }, { wch: 20 }];
+    ['A1', 'A4', 'A9', 'A12', 'A17'].forEach(a => { if (wsGi[a]) wsGi[a].s = { font: { bold: true, sz: 11, color: { rgb: '1F4E79' } } }; });
+    if (wsGi['B6']) wsGi['B6'].z = '0.0%';
+    XLSX.utils.book_append_sheet(wb, wsGi, 'Inputs');
+  }
   if (!gsa) {
     const _p = CLIENT_CONFIG.pricing || {};
     const _fr = (parseFloat(_p.fringe) || 0) / 100, _oh = (parseFloat(_p.overhead) || 0) / 100, _ga = (parseFloat(_p.ga) || 0) / 100, _fe = (parseFloat(_p.fee) || 0) / 100;
@@ -14708,7 +14697,8 @@ function pricingBuildWorkbook() {
     const _wm = (_p.wrapMode || 'compounded'), _dm = pricingModel.discountMode || 'none';
     const _A = (col, row) => 'Inputs!$' + col + '$' + row;
     const _inp = [];
-    _inp.push(['Pricing Inputs — edit any value; the Fully Burdened Rate Table recalculates automatically.']);
+    _inp.push(['Pricing Inputs — the assumptions every other tab is built from']);
+    _inp.push(['Every rate on the Fully Burdened Rate Table is a LIVE FORMULA reading the cells below. Change a value here and that tab recalculates. The other tabs hold the figures as priced and do not move until the workbook is regenerated.']);
     _inp.push(['']);
     _inp.push(['Wrap components (fraction of wage)']);
     _ixFringe = _A('B', _inp.length + 1); _inp.push(['Fringe', _fr]);
@@ -15186,8 +15176,15 @@ function pricingBuildWorkbook() {
   XLSX.utils.book_append_sheet(wb, wsLW, 'Labor + Wrap');
 
   // Tab colors (Instructions + master data stand out; rollups a muted blue) and the one Excel Table.
+  // One colour per ROLE, so the tab strip reads as a map rather than a list:
+  //   amber  = read me first            grey   = the assumptions everything else reads
+  //   teal   = the answer               green  = the master dataset
+  //   red    = the audit trail          blue   = derived rollups        violet = CLINs
+  // Instructions and Reconciliation previously shared the same amber, which made the
+  // audit trail look like a second instructions tab.
   wb._tabColors = {
-    'Instructions': 'FFF59E0B', 'Price Summary': 'FF14B8A6', 'Reconciliation': 'FFF59E0B', 'Line-Item Detail': 'FF16A34A',
+    'Instructions': 'FFF59E0B', 'Inputs': 'FF64748B', 'Price Summary': 'FF14B8A6',
+    'Reconciliation': 'FFDC2626', 'Line-Item Detail': 'FF16A34A',
     'By Labor Category': 'FF93C5FD', 'Fully Burdened Rate Table': 'FF93C5FD', 'By PWS Task': 'FF93C5FD', 'By CLIN': 'FF93C5FD',
     'Hours by Task': 'FF93C5FD', 'FTE by Task': 'FF93C5FD', 'Labor + Wrap': 'FF93C5FD'
   };
@@ -17150,7 +17147,7 @@ const BNA_TIER2 = [
     neg:'Not available',                   mid:'Available with effort',                pos:'Readily available or not needed' },
 ];
 // Tier 2 total: 40%
-const BNA_THRESHOLD = 7.5;
+
 let bna_tier1_scores = {};
 let bna_tier2_scores = {};
 
@@ -17330,15 +17327,7 @@ function resetWeights() {
   updateWeightDisplay();
 }
 
-function toggleWeightEditor() {
-  const body   = document.getElementById('weightEditorBody');
-  const toggle = document.getElementById('weightEditorToggle');
-  if (!body) return;
-  const open = body.style.display !== 'none';
-  body.style.display = open ? 'none' : 'block';
-  if (toggle) toggle.textContent = open ? '▼ expand' : '▲ collapse';
-  if (!open) renderWeightEditor(); // render if just opened
-}
+
 
 function getEffectiveWeights() {
   // Return normalized weights (in case of floating point, ensure sum = 1.0)
