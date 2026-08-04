@@ -3172,7 +3172,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '194';
+const APP_VERSION = '199';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -6868,6 +6868,7 @@ async function ensureBriefing(apiKey) {
   // compliance read — sees the same figures the Bid/No-Bid tab displays, by construction.
   try { _canonApplyToBriefing(briefing); } catch (e) {}
   cachedBriefing = briefing;       // becomes the shared briefing
+  try { if (typeof _anaSave === 'function') _anaSave(); } catch (e) {}
   return briefing;
 }
 
@@ -7460,6 +7461,9 @@ function addFilesToArray(newFiles, arr, listId) {
   updateStepLocks();
   updateTokenMeter();
   measureAndRerender(arr, listId);   // size the new files (real extracted-text tokens), then re-render
+  // THE GATE: a restored analysis is verified against these exact documents, or destroyed.
+  // Wired here because this is the single funnel every document load passes through.
+  try { if (typeof _anaVerifyAgainstFiles === 'function') _anaVerifyAgainstFiles(); } catch (e) {}
   if (arr === rfpFiles) extractAndDisplayShalls();
   if (arr === complianceFiles) updateComplianceBtn();
   if (typeof bnaFiles !== 'undefined' && (arr === bnaFiles || (typeof bnaCompanyFiles !== 'undefined' && arr === bnaCompanyFiles))) updateBnaBtn();
@@ -8696,6 +8700,10 @@ function populateShallsFromAnalysis(shallsText) {
   if (!section || !body || !shallsText) return;
 
   const lines = shallsText.split('\n').filter(l => l.trim().length > 15);
+  // Requirements previously existed ONLY as rendered DOM, read back by ten call sites via
+  // .shall-item textContent. That made them unpersistable and dependent on a panel having
+  // been rendered. The array is now the record; the DOM is a view of it.
+  try { window._anaRequirements = lines.slice(); } catch (e) {}
   count.textContent = `${lines.length} requirement${lines.length !== 1 ? 's' : ''} found`;
   section.style.display = 'block';
   body.style.display = 'block';
@@ -14968,7 +14976,6 @@ function pricingBuildWorkbook() {
   // Travel / ODC line items — their own category rows (one per period), kept out of the labor rows so
   // the single dataset can be sliced Labor vs Travel vs ODC (and pivoted by Category).
   const _odcByP = (typeof pricingTravelByPeriod === 'function') ? pricingTravelByPeriod() : [];
-  const _odcCat = (M.travel && M.travel.odcCategory) || 'Travel & ODC';
   P.forEach((p, i) => {
     const amt = _odcByP[i] || 0; if (amt <= 0) return;
     {
@@ -16565,6 +16572,208 @@ window.addEventListener('beforeunload', function () { if (_oppReloading) return;
 // back into the live keys and reloads. Uploaded files can't be preserved (browsers can't persist
 // File objects), so a restored opportunity keeps its typed/derived work but its files need
 // re-uploading — the same limitation as any page refresh.
+// ── persisted analysis ────────────────────────────────────────────────────
+const _ANA_KEY = 'srfed_analysis';
+const _ANA_V = 1;
+
+// Quarantine state for a restored analysis. 'none' = nothing restored; 'unverified' =
+// restored but not yet checked against documents; 'verified' = fingerprint matched.
+let _anaState = { status: 'none', fp: '', oppLabel: '', savedAt: 0 };
+
+function _anaHash32(s, seed) {
+  let h = seed >>> 0;
+  const str = String(s || '');
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return ('00000000' + h.toString(16)).slice(-8);
+}
+
+// TWO independent FNV-1a passes with different offset bases, concatenated to 64 bits.
+// A single 32-bit hash gives roughly a 1-in-8,600 birthday collision across a thousand
+// opportunities, which is not a number to put behind a guarantee. Two independent passes
+// put it beyond any realistic caseload.
+function _anaHash(s) {
+  return _anaHash32(s, 0x811c9dc5) + _anaHash32(String(s || '').split('').reverse().join(''), 0x01000193);
+}
+
+// The fingerprint of the SOLICITATION documents currently loaded. Derived from the files
+// themselves so it can be computed with no analysis in memory — which is exactly the state
+// a restore happens in.
+function _anaFingerprint(files) {
+  const list = files || (typeof bnaFiles !== 'undefined' && bnaFiles && bnaFiles.length ? bnaFiles
+             : (typeof rfpFiles !== 'undefined' ? rfpFiles : []));
+  if (!list || !list.length) return '';
+  // name + byte length + last-modified timestamp. Size alone is the weak part: two different
+  // solicitations can share a generic filename ("PWS.pdf") and could in principle share a
+  // byte count. Browsers expose lastModified on every File, so requiring all three means a
+  // false match needs two different opportunities whose documents share names, exact byte
+  // lengths AND modification times to the millisecond.
+  const sig = list.map(f => String(f && f.name || '') + ':' + String(f && f.size || 0)
+                          + ':' + String((f && f.lastModified) || 0))
+                  .sort().join('|');
+  return _anaHash(sig);
+}
+
+// A change of company profile does not change WHICH opportunity this is, but it does
+// invalidate a score computed under the old profile. Tracked separately so the two are
+// never confused with each other.
+function _anaSettingsFp() {
+  try {
+    const c = (CLIENT_CONFIG && CLIENT_CONFIG.capacity) || {};
+    return _anaHash(JSON.stringify([c.businessSize || '', (c.setAsides || []).slice().sort(),
+                                    c.naics || '', c.clearance || '']));
+  } catch (e) { return ''; }
+}
+
+// Put restored analysis back on SCREEN and back into the structures other code reads.
+// Persisting the requirements array was only half the job: ten call sites read requirements
+// out of the DOM via .shall-item, so an analysis restored into memory alone would still
+// leave Compliance saying "run Analyze first" on an opportunity that HAD been analyzed.
+function _anaRehydrate() {
+  try {
+    const reqs = (typeof window !== 'undefined') ? window._anaRequirements : null;
+    if (reqs && reqs.length && typeof populateShallsFromAnalysis === 'function') {
+      const keep = reqs.slice();
+      populateShallsFromAnalysis(keep.join('\n'));
+      window._anaRequirements = keep;          // populate... rewrites it; keep the record
+    }
+  } catch (e) {}
+  try {
+    const intel = (typeof window !== 'undefined') ? window._lastBnaIntel : null;
+    const card = document.getElementById('bnaIntelCard');
+    const body = document.getElementById('bnaIntelBody');
+    if (intel && body && typeof renderOpportunityIntel === 'function') {
+      if (card) card.style.display = 'block';
+      renderOpportunityIntel(intel, body);
+    }
+  } catch (e) {}
+}
+
+// The mirror image: when an analysis is destroyed, everything it put on screen goes with it.
+// Leaving a rendered requirements panel behind would let the DOM readers keep working from
+// an opportunity that has been deleted — the exact confounding this design exists to prevent.
+function _anaClearUi() {
+  try {
+    const body = document.getElementById('shallsBody');
+    if (body) body.innerHTML = '';
+    const sec = document.getElementById('shallsSection');
+    if (sec) sec.style.display = 'none';
+    const cnt = document.getElementById('shallsCount');
+    if (cnt) cnt.textContent = '';
+  } catch (e) {}
+  try {
+    const card = document.getElementById('bnaIntelCard');
+    if (card) card.style.display = 'none';
+    const b = document.getElementById('bnaIntelBody');
+    if (b) b.innerHTML = '';
+  } catch (e) {}
+}
+
+function _anaDiscard(reason) {
+  try { localStorage.removeItem(_ANA_KEY); } catch (e) {}
+  _anaState = { status: 'none', fp: '', oppLabel: '', savedAt: 0 };
+  try {
+    window._lastBnaIntel = null;
+    if (typeof cachedBriefing !== 'undefined') cachedBriefing = null;
+    window._bnaOpp = null; window._lastBnaResult = null;
+    window._anaRequirements = null;
+  } catch (e) {}
+  try { _anaClearUi(); } catch (e) {}
+  if (reason && typeof showStatus === 'function') {
+    showStatus('warn', 'Saved analysis discarded', reason);
+  }
+}
+
+// Called after every extraction that produces something worth keeping.
+function _anaSave() {
+  try {
+    const fp = _anaFingerprint();
+    if (!fp) return false;                       // no documents = nothing to bind an analysis to
+    const intel = (typeof window !== 'undefined') ? window._lastBnaIntel : null;
+    const brief = (typeof cachedBriefing !== 'undefined') ? cachedBriefing : null;
+    const reqs  = (typeof window !== 'undefined' && window._anaRequirements) ? window._anaRequirements : null;
+    if (!intel && !brief && !reqs) return false;
+    const id = (typeof pricingOppIdentity === 'function') ? pricingOppIdentity() : { key: '', label: '' };
+    const payload = {
+      v: _ANA_V, fp: fp, settingsFp: _anaSettingsFp(), savedAt: Date.now(),
+      oppKey: id.key || '', oppLabel: id.label || '',
+      fileNames: ((typeof bnaFiles !== 'undefined' && bnaFiles.length) ? bnaFiles : (typeof rfpFiles !== 'undefined' ? rfpFiles : [])).map(f => f.name),
+      intel: intel || null, briefing: brief || null, requirements: reqs || null,
+      scoring: (typeof window !== 'undefined' && window._bnaOpp) ? window._bnaOpp : null,
+      result: (typeof window !== 'undefined' && window._lastBnaResult) ? window._lastBnaResult : null,
+    };
+    localStorage.setItem(_ANA_KEY, JSON.stringify(payload));
+    _anaState = { status: 'verified', fp: fp, oppLabel: payload.oppLabel, savedAt: payload.savedAt };
+    return true;
+  } catch (e) { return false; }
+}
+
+// On load. Restores into QUARANTINE — never straight into service.
+function _anaRestore() {
+  let p = null;
+  try { p = JSON.parse(localStorage.getItem(_ANA_KEY) || 'null'); } catch (e) { p = null; }
+  if (!p || p.v !== _ANA_V || !p.fp) return false;
+
+  // Cross-store check: the pricing model carries its own opportunity stamp. If the two
+  // disagree, one of them is from a different opportunity and neither may be trusted
+  // against the other, so the analysis goes.
+  try {
+    const pm = JSON.parse(localStorage.getItem(PRICING_KEY) || 'null');
+    if (pm && pm.oppKey && p.oppKey && pm.oppKey !== p.oppKey) {
+      _anaDiscard('The saved analysis (' + (p.oppLabel || 'an earlier opportunity')
+        + ') does not match the saved pricing model (' + (pm.oppLabel || 'a different opportunity')
+        + '), so it was removed rather than risk mixing two opportunities. Re-run Analyze.');
+      return false;
+    }
+  } catch (e) {}
+
+  try {
+    window._lastBnaIntel = p.intel || null;
+    if (p.briefing && typeof cachedBriefing !== 'undefined') cachedBriefing = p.briefing;
+    window._bnaOpp = p.scoring || null;
+    window._lastBnaResult = p.result || null;
+    window._anaRequirements = p.requirements || null;
+  } catch (e) {}
+  _anaState = { status: 'unverified', fp: p.fp, oppLabel: p.oppLabel || '', savedAt: p.savedAt || 0 };
+
+  if (typeof showStatus === 'function') {
+    showStatus('info', 'Previous analysis restored',
+      (p.oppLabel ? ('\u201c' + p.oppLabel + '\u201d') : 'An earlier analysis')
+      + ' was restored from your last session. Documents are not saved by browsers, so it is '
+      + 'held UNVERIFIED until you load the solicitation again \u2014 if the documents turn out to be '
+      + 'a different opportunity, this analysis is discarded automatically rather than mixed with them.'
+      + (p.settingsFp && p.settingsFp !== _anaSettingsFp()
+          ? ' Note: your company profile has changed since it was scored, so re-run Analyze for a current Bid/No-Bid score.' : ''));
+  }
+  try { _anaRehydrate(); } catch (e) {}
+  return true;
+}
+
+// THE GATE. Called whenever the solicitation document set changes. A restored analysis
+// either matches these exact documents or it is destroyed.
+function _anaVerifyAgainstFiles() {
+  if (_anaState.status !== 'unverified') return _anaState.status;
+  const fp = _anaFingerprint();
+  if (!fp) return 'unverified';                 // still no documents; stay quarantined
+  if (fp === _anaState.fp) {
+    _anaState.status = 'verified';
+    try { _anaRehydrate(); } catch (e) {}
+    if (typeof showStatus === 'function') showStatus('success', 'Analysis verified',
+      'The documents you just loaded are the same ones this analysis was built from, so it is back in use.');
+    return 'verified';
+  }
+  _anaDiscard('The documents just loaded are NOT the ones the saved analysis was built from, so it was deleted. '
+    + 'Nothing from the previous opportunity is in play. Run Analyze on the Bid/No-Bid tab for these documents.');
+  return 'none';
+}
+
+// NOTE: there is deliberately no "is it usable" gate consulted by callers. The guarantee
+// rests on the analysis being DESTROYED when the documents do not match, not on every
+// consumer remembering to ask permission first. A second gate that callers could forget to
+// check would weaken the design by implying a protection that might not be applied.
+
 const OPP_BACKUP_KEY = 'srfed_prev_opportunity';
 function _oppHasData() {
   try {
@@ -16641,11 +16850,14 @@ try { document.addEventListener('click', function (e) {
 }); } catch (e) {}
 
 // What each scope removes. A key listed here is deleted; anything not listed survives the reload.
+// The saved ANALYSIS must be listed everywhere the Bid/No-Bid data is cleared. It was added
+// after these scopes were written, so "Everything for this opportunity" left it behind —
+// the one thing that scope must never do.
 const OPP_CLEAR_SCOPES = {
-  docs:    { keys: [],                               label: 'Loaded documents and drafts' },
-  bna:     { keys: ['srfed_session'],                label: 'Bid/No-Bid analysis and win strategy' },
-  pricing: { keys: [PRICING_KEY],                    label: 'Pricing model' },
-  all:     { keys: [PRICING_KEY, 'srfed_session'],   label: 'Everything for this opportunity' },
+  docs:    { keys: [],                                          label: 'Loaded documents and drafts' },
+  bna:     { keys: ['srfed_session', _ANA_KEY],                 label: 'Bid/No-Bid analysis and win strategy' },
+  pricing: { keys: [PRICING_KEY],                               label: 'Pricing model' },
+  all:     { keys: [PRICING_KEY, 'srfed_session', _ANA_KEY],    label: 'Everything for this opportunity' },
 };
 
 function _oppClearScoped(scope, btn) {
@@ -16658,7 +16870,8 @@ function _oppClearScoped(scope, btn) {
   try {
     if (typeof _pricingWrite === 'function') _pricingWrite();
     if (typeof saveSession === 'function') saveSession();
-    const backup = { v: 1, ts: Date.now(), pricing: localStorage.getItem(PRICING_KEY), session: localStorage.getItem('srfed_session') };
+    const backup = { v: 1, ts: Date.now(), pricing: localStorage.getItem(PRICING_KEY),
+                     session: localStorage.getItem('srfed_session'), analysis: localStorage.getItem(_ANA_KEY) };
     localStorage.setItem(OPP_BACKUP_KEY, JSON.stringify(backup));
   } catch (e) {
     // Backup failed (e.g. storage full) -- abort so we never clear without a saved copy.
@@ -16706,6 +16919,9 @@ function restoreOpportunity() {
     var backup = JSON.parse(raw);
     if (backup.pricing != null) localStorage.setItem(PRICING_KEY, backup.pricing); else localStorage.removeItem(PRICING_KEY);
     if (backup.session != null) localStorage.setItem('srfed_session', backup.session); else localStorage.removeItem('srfed_session');
+    // Restore the analysis with its pair. Restoring a pricing model without the analysis it
+    // was sized from would leave two stores describing an opportunity only one of them knows.
+    if (backup.analysis != null) localStorage.setItem(_ANA_KEY, backup.analysis); else localStorage.removeItem(_ANA_KEY);
     sessionStorage.setItem('opp_flash', 'restored');
   } catch (e) { showStatus('error', 'Restore failed', 'The saved opportunity could not be read.'); return; }
   location.reload();
@@ -16835,6 +17051,10 @@ window.addEventListener('DOMContentLoaded', () => {
   // "Reset pricing model" clears it when starting a new opportunity.)
   pricingLoadStored();
   restoreSession();
+  // Restore the saved analysis into QUARANTINE. It is present but not usable until the
+  // documents it was built from are loaded again and the fingerprint matches; if different
+  // documents arrive, it is discarded rather than paired with them.
+  try { if (typeof _anaRestore === 'function') _anaRestore(); } catch (e) {}
   if (typeof initSuites === 'function') initSuites();
   else switchTab(sessionStorage.getItem('srfed_active_tab') || 'bidnobid');
   if (typeof renderOnboard === 'function') renderOnboard();
@@ -20386,7 +20606,9 @@ function downloadBnaPdf() {
   footer();
   const nameRaw = String(intel.requirement_name || 'Opportunity').replace(/[\/\\:*?"<>|\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Opportunity';
   const fileDate = dateStr.replace(/,/g, '');
-  doc.save(nameRaw + ' BNA ' + fileDate + '.pdf');
+  // Lead with BNA so the report sorts and scans as a Bid/No-Bid document in a folder of
+  // mixed deliverables, rather than burying the type in the middle of the opportunity name.
+  doc.save('BNA ' + nameRaw + ' ' + fileDate + '.pdf');
 }
 
 
@@ -20487,6 +20709,8 @@ async function runOpportunityIntel() {
   window._bnaRfpContent = rfpContent;
   await extractOpportunityIntel(rfpContent, apiKey);
   if (typeof refreshBnaQaAvailability === 'function') refreshBnaQaAvailability();
+  // Persist the analysis, bound to the exact documents it was derived from.
+  try { if (typeof _anaSave === 'function') _anaSave(); } catch (e) {}
 }
 
 async function extractOpportunityIntel(docContent, apiKey) {
