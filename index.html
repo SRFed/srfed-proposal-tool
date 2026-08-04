@@ -3172,7 +3172,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '201';
+const APP_VERSION = '202';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -16772,18 +16772,47 @@ function _anaVerifyAgainstFiles() {
 // check would weaken the design by implying a protection that might not be applied.
 
 const OPP_BACKUP_KEY = 'srfed_prev_opportunity';
-function _oppHasData() {
-  try {
-    if (typeof rfpFiles !== 'undefined' && rfpFiles && rfpFiles.length) return true;
-    if (typeof companyFiles !== 'undefined' && companyFiles && companyFiles.some(function (f) { return !f._fromSP; })) return true;
-    if (typeof bnaFiles !== 'undefined' && bnaFiles && bnaFiles.length) return true;
-    if (typeof generatedDocs !== 'undefined' && generatedDocs && Object.keys(generatedDocs).length) return true;
-    if (typeof assumptions !== 'undefined' && assumptions && assumptions.length) return true;
-    if (typeof pricingModel !== 'undefined' && pricingModel && ((pricingModel.lcats && pricingModel.lcats.length) || (pricingModel.tasks && pricingModel.tasks.length) || pricingModel.gsaDecision != null)) return true;
-    if (['winTheme1','winTheme2','winTheme3','discrim1','discrim2','discrim3','discrim4','discrim5','additionalNotes'].some(function (id) { var e = document.getElementById(id); return e && e.value.trim(); })) return true;
-  } catch (e) {}
-  return false;
+// Every store that can hold opportunity state, enumerated ONCE.
+// _oppHasData() and the clear scopes both read this list. They used to be maintained
+// separately, which is how the analysis store ended up clearable but invisible to the
+// emptiness check — "Clear everything" then refused to run because it believed there was
+// nothing there, while Opportunity Details was on screen.
+function _oppStores() {
+  const has = (v) => !!(v && (Array.isArray(v) ? v.length : (typeof v === 'object' ? Object.keys(v).length : true)));
+  const ls = (k) => { try { return !!localStorage.getItem(k); } catch (e) { return false; } };
+  return [
+    { key: 'documents', label: 'loaded documents',
+      present: () => (typeof rfpFiles !== 'undefined' && has(rfpFiles))
+                  || (typeof bnaFiles !== 'undefined' && has(bnaFiles))
+                  || (typeof companyFiles !== 'undefined' && companyFiles && companyFiles.some(f => !f._fromSP)) },
+    { key: 'drafts', label: 'generated drafts',
+      present: () => (typeof generatedDocs !== 'undefined' && has(generatedDocs)) },
+    { key: 'analysis', label: 'opportunity analysis',
+      // In MEMORY or in STORAGE: after a reload the analysis is restored to memory, and
+      // before one it may only be on disk. Either counts as something to clear.
+      present: () => (typeof window !== 'undefined' && (window._lastBnaIntel || window._bnaOpp || window._anaRequirements))
+                  || (typeof cachedBriefing !== 'undefined' && cachedBriefing)
+                  || ls(_ANA_KEY) },
+    { key: 'pricing', label: 'pricing model',
+      present: () => (typeof pricingModel !== 'undefined' && pricingModel
+                      && ((pricingModel.lcats && pricingModel.lcats.length)
+                       || (pricingModel.tasks && pricingModel.tasks.length)
+                       || pricingModel.gsaDecision != null))
+                  || ls(PRICING_KEY) },
+    { key: 'strategy', label: 'win strategy and assumptions',
+      present: () => (typeof assumptions !== 'undefined' && has(assumptions))
+                  || ['winTheme1','winTheme2','winTheme3','discrim1','discrim2','discrim3','discrim4','discrim5','additionalNotes']
+                       .some(id => { const e = document.getElementById(id); return e && e.value.trim(); })
+                  || ls('srfed_session') },
+  ];
 }
+
+function _oppHasData() {
+  try { return _oppStores().some(s => { try { return !!s.present(); } catch (e) { return false; } }); }
+  catch (e) { return false; }
+}
+
+
 function _oppBarHtml(bottom) {
   return '<div class="opp-bar' + (bottom ? ' opp-bar-bottom' : '') + '" role="group" aria-label="Opportunity workspace controls">' +
     '<span class="opp-bar-label">\uD83D\uDCC1 Opportunity workspace</span>' +
