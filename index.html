@@ -2001,7 +2001,7 @@
           <div style="display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid #eef2f7">
             <div style="font-size:12px;color:var(--text)">
               <span style="display:inline-block;width:18px;color:var(--muted);font-weight:700">2</span>Blended with weakest critical factor (<span id="fitStepMinLabel">—</span>)
-              <div style="font-size:10px;color:var(--muted);margin-left:18px">0.55 × base + 0.45 × weakest critical</div>
+              <div id="fitStepBlendFormula" style="font-size:10px;color:var(--muted);margin-left:18px">weighted toward the whole picture, anchored by the weakest critical factor</div>
             </div>
             <div id="fitStepBlend" style="font-size:15px;font-weight:800;color:var(--blue);font-variant-numeric:tabular-nums">—</div>
           </div>
@@ -2010,7 +2010,7 @@
           <div style="display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid #eef2f7">
             <div style="font-size:12px;color:var(--text)">
               <span style="display:inline-block;width:18px;color:var(--muted);font-weight:700">3</span>Weakest-link ceiling <span id="fitStepCeilingTag" style="font-size:10px;font-weight:700;color:var(--muted)"></span>
-              <div style="font-size:10px;color:var(--muted);margin-left:18px">capped at weakest critical + 1.5</div>
+              <div id="fitStepCeilingFormula" style="font-size:10px;color:var(--muted);margin-left:18px">a genuinely weak critical factor caps the score</div>
             </div>
             <div id="fitStepCeiling" style="font-size:15px;font-weight:800;color:var(--muted);font-variant-numeric:tabular-nums">—</div>
           </div>
@@ -3172,7 +3172,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '200';
+const APP_VERSION = '201';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -17048,6 +17048,13 @@ window.addEventListener('DOMContentLoaded', () => {
   // "Reset pricing model" clears it when starting a new opportunity.)
   pricingLoadStored();
   restoreSession();
+  // Captions rendered FROM the constants, so they always describe the live formula.
+  try {
+    const _bf = document.getElementById('fitStepBlendFormula');
+    if (_bf) _bf.textContent = PX_FIT_BLEND.toFixed(2) + ' \u00d7 base + ' + (1 - PX_FIT_BLEND).toFixed(2) + ' \u00d7 weakest critical';
+    const _cf = document.getElementById('fitStepCeilingFormula');
+    if (_cf) _cf.textContent = 'capped at weakest critical + ' + PX_FIT_HEADROOM.toFixed(1);
+  } catch (e) {}
   // Restore the saved analysis into QUARANTINE. It is present but not usable until the
   // documents it was built from are loaded again and the fingerprint matches; if different
   // documents arrive, it is discarded rather than paired with them.
@@ -17707,6 +17714,13 @@ function bnaSpreadScore(x) {
 }
 
 // Build the decisive verdict from fit factors + scope coverage + gates.
+// The two tuning numbers for the fit score, named once. The derivation panel renders its
+// captions FROM these, so the explanation shown to the user cannot drift from the formula —
+// which is exactly what happened when v186 changed 0.55/1.5 to 0.70/3.0 and left the panel
+// describing the old arithmetic under a correct number.
+const PX_FIT_BLEND = 0.70;      // weight on the whole-picture weighted average
+const PX_FIT_HEADROOM = 3.0;    // how far above the weakest critical factor the score may reach
+
 function computeDecisiveVerdict() {
   const w = getEffectiveWeights();
   const opp = window._bnaOpp || {};
@@ -17741,8 +17755,8 @@ function computeDecisiveVerdict() {
   const criticalKeys = ['technical_capability', 'past_performance', 'scope_clarity'];
   const criticalScores = criticalKeys.map(k => bna_tier1_scores[k]).filter(v => v != null);
   const minCritical = criticalScores.length ? Math.min(...criticalScores) : base;
-  const blended = 0.70 * base + 0.30 * minCritical; // decisive blend — weighted toward the whole picture
-  const ceiling = Math.min(10, minCritical + 3.0);                // weakest-link cap: a genuinely BAD critical factor still caps the upside, a merely thin one does not
+  const blended = PX_FIT_BLEND * base + (1 - PX_FIT_BLEND) * minCritical; // decisive blend — weighted toward the whole picture
+  const ceiling = Math.min(10, minCritical + PX_FIT_HEADROOM);            // weakest-link cap: a genuinely BAD critical factor still caps the upside, a merely thin one does not
   const ceilingBinding = blended > ceiling;         // true when the cap (not the blend) is what limits the score
   let fit = Math.min(blended, ceiling);             // apply the weakest-link ceiling
   // Spread calibration pushes muddy-middle scores toward a clear decision. Skip it when the
@@ -21704,20 +21718,6 @@ function renderOpportunityIntel(intel, container) {
         // Sort alphabetically by LCAT name
         rows.sort((a, b) => a.lcat.localeCompare(b.lcat));
 
-        // Reconcile the per-role SCA flag against contract-level coverage. A role cannot
-        // be SCA-covered on a contract that is not, and when coverage was never
-        // established the flag is an inference rather than an extracted fact.
-        const _scaCov = _bnaScaCoverage(intel);
-        const _scaClaimed = rows.filter(r => r.is_sca === true || /^(y|true)/i.test(String(r.is_sca == null ? '' : r.is_sca))).length;
-        const _prov = _bnaLcatProvenance(intel);
-        const _scaCell = (v, cov) => {
-          const claimed = v === true || /^(y|true)/i.test(String(v == null ? '' : v));
-          if (!claimed) return scaBadge(v);
-          if (cov === 'yes') return scaBadge(v);
-          // claimed, but the contract is not established as SCA-covered
-          return '<span title="The solicitation does not establish Service Contract Act coverage \u2014 no Wage Determination is referenced. This flag is the analysis\u2019s own read of the occupation, not a stated requirement." '
-            + 'style="font-size:10px;font-weight:700;color:#9a3412;background:#ffedd5;border:1px solid #fdba74;border-radius:4px;padding:1px 5px;white-space:nowrap">SCA?\u00a0inferred</span>';
-        };
 
         if (rows.length === 0) {
           displayHtml = '<span style="color:var(--muted);font-style:italic">Not stated in documents</span>';
@@ -21729,6 +21729,23 @@ function renderOpportunityIntel(intel, container) {
             if (isSca === true  || isSca === 'true')  return `<span style="font-size:10px;font-weight:700;background:#fef9c3;border:1px solid #fde047;border-radius:4px;padding:1px 5px;color:#92400e;white-space:nowrap">SCA</span>`;
             if (isSca === false || isSca === 'false') return `<span style="font-size:10px;color:var(--muted)">No</span>`;
             return `<span style="font-size:11px;color:var(--muted)">—</span>`;
+          };
+
+          // Reconcile the per-role SCA flag against contract-level coverage. A role cannot
+          // be SCA-covered on a contract that is not, and when coverage was never
+          // established the flag is an inference rather than an extracted fact.
+          // Declared HERE, inside the same block as scaBadge: a closure created in the outer
+          // block cannot see scaBadge at all, which is what threw "scaBadge is not defined".
+          const _scaCov = _bnaScaCoverage(intel);
+          const _scaClaimed = rows.filter(r => r.is_sca === true || /^(y|true)/i.test(String(r.is_sca == null ? '' : r.is_sca))).length;
+          const _prov = _bnaLcatProvenance(intel);
+          const _scaCell = (v, cov) => {
+            const claimed = v === true || /^(y|true)/i.test(String(v == null ? '' : v));
+            if (!claimed) return scaBadge(v);
+            if (cov === 'yes') return scaBadge(v);
+            // claimed, but the contract is not established as SCA-covered
+            return '<span title="The solicitation does not establish Service Contract Act coverage \u2014 no Wage Determination is referenced. This flag is the analysis\u2019s own read of the occupation, not a stated requirement." '
+              + 'style="font-size:10px;font-weight:700;color:#9a3412;background:#ffedd5;border:1px solid #fdba74;border-radius:4px;padding:1px 5px;white-space:nowrap">SCA?\u00a0inferred</span>';
           };
 
           const rateBadge = (rate, isSca) => {
