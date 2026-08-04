@@ -3172,7 +3172,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '190';
+const APP_VERSION = '194';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -6758,6 +6758,81 @@ async function extractCompanyProfile(apiKey, companyDocContent, briefingContext)
 // one; otherwise runs a focused RFP read (scope + pricing fields) so the Pricing tab
 // can work standalone, before any proposal is generated. Either way it populates the
 // same cachedBriefing, so there's a single source of truth.
+// ── canonical shared facts ────────────────────────────────────────────────
+// The fields more than one extraction produces. The opportunity-details pass owns them.
+const _CANON_FACTS = [
+  { brief: 'estimated_ftes',        intel: 'fte_count',             label: 'FTE / level of effort' },
+  { brief: 'estimated_value',       intel: 'base_year_value',       label: 'base-period value' },
+  { brief: 'total_contract_value',  intel: 'total_contract_value',  label: 'total contract value' },
+  { brief: 'contract_type',         intel: 'contract_type',         label: 'contract type' },
+  { brief: 'period_of_performance', intel: 'period_of_performance', label: 'period of performance' },
+  { brief: 'sca_coverage',          intel: 'sca_coverage',          label: 'SCA coverage' },
+  { brief: 'set_aside',             intel: 'set_aside',             label: 'set-aside' },
+  { brief: 'naics_code',            intel: 'naics_code',            label: 'NAICS code' },
+];
+
+function _canonUseful(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return false;
+  return !/^(not stated|not specified|unknown|n\/?a|tbd|none|null)\b/i.test(s);
+}
+
+// Is this figure something the SOLICITATION said, or something the tool worked out?
+// It matters downstream: a derived value must never be presented as the Government's own
+// estimate, because it is ours.
+function _canonProvenance(v) {
+  return /^\s*\[inferred\]/i.test(String(v == null ? '' : v)) ? 'inferred' : 'stated';
+}
+
+// Overwrite the briefing's independently-derived values with the canonical ones.
+// Returns a record of what was taken over, so the change is reportable rather than silent.
+function _canonApplyToBriefing(briefing) {
+  const intel = (typeof window !== 'undefined') ? window._lastBnaIntel : null;
+  const out = { applied: [], kept: [], source: intel ? 'opportunity-details' : 'briefing-only', prov: {} };
+  if (!briefing) return out;
+  briefing._canonical = out;
+  if (!intel) {
+    // No analysis to inherit from. The briefing's own figures stand, and are labelled as
+    // its own so nothing downstream mistakes them for reconciled values.
+    _CANON_FACTS.forEach(f => { if (_canonUseful(briefing[f.brief])) { out.kept.push(f.label); out.prov[f.brief] = 'briefing'; } });
+    return out;
+  }
+  _CANON_FACTS.forEach(function (f) {
+    const cv = intel[f.intel];
+    if (!_canonUseful(cv)) {
+      // The owner has nothing usable, so whatever the briefing found stands.
+      if (_canonUseful(briefing[f.brief])) { out.kept.push(f.label); out.prov[f.brief] = 'briefing'; }
+      return;
+    }
+    const before = String(briefing[f.brief] == null ? '' : briefing[f.brief]).trim();
+    briefing[f.brief] = cv;
+    out.prov[f.brief] = _canonProvenance(cv);
+    // Only report a takeover where the two actually DISAGREED — that is the interesting case.
+    const after = String(cv).trim();
+    if (before && before.replace(/\s+/g, ' ') !== after.replace(/\s+/g, ' ')) {
+      out.applied.push({ label: f.label, was: before, now: after });
+    }
+  });
+  return out;
+}
+
+// One line for the user: which figures the pricing model is sizing to, and where each came from.
+function _canonSummaryLine(briefing) {
+  const c = briefing && briefing._canonical;
+  if (!c) return '';
+  if (c.source === 'briefing-only') {
+    return 'Figures read from the RFP on this tab. Analyze the opportunity on the Bid/No-Bid tab first and the two will be reconciled to a single set.';
+  }
+  const inf = Object.keys(c.prov).filter(k => c.prov[k] === 'inferred').length;
+  let s = 'Figures reconciled with the Bid/No-Bid analysis \u2014 both tabs are now using the same numbers.';
+  if (c.applied.length) {
+    s += ' ' + c.applied.length + ' differed and ' + (c.applied.length === 1 ? 'was' : 'were') + ' taken from the analysis: '
+       + c.applied.map(a => a.label + ' (' + a.was + ' \u2192 ' + a.now + ')').join('; ') + '.';
+  }
+  if (inf) s += ' ' + inf + ' of them ' + (inf === 1 ? 'is' : 'are') + ' derived rather than stated in the solicitation \u2014 marked [Inferred].';
+  return s;
+}
+
 async function ensureBriefing(apiKey) {
   if (typeof cachedBriefing !== 'undefined' && cachedBriefing) return cachedBriefing;
   if (!rfpFiles || rfpFiles.length === 0) throw new Error('No RFP/PWS documents are loaded. Add them on the Proposal tab (Step 4).');
@@ -6788,6 +6863,10 @@ async function ensureBriefing(apiKey) {
     `"pws_task_areas":["list EVERY distinct PWS task/section, prefixed with the PWS's own numbering, e.g. '2.1: Credit card reconciliation'"]}\n` +
     `Be exact. Do not invent an FTE count the solicitation does not give. When a workload / level-of-effort hours table IS given, base the FTEs on the BASE-YEAR hours column ONLY - never the base and option columns added together.`;
   const briefing = await callClaudeForJson(apiKey, [...blocks, { type: 'text', text: prompt }], 4000, 240000, 'Reading the PWS');
+  // The opportunity-details pass owns the facts both extractions produce. Applying it here
+  // means every consumer of cachedBriefing — the pricing model, every volume prompt, the
+  // compliance read — sees the same figures the Bid/No-Bid tab displays, by construction.
+  try { _canonApplyToBriefing(briefing); } catch (e) {}
   cachedBriefing = briefing;       // becomes the shared briefing
   return briefing;
 }
@@ -9368,8 +9447,17 @@ async function runGeneration() {
       `POC: ${briefing.agency_poc} | ${briefing.agency_poc_email} | ${briefing.agency_poc_phone}\n` +
       `Due: ${briefing.submission_date} | Contract: ${briefing.contract_type} | Period: ${briefing.period_of_performance}\n` +
       `Place: ${briefing.place_of_performance} | Set-aside: ${briefing.set_aside} | NAICS: ${briefing.naics}\n` +
-      `Government's estimated level of effort: ${briefing.estimated_ftes} | Government's estimated value: ${briefing.estimated_value}\n` +
-      `(These are the SOLICITATION'S OWN estimates, not this offer. Never present either figure as ${CLIENT_CONFIG.companyShortName}'s proposed staffing or price \u2014 the proposed figures come from the pricing model where one is supplied.)\n\n` +
+      (function () {
+        // A DERIVED figure is ours, not the Government's, and must not be described as the
+        // Government's estimate. The canonical layer records which is which.
+        const _pv = (briefing._canonical && briefing._canonical.prov) || {};
+        const _lbl = k => _pv[k] === 'inferred' ? 'Derived estimate (NOT stated in the solicitation)' : "Government's estimate";
+        return `${_lbl('estimated_ftes')} of level of effort: ${briefing.estimated_ftes} | ${_lbl('estimated_value')} of value: ${briefing.estimated_value}\n`
+          + `(Neither figure is this offer. Never present either as ${CLIENT_CONFIG.companyShortName}'s proposed staffing or price \u2014 the proposed figures come from the pricing model where one is supplied.`
+          + ((_pv.estimated_ftes === 'inferred' || _pv.estimated_value === 'inferred')
+              ? ` A figure marked "Derived estimate" was worked out by the analysis from the scope, not read from the documents \u2014 never state or imply that the solicitation gave it.` : '')
+          + `)\n\n`;
+      })() +
 
       `EVALUATION FACTORS (Section M):\n` +
       (briefing.evaluation_factors||[]).map(f =>
@@ -10310,7 +10398,7 @@ function buildPricingTotalTableOoxml() {
     const fmt = (typeof pricingFmt === 'function') ? pricingFmt : (x => '$' + Math.round(x || 0).toLocaleString());
     let out = _pxHeading('Table III-3. Total Evaluated Price by Period');
     const w3 = [4200, 1600, 1700, 1860];
-    let r3 = _pxHeaderRow(gsa ? ['Period', 'Term (months)', 'GSA Year', 'Price'] : ['Period', 'Term (months)', 'Escalation', 'Price'], w3);
+    let r3 = _pxHeaderRow(gsa ? ['Period', 'Term (months)', 'GSA Year', 'Price'] : ['Period', 'Term (months)', 'Labor Escalation %', 'Price'], w3);
     P.forEach((pp, i) => {
       const mid = gsa ? ('Year ' + pricingGsaScheduleYearForPeriod(i)) : (i === 0 ? '\u2014' : ((parseFloat(pp.escalation) || 0) + '%'));
       r3 += _pxRow([pp.name || ('Period ' + (i + 1)), String(pricingPeriodMonths(pp)), mid, fmt(pricingPeriodCost(i))], w3);
@@ -11139,6 +11227,8 @@ let pricingModel = {
   travel: { mode: 'none', method: 'lump', lumpBasis: 'perPeriod', lumpAmount: '', odcCategory: 'Travel & ODC', nte: '', travelers: '1', tripsPerYear: '', nightsPerTrip: '', airfare: '', lodgingRate: '', mieRate: '', localTransport: '', flatPerTrip: '', markup: 'passthrough', gaPct: '', notes: '' },  // Travel / ODCs. mode: none|nte|open; method: perdiem|flat; markup: passthrough|markup
   localityEnabled: false,          // #13: optional locality / state-burden add-on (SUTA/FUTA/state unemployment etc.), layered on top of fringe, per role. OFF by default.
   escalationMode: 'flat',          // #18: COLA defaults to "Same every year" (flat). #22: escalationFlat is defined here so flat mode never silently applies 0% on a fresh model.
+  odcEscalationMode: 'none',       // travel/ODC + materials escalation: 'none' | 'match' (use the labor rate) | 'flat' (own rate). Defaults to 'none' = today's behaviour, so no saved model changes price on upgrade.
+  odcEscalationFlat: '',           // the ODC-specific rate, used only when odcEscalationMode === 'flat'.
   escalationFlat: 3,               // one COLA rate compounding across every option period
 };
 let pricingWdFiles = [];           // uploaded Wage Determination file(s)
@@ -11348,6 +11438,40 @@ function pricingTotalHours() { return pricingModel.lcats.reduce((s, l) => s + pr
 function pricingRowCost(l) { return pricingRowHours(l.id) * pricingBilledRate(l, 0); }
 function pricingColCost(tid) { return pricingModel.lcats.reduce((s, l) => s + pricingCell(l.id, tid) * pricingBilledRate(l, 0), 0); }
 function pricingBaseTotal() { return pricingModel.lcats.reduce((s, l) => s + pricingRowCost(l), 0); }
+// ODC escalation, separate from labor. Labor tracks wage growth; travel tracks airfare and
+// per-diem, and a solicitation may cap one and not the other. Returns one compounding
+// multiplier per period, exactly like pricingMultipliers().
+function pricingOdcMultipliers() {
+  const M = pricingModel;
+  const mode = M.odcEscalationMode || 'none';
+  if (mode === 'match') return pricingMultipliers();
+  const out = [];
+  let m = 1;
+  const rate = (mode === 'flat') ? (parseFloat(M.odcEscalationFlat) || 0) : 0;
+  M.periods.forEach((p, i) => {
+    if (i > 0) m = m * (1 + rate / 100);
+    out.push(m);
+  });
+  return out;
+}
+
+// One line describing the ODC basis, for the UI, the Excel workbook and Volume III.
+function pricingOdcEscLabel() {
+  const M = pricingModel;
+  const mode = M.odcEscalationMode || 'none';
+  if (mode === 'match') {
+    const lm = M.escalationMode === 'flat' ? (parseFloat(M.escalationFlat) || 0) : null;
+    return lm != null ? ('matches labor (' + lm + '% per period)') : 'matches labor (per-period rates)';
+  }
+  if (mode === 'flat') return ((parseFloat(M.odcEscalationFlat) || 0) + '% per period');
+  return 'held flat (no escalation)';
+}
+
+function pricingSetOdcEsc(field, val) {
+  pricingModel[field] = val;
+  pricingRenderAll();
+}
+
 function pricingMultipliers() { const out = []; let m = 1; const _mode = pricingModel.escalationMode || 'perPeriod'; const _flat = parseFloat(pricingModel.escalationFlat); pricingModel.periods.forEach((p, i) => { if (i > 0) { const _e = (_mode === 'flat') ? (isNaN(_flat) ? 0 : _flat) : (parseFloat(p.escalation) || 0); m = m * (1 + _e / 100); } out.push(m); }); return out; }
 // Term length of a period in months (default a full year). Partial periods (e.g. a 3-month
 // base, or a 6-month option) scale their cost by months/12 — the matrix hours are a FULL YEAR.
@@ -11416,6 +11540,18 @@ function pricingRenderEscMode() {
   const btn = (m, lbl) => `<button onclick="pricingSetEscMode('${m}')" style="padding:5px 12px;font-size:12px;font-weight:700;border:1px solid ${mode === m ? 'var(--blue)' : 'var(--border)'};background:${mode === m ? 'var(--blue)' : 'white'};color:${mode === m ? '#fff' : 'var(--text)'};border-radius:6px;cursor:pointer">${lbl}</button>`;
   let flatInput = '';
   if (mode === 'flat') flatInput = `<div style="display:flex;align-items:center;gap:6px;margin-left:auto"><span style="font-size:11.5px;color:var(--muted)">Escalation, every option ${word}</span><input type="number" step="0.1" value="${pricingModel.escalationFlat != null && pricingModel.escalationFlat !== '' ? pricingModel.escalationFlat : ''}" onchange="pricingSetEscFlat(this.value)" placeholder="3" style="width:66px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:right"/><span style="font-size:12px;color:var(--muted)">%</span></div>`;
+  const _om = pricingModel.odcEscalationMode || 'none';
+  const _ob = (m, lbl, tip) => `<button title="${tip}" onclick="pricingSetOdcEsc('odcEscalationMode','${m}')" style="padding:4px 10px;font-size:11.5px;font-weight:700;border:1px solid ${_om === m ? 'var(--blue)' : 'var(--border)'};background:${_om === m ? 'var(--blue)' : '#fff'};color:${_om === m ? '#fff' : 'var(--text)'};border-radius:6px;cursor:pointer">${lbl}</button>`;
+  // Travel/ODC and materials escalate on their OWN rate: labor tracks wage growth, travel
+  // tracks airfare and per-diem, and a solicitation may cap one and not the other.
+  const odcBar = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#fff;border:1px dashed var(--border);border-radius:8px;padding:7px 10px;margin-top:8px">
+    <span style="font-size:11.5px;font-weight:700;color:var(--text)">Travel / ODC &amp; materials escalation</span>
+    ${_ob('none','Held flat','No escalation on non-labor \u2014 year-five travel is priced at year-one rates. This is the tool\u2019s long-standing behaviour.')}
+    ${_ob('match','Match labor','Escalate non-labor at the same rate as labor.')}
+    ${_ob('flat','Own rate','Escalate non-labor at its own rate, separate from labor.')}
+    ${_om === 'flat' ? `<div style="display:flex;align-items:center;gap:5px"><input type="number" step="0.1" min="0" value="${pricingModel.odcEscalationFlat != null ? pricingModel.odcEscalationFlat : ''}" onchange="pricingSetOdcEsc('odcEscalationFlat',this.value)" placeholder="0" style="width:66px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/><span style="font-size:11.5px;color:var(--muted)">% per ${pricingPeriodWord()}</span></div>` : ''}
+    <span style="font-size:11px;color:var(--muted);margin-left:auto">Currently: ${pricingOdcEscLabel()}</span>
+  </div>`;
   el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:8px 10px"><span style="font-size:11.5px;font-weight:700;color:var(--text)">COLA</span>${btn('flat', 'Same every ' + word)}${btn('perPeriod', 'Different per ' + word)}${flatInput}</div><div style="font-size:11px;color:var(--muted);margin-top:5px">${mode === 'flat' ? 'One rate compounds across every option ' + word + '.' : 'Set each option ' + word + '’s % on its row below.'} Negative values are allowed (a decrease) — but aren’t the default.</div>`;
 }
 function pricingRenderDiscount() {
@@ -11489,7 +11625,8 @@ function pricingMaterialsByPeriod() {
   const amt = parseFloat(m.amount) || 0;
   const ga = 1 + (parseFloat(m.gaPct) || 0) / 100;
   const base = (m.basis === 'total') ? P.map(() => (P.length ? amt / P.length : 0)) : P.map(() => amt);
-  return base.map(x => x * ga);
+  const _om = pricingOdcMultipliers();
+  return base.map((x, i) => x * ga * (_om[i] || 1));
 }
 function pricingMaterialsTotal() { const bp = pricingMaterialsByPeriod(); return { total: bp.reduce((s, x) => s + x, 0), byPeriod: bp }; }
 
@@ -11535,7 +11672,11 @@ function pricingClinPeriodCost(taskIds, i) {
 function pricingClinPeriodHours(taskIds, i) {
   const M = pricingModel; const all = !taskIds || !taskIds.length; let h = 0;
   M.lcats.forEach(l => M.tasks.forEach(t => { if (all || taskIds.includes(t.id)) h += pricingPeriodCellHours(l.id, t.id, i); }));
-  return h;
+  // The matrix holds a FULL-YEAR rate of effort; a period bills its own fraction of it.
+  // pricingClinPeriodCost already scales, and the schedule divides amount by hours to get a
+  // unit price — so leaving hours unscaled understated the billing rate on every T&M line
+  // of a partial period while the extended amount still tied out.
+  return h * pricingPeriodFraction(M.periods[i]);
 }
 function pricingClinLineAmount(line, pd) {
   if (line.scope === 'custom') {
@@ -12459,6 +12600,29 @@ async function pricingPullBriefing() {
   }
   pricingApplyBriefing(b);
   pricingStampOpp();                          // #32: seeded from THIS opportunity's analysis
+  // Say which figures this model is sized to and where each came from, so a reconciliation
+  // between the two tabs is visible rather than silent.
+  try {
+    const _line = (typeof _canonSummaryLine === 'function') ? _canonSummaryLine(b) : '';
+    if (_line) showStatus('info', 'Pricing sized to the analyzed opportunity', _line);
+  } catch (e) {}
+}
+
+// AUTO-PULL: once an opportunity has been analyzed there is nothing for the user to decide
+// here — the pricing model should already be sized to it. This runs only when the model is
+// still EMPTY, so it can never overwrite work in progress, and it is silent when there is
+// nothing to pull.
+let _pxAutoPullDone = false;
+async function pricingMaybeAutoPull() {
+  if (_pxAutoPullDone) return false;
+  if (!pricingModel || pricingModel.tasks.length || pricingModel.lcats.length) return false;  // never clobber
+  const haveAnalysis = (typeof cachedBriefing !== 'undefined' && cachedBriefing)
+                    || (typeof window !== 'undefined' && window._lastBnaIntel);
+  if (!haveAnalysis) return false;
+  if (!(typeof cachedBriefing !== 'undefined' && cachedBriefing)) return false;   // no re-read, no API call
+  _pxAutoPullDone = true;
+  try { await pricingPullBriefing(); } catch (e) { _pxAutoPullDone = false; return false; }
+  return true;
 }
 
 function pricingApplyBriefing(b) {
@@ -12972,8 +13136,19 @@ async function pricingAutoBuildStructure() {
       const _bnaHpf = (window._lastBnaIntel && window._lastBnaIntel._staffingReconciliation &&
                        window._lastBnaIntel._staffingReconciliation.govHpf) || 0;
       if (_bnaHpf > 0 && parseFloat(pricingModel.hoursPerFte) !== _bnaHpf) {
+        const _wasHpf = parseFloat(pricingModel.hoursPerFte) || 1912;
         pricingModel.hoursPerFte = _bnaHpf;
+        pricingModel._hpfChangedFrom = _wasHpf;      // rendered on the tab, not just logged
         try { log('Hours basis set to ' + _bnaHpf.toLocaleString() + ' hrs/FTE-year to match the solicitation\u2019s workload table.', 'warn'); } catch (e) {}
+        // This divisor sets every FTE figure on the tab. The user is told, and told what to
+        // do about it, rather than finding an 8% shift they cannot account for.
+        try {
+          if (typeof showStatus === 'function') showStatus('warn', 'Hours basis changed to match the solicitation',
+            'The solicitation\u2019s workload table implies a ' + _bnaHpf.toLocaleString() + '-hour work year, not your usual '
+            + _wasHpf.toLocaleString() + '. Every FTE figure on the Pricing tab now divides by ' + _bnaHpf.toLocaleString()
+            + ', so staffing reads as whole FTEs instead of fractions. Rates and dollars are unchanged. '
+            + 'Change it back in Step 1 if the Government meant something else.');
+        } catch (e) {}
       }
       pricingModel.statedFteTotal = Math.round((_govWorkload.reduce((s, r) => s + r.hours, 0) / defaultHpf()) * 100) / 100;
     }
@@ -14183,24 +14358,84 @@ function pricingTravelAnnual() {
 // Travel/ODC dollars per period. Lump: a flat $ per period (or a total split evenly across periods).
 // Detailed (per-diem/flat): full-year estimate × each period's term, + optional G&A, proportionally
 // scaled down if it would exceed the NTE.
-function pricingTravelByPeriod() {
-  const t = pricingTravel();
+// ── non-labor streams ─────────────────────────────────────────────────────
+// Travel and ODC are separate cost streams. Each carries its own escalation basis and its
+// own wrap treatment, because in practice they rarely share either.
+function pricingOdc() {
+  if (!pricingModel.odc) pricingModel.odc = { mode: 'none', method: 'lump', lumpBasis: 'perPeriod',
+    lumpAmount: '', odcCategory: 'Other Direct Costs', markup: 'passthrough', gaPct: '',
+    nte: '', escMode: 'inherit', escFlat: '', notes: '' };
+  if (!pricingModel.odc.markup) pricingModel.odc.markup = 'passthrough';
+  return pricingModel.odc;
+}
+
+// Per-stream escalation. 'inherit' uses the model-wide non-labor setting, so a model saved
+// before streams existed keeps behaving exactly as it did.
+function _pxStreamMult(s) {
+  const M = pricingModel;
+  const mode = (s && s.escMode) || 'inherit';
+  if (mode === 'inherit') return pricingOdcMultipliers();
+  if (mode === 'match') return pricingMultipliers();
+  const out = []; let m = 1;
+  const rate = (mode === 'flat') ? (parseFloat(s.escFlat) || 0) : 0;
+  M.periods.forEach((p, i) => { if (i > 0) m = m * (1 + rate / 100); out.push(m); });
+  return out;
+}
+
+function _pxStreamEscLabel(s) {
+  const mode = (s && s.escMode) || 'inherit';
+  if (mode === 'inherit') return 'follows the non-labor default \u2014 ' + pricingOdcEscLabel();
+  if (mode === 'match') return 'matches labor';
+  if (mode === 'flat') return ((parseFloat(s.escFlat) || 0) + '% per period');
+  return 'held flat (no escalation)';
+}
+
+// G&A / wrap on a non-labor stream. Applies on EVERY method — it used to be applied only on
+// the per-diem build-up, so the toggle was inert on a lump sum.
+function _pxStreamGa(s) {
+  return (s && s.markup === 'markup') ? (parseFloat(s.gaPct) || 0) : 0;
+}
+
+// One stream, per period: amount x wrap x escalation, then its own NTE ceiling.
+function _pxStreamByPeriod(s, annualFn) {
   const P = pricingModel.periods || [];
-  if (!t || t.mode === 'none') return P.map(() => 0);
-  if ((t.method || 'lump') === 'lump') {
-    const amt = parseFloat(t.lumpAmount) || 0;
-    if ((t.lumpBasis || 'perPeriod') === 'total') { const n = P.length || 1; return P.map(() => amt / n); }
-    return P.map(() => amt);
+  if (!s || s.mode === 'none') return P.map(() => 0);
+  const mult = _pxStreamMult(s);
+  const ga = 1 + _pxStreamGa(s) / 100;
+  let arr;
+  if ((s.method || 'lump') === 'lump') {
+    const amt = parseFloat(s.lumpAmount) || 0;
+    if ((s.lumpBasis || 'perPeriod') === 'total') {
+      // A stated CONTRACT TOTAL is a total: escalation redistributes it toward the later
+      // periods but never changes the sum the user typed. Wrap DOES raise it, because a
+      // total the user typed is a cost figure and G&A sits on top of cost.
+      const w = P.map((p, i) => mult[i] || 1);
+      const wsum = w.reduce((a, b) => a + b, 0) || (P.length || 1);
+      arr = w.map(x => amt * (x / wsum) * ga);
+    } else {
+      arr = P.map((p, i) => amt * ga * (mult[i] || 1));
+    }
+  } else {
+    const annual = (typeof annualFn === 'function') ? annualFn() : 0;
+    arr = P.map((p, i) => annual * pricingPeriodFraction(p) * ga * (mult[i] || 1));
   }
-  const annual = pricingTravelAnnual();
-  const markup = (t.markup === 'markup');
-  const ga = markup ? (parseFloat(t.gaPct) || 0) : 0;
-  let arr = P.map(p => annual * pricingPeriodFraction(p) * (1 + ga / 100));
-  const estimate = arr.reduce((s, x) => s + x, 0);
-  const nte = _parseMoney(t.nte) || 0;
-  if (t.mode === 'nte' && nte > 0 && estimate > nte) { const sc = nte / estimate; arr = arr.map(x => x * sc); }
+  const estimate = arr.reduce((a, b) => a + b, 0);
+  const nte = _parseMoney(s.nte) || 0;
+  if (s.mode === 'nte' && nte > 0 && estimate > nte) { const sc = nte / estimate; arr = arr.map(x => x * sc); }
   return arr;
 }
+
+function pricingTravelOnlyByPeriod() { return _pxStreamByPeriod(pricingTravel(), pricingTravelAnnual); }
+function pricingOdcOnlyByPeriod()    { return _pxStreamByPeriod(pricingOdc(), null); }
+
+// The COMBINED non-labor travel+ODC figure. Every existing consumer calls this, so splitting
+// the streams cannot cause one of them to be dropped from a total anywhere.
+function pricingTravelByPeriod() {
+  const a = pricingTravelOnlyByPeriod(), b = pricingOdcOnlyByPeriod();
+  return (pricingModel.periods || []).map((p, i) => (a[i] || 0) + (b[i] || 0));
+}
+
+
 function pricingTravelTotal() {
   const t = pricingTravel();
   if (!t || t.mode === 'none') return { raw: 0, estimate: 0, total: 0, annual: 0, capped: false, nte: 0, ga: 0, markup: false };
@@ -14217,6 +14452,65 @@ function pricingTravelTotal() {
   const estimate = raw * (1 + ga / 100);
   const nte = _parseMoney(t.nte) || 0;
   return { raw, estimate, total, annual, capped: (t.mode === 'nte' && nte > 0 && estimate > nte), nte, ga, markup };
+}
+
+// Escalation buttons for a named non-labor stream.
+function _pxEscBtn(stream, mode, label) {
+  const s = (stream === 'travel') ? pricingTravel() : pricingOdc();
+  const cur = s.escMode || 'inherit';
+  const on = cur === mode;
+  const setter = (stream === 'travel') ? 'pricingSetTravel' : 'pricingSetOdc';
+  return '<button onclick="' + setter + "('escMode','" + mode + "')" + '" style="padding:4px 9px;font-size:11px;font-weight:700;border:1px solid '
+    + (on ? 'var(--blue)' : 'var(--border)') + ';background:' + (on ? 'var(--blue)' : '#fff') + ';color:'
+    + (on ? '#fff' : 'var(--text)') + ';border-radius:6px;cursor:pointer">' + label + '</button>';
+}
+
+function pricingSetOdc(field, val) {
+  if (['lumpAmount', 'nte', 'escFlat', 'gaPct'].indexOf(field) >= 0) val = _pxCleanNum(val);
+  pricingOdc()[field] = val;
+  pricingRenderAll();
+}
+function pricingSetOdcMode(mode) { pricingOdc().mode = mode; pricingRenderAll(); }
+
+// The ODC stream, rendered beneath travel. Deliberately a LUMP-only stream: a per-diem
+// build-up is a travel concept, and an ODC line is an amount with a treatment.
+function _pxOdcBlock() {
+  const o = pricingOdc();
+  const esc = (typeof pricingEsc === 'function') ? pricingEsc : (x => String(x == null ? '' : x));
+  const mbtn = (m, lbl, tip) => '<button title="' + tip + '" onclick="pricingSetOdcMode(\'' + m + '\')" style="padding:4px 10px;font-size:11.5px;font-weight:700;border:1px solid '
+    + ((o.mode || 'none') === m ? 'var(--blue)' : 'var(--border)') + ';background:' + ((o.mode || 'none') === m ? 'var(--blue)' : '#fff')
+    + ';color:' + ((o.mode || 'none') === m ? '#fff' : 'var(--text)') + ';border-radius:6px;cursor:pointer">' + lbl + '</button>';
+  const gbtn = (v, lbl) => '<label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;margin-right:14px"><input type="radio" name="pOdcMarkup" '
+    + ((o.markup || 'passthrough') === v ? 'checked' : '') + ' onchange="pricingSetOdc(\'markup\',\'' + v + '\')" style="width:auto"/> ' + lbl + '</label>';
+  let inner;
+  if ((o.mode || 'none') === 'none') {
+    inner = '<div style="font-size:11px;color:var(--muted);margin-top:4px">No separate ODC line. Travel above covers it, or switch this on for costs that price differently from travel \u2014 licences, shipping, equipment.</div>';
+  } else {
+    const per = pricingOdcOnlyByPeriod();
+    inner = '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:6px">'
+      + '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Cost category</label>'
+      + '<input value="' + esc(o.odcCategory || 'Other Direct Costs') + '" onchange="pricingSetOdc(\'odcCategory\',this.value)" style="width:170px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px"/></div>'
+      + '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Amount</label>'
+      + '<input type="text" inputmode="decimal" value="' + _pxFmtMoney(o.lumpAmount) + '" onchange="pricingSetOdc(\'lumpAmount\',this.value)" style="width:110px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/></div>'
+      + '<div style="font-size:12px">'
+      + '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;margin-right:12px"><input type="radio" name="pOdcBasis" ' + ((o.lumpBasis || 'perPeriod') === 'perPeriod' ? 'checked' : '') + ' onchange="pricingSetOdc(\'lumpBasis\',\'perPeriod\')" style="width:auto"/> Per period</label>'
+      + '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="pOdcBasis" ' + ((o.lumpBasis || 'perPeriod') === 'total' ? 'checked' : '') + ' onchange="pricingSetOdc(\'lumpBasis\',\'total\')" style="width:auto"/> Total</label>'
+      + '</div></div>'
+      + '<div style="font-size:12px;margin:8px 0 2px">Markup: ' + gbtn('passthrough', 'Pass-through (no markup)') + gbtn('markup', 'Apply G&amp;A') + '</div>'
+      + ((o.markup === 'markup') ? '<div style="margin:4px 0"><label style="font-size:11px;color:var(--muted)">G&amp;A %</label> <input type="number" min="0" step="any" value="' + esc(String(o.gaPct == null ? '' : o.gaPct)) + '" onchange="pricingSetOdc(\'gaPct\',this.value)" style="width:80px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/></div>' : '')
+      + '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:8px 0 2px;padding-top:8px;border-top:1px dashed var(--border)">'
+      + '<span style="font-size:11.5px;font-weight:700">ODC escalation</span>'
+      + _pxEscBtn('odc', 'inherit', 'Default') + _pxEscBtn('odc', 'none', 'Held flat')
+      + _pxEscBtn('odc', 'match', 'Match labor') + _pxEscBtn('odc', 'flat', 'Own rate')
+      + ((o.escMode === 'flat') ? '<input type="number" step="0.1" min="0" value="' + esc(String(o.escFlat == null ? '' : o.escFlat)) + '" onchange="pricingSetOdc(\'escFlat\',this.value)" placeholder="0" style="width:64px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/><span style="font-size:11.5px;color:var(--muted)">%</span>' : '')
+      + '<span style="font-size:11px;color:var(--muted);margin-left:auto">' + _pxStreamEscLabel(o) + '</span></div>'
+      + ((o.mode === 'nte') ? '<div style="margin:6px 0"><label style="font-size:11px;color:var(--muted)">ODC NTE ceiling (total)</label> <input type="text" inputmode="decimal" value="' + _pxFmtMoney(o.nte) + '" onchange="pricingSetOdc(\'nte\',this.value)" style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/></div>' : '')
+      + '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px">' + esc(o.odcCategory || 'Other Direct Costs') + ', all periods: <strong>' + pricingFmt(per.reduce((a, b) => a + b, 0)) + '</strong></div>';
+  }
+  return '<div style="margin-top:12px;padding-top:10px;border-top:2px solid var(--border)">'
+    + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-size:12.5px;font-weight:700">Other Direct Costs (separate from travel)</span>'
+    + mbtn('none', 'None', 'No separate ODC line.') + mbtn('nte', 'NTE (capped)', 'A ceiling the total cannot exceed.') + mbtn('open', 'Open (estimate)', 'An estimate with no ceiling.')
+    + '</div>' + inner + '</div>';
 }
 
 function pricingRenderTravel() {
@@ -14244,11 +14538,20 @@ function pricingRenderTravel() {
       inputs = `<div style="display:flex;gap:14px;flex-wrap:wrap;margin:8px 0 4px">${catSel}${num('tripsPerYear', 'Trips / year')}${num('travelers', 'Travelers / trip')}`;
       if (method === 'perdiem') inputs += `${num('nightsPerTrip', 'Nights / trip')}${num('airfare', 'Airfare (RT)', '$')}${num('lodgingRate', 'Lodging / night', '$')}${num('mieRate', 'M&IE / day', '$')}${num('localTransport', 'Local transp. / trip', '$')}`;
       else inputs += num('flatPerTrip', 'Flat $ / trip', '$');
-      inputs += `</div><div style="font-size:12px;margin:6px 0 2px">Markup: ${gradio('passthrough', 'Pass-through (no markup)')}${gradio('markup', 'Apply G&amp;A')}</div>${calc.markup ? `<div style="margin:4px 0">${num('gaPct', 'G&amp;A %', '')}</div>` : ''}<div style="font-size:11px;color:var(--muted)">Per trip: <strong>${pricingFmt(perTrip)}</strong> &middot; annual <strong>${pricingFmt(calc.annual)}</strong>. ${method === 'perdiem' ? 'Pre-filled with GSA standard CONUS per-diem; edit per opportunity.' : 'Flat allowance per traveler per trip.'}</div>`;
+      inputs += `</div><div style="font-size:11px;color:var(--muted)">Per trip: <strong>${pricingFmt(perTrip)}</strong> &middot; annual <strong>${pricingFmt(calc.annual)}</strong>. ${method === 'perdiem' ? 'Pre-filled with GSA standard CONUS per-diem; edit per opportunity.' : 'Flat allowance per traveler per trip.'}</div>`;
     }
-    const nteRow = t.mode === 'nte' ? `<div style="margin:6px 0">${num('nte', 'Travel/ODC NTE ceiling (total)', '$', 120)}</div>` : '';
+    // Wrap on EVERY method. It used to be rendered (and applied) only on the per-diem
+    // build-up, so a lump-sum traveller could tick "Apply G&A" and nothing happened.
+    const wrapRow = `<div style="font-size:12px;margin:8px 0 2px">Markup: ${gradio('passthrough', 'Pass-through (no markup)')}${gradio('markup', 'Apply G&amp;A')}</div>${(t.markup === 'markup') ? `<div style="margin:4px 0">${num('gaPct', 'G&amp;A %', '')}</div>` : ''}`;
+    const escRow = `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:8px 0 2px;padding-top:8px;border-top:1px dashed var(--border)">
+      <span style="font-size:11.5px;font-weight:700">Travel escalation</span>
+      ${_pxEscBtn('travel','inherit','Default')}${_pxEscBtn('travel','none','Held flat')}${_pxEscBtn('travel','match','Match labor')}${_pxEscBtn('travel','flat','Own rate')}
+      ${(t.escMode === 'flat') ? `<input type="number" step="0.1" min="0" value="${t.escFlat != null ? t.escFlat : ''}" onchange="pricingSetTravel('escFlat',this.value)" placeholder="0" style="width:64px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/><span style="font-size:11.5px;color:var(--muted)">%</span>` : ''}
+      <span style="font-size:11px;color:var(--muted);margin-left:auto">${_pxStreamEscLabel(t)}</span>
+    </div>`;
+    const nteRow = t.mode === 'nte' ? `<div style="margin:6px 0">${num('nte', 'Travel NTE ceiling (total)', '$', 120)}</div>` : '';
     const cappedNote = calc.capped ? `<div style="font-size:11px;color:var(--warn);margin-top:6px">Estimate ${pricingFmt(calc.estimate)} exceeds the NTE &mdash; capped at ${pricingFmt(calc.nte)}.</div>` : '';
-    body = `${methodRow}${inputs}${nteRow}<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px">All periods: <strong>${pricingFmt(calc.total)}</strong></div>${cappedNote}<div style="font-size:11px;color:var(--muted);margin-top:6px">Appears in the workbook as one <strong>${pricingEsc(t.odcCategory || 'Travel & ODC')}</strong> line per period &mdash; its own category, separate from labor, so it can be pivoted independently.</div>`;
+    body = `${methodRow}${inputs}${wrapRow}${escRow}${nteRow}<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px">Travel, all periods: <strong>${pricingFmt(pricingTravelOnlyByPeriod().reduce((a,b)=>a+b,0))}</strong></div>${cappedNote}${_pxOdcBlock()}<div style="font-size:11px;color:var(--muted);margin-top:6px">Appears in the workbook as one <strong>${pricingEsc(t.odcCategory || 'Travel & ODC')}</strong> line per period &mdash; its own category, separate from labor, so it can be pivoted independently.</div>`;
   } else {
     body = `<div style="font-size:11px;color:var(--muted);margin-top:4px">No travel/ODC on this opportunity. Switch to NTE or Open to add a travel/ODC line.</div>`;
   }
@@ -14619,6 +14922,9 @@ function pricingBuildWorkbook() {
       forScope: (scope, i) => numFor(lines.findIndex(l => l.scope === scope), i)
     };
   })();
+  // Labor and non-labor now escalate on separate rates, so the workbook names the basis on
+  // every non-labor row rather than leaving the reader to assume the labor rate applied.
+  const _odcBasisLabel = 'Non-labor \u00b7 escalation ' + ((typeof pricingOdcEscLabel === 'function') ? pricingOdcEscLabel() : 'held flat');
   const det = [['Category', 'Labor Category / Item', (gsa ? 'GSA LCAT' : 'Base Rate ($/hr)'), 'Task / CLIN Code', 'Task / CLIN Name', 'Period', 'Term (mo)', 'Hours', 'FTE', (gsa ? 'Net Rate ($/hr)' : 'Fully Burdened Rate ($/hr)'), (gsa ? 'GSA Year' : 'Wrap Factor'), 'Price ($)', 'Paid Rate ($/hr)', 'Salary ($/yr)', 'Fully Burdened Rate pre-disc ($/hr)', 'Discount (%)', 'COLA (%)', 'Pinned Anchor', 'Gov Price pre-disc ($)'].concat(_locOn ? ['Employer Tax (%)'] : []).concat(['CLIN'])];
   const _alab = (l) => { const b = l && l.rateBasis; return b === 'paid' ? 'Company Paid Hourly Rate' : b === 'loaded' ? 'Fully Burdened Hourly Rate' : b === 'salary' ? 'Company Paid Annualized Salary' : b === 'annual' ? 'Fully Burdened Annualized Salary' : '—'; };
   const _detMeta = {}, _rowsLP = {}, _rowsTP = {};
@@ -14665,10 +14971,29 @@ function pricingBuildWorkbook() {
   const _odcCat = (M.travel && M.travel.odcCategory) || 'Travel & ODC';
   P.forEach((p, i) => {
     const amt = _odcByP[i] || 0; if (amt <= 0) return;
-    det.push([_odcCat, _odcCat, '', '(n/a)', _odcCat + ' (estimate / NTE)', pNames[i], pricingPeriodMonths(p), '', '', '', '', xv(amt), '', '', '', '', '', '', ''].concat(_locOn ? [''] : []).concat([_clinDim ? _clinDim.forScope('travelodc', i) : '']));
+    {
+      // Travel and ODC are separate streams with their own escalation and wrap, so the
+      // workbook lists them separately with the basis stated on each row rather than
+      // collapsing them into one line the reader cannot decompose.
+      const _tOnly = (typeof pricingTravelOnlyByPeriod === 'function') ? pricingTravelOnlyByPeriod() : [];
+      const _oOnly = (typeof pricingOdcOnlyByPeriod === 'function') ? pricingOdcOnlyByPeriod() : [];
+      const _tS = (typeof pricingTravel === 'function') ? pricingTravel() : null;
+      const _oS = (typeof pricingOdc === 'function') ? pricingOdc() : null;
+      const _wrapTxt = s => (s && s.markup === 'markup') ? ('G&A ' + (parseFloat(s.gaPct) || 0) + '%') : 'pass-through (no markup)';
+      const _basis = s => 'Non-labor \u00b7 wrap ' + _wrapTxt(s) + ' \u00b7 escalation ' + ((typeof _pxStreamEscLabel === 'function') ? _pxStreamEscLabel(s) : 'held flat');
+      const _tAmt = _tOnly[i] || 0, _oAmt = _oOnly[i] || 0;
+      if (_tAmt > 0) {
+        const _c = (_tS && _tS.odcCategory) || 'Travel';
+        det.push([_c, _c, '', '(n/a)', _c + ' (estimate / NTE)', pNames[i], pricingPeriodMonths(p), '', '', '', '', xv(_tAmt), '', '', '', '', '', _basis(_tS), ''].concat(_locOn ? [''] : []).concat([_clinDim ? _clinDim.forScope('travelodc', i) : '']));
+      }
+      if (_oAmt > 0) {
+        const _c = (_oS && _oS.odcCategory) || 'Other Direct Costs';
+        det.push([_c, _c, '', '(n/a)', _c + ' (estimate / NTE)', pNames[i], pricingPeriodMonths(p), '', '', '', '', xv(_oAmt), '', '', '', '', '', _basis(_oS), ''].concat(_locOn ? [''] : []).concat([_clinDim ? _clinDim.forScope('travelodc', i) : '']));
+      }
+    }
   });
   const _matByP = (typeof pricingMaterialsByPeriod === 'function') ? pricingMaterialsByPeriod() : [];
-  P.forEach((p, i) => { const amt = _matByP[i] || 0; if (amt <= 0) return; det.push(['Materials', 'Materials', '', '(n/a)', 'Materials (estimate / NTE)', pNames[i], pricingPeriodMonths(p), '', '', '', '', xv(amt), '', '', '', '', '', '', ''].concat(_locOn ? [''] : []).concat([_clinDim ? _clinDim.forScope('materials', i) : ''])); });
+  P.forEach((p, i) => { const amt = _matByP[i] || 0; if (amt <= 0) return; det.push(['Materials', 'Materials', '', '(n/a)', 'Materials (estimate / NTE)', pNames[i], pricingPeriodMonths(p), '', '', '', '', xv(amt), '', '', '', '', '', _odcBasisLabel, ''].concat(_locOn ? [''] : []).concat([_clinDim ? _clinDim.forScope('materials', i) : ''])); });
   const wsDet = XLSX.utils.aoa_to_sheet(det);
   const _rtColStart = _locOn ? 3 : 2;   // non-GSA rate columns on the Rate Table begin after the optional tax col
   for (let _r = 1; _r < det.length; _r++) {
@@ -15035,9 +15360,17 @@ function pricingValueTieOut() {
   const r = (typeof window !== 'undefined' && window._lastBnaIntel) ? window._lastBnaIntel._staffingReconciliation : null;
   const hpf = defaultHpf() || 1912;
   const hrs = pricingTotalHours();
+  // Total FTE is the SUM of the per-role figures, each on that role's own hours basis —
+  // never total hours over one company-wide divisor. With mixed bases the two disagree,
+  // and Step 4 shows the per-role numbers, so the aggregate has to be built from them.
+  const _fteSum = pricingModel.lcats.reduce((s, l) => s + pricingRowFte(l), 0);
+  // The basis actually in force across the model, for anything that reports one.
+  const _effHpf = _fteSum > 0 ? (hrs / _fteSum) : hpf;
+  const _mixedBasis = pricingModel.lcats.some(l => pricingHpf(l) !== hpf);
   const laborBase = pricingBaseTotal();
   const baseYear = pricingBaseYearPrice();
-  const out = { baseYear: baseYear, total: pricingTotalPrice(), fte: hrs / hpf, hpf: hpf, hours: hrs,
+  const out = { baseYear: baseYear, total: pricingTotalPrice(), fte: _fteSum, hpf: hpf,
+                effHpf: _effHpf, mixedBasis: _mixedBasis, hours: hrs,
                 blended: hrs > 0 ? (laborBase / hrs) : 0, hasStated: false, status: 'none' };
   // Period STRUCTURE does not depend on a Government-stated value, so it is set
   // before the early return. Consumers used to guard with `t ? t.baseMonths : ...`
@@ -16028,7 +16361,17 @@ function buildPricingContextForVol3() {
   const _tt = pricingTravelTotal();
   if (_tt.total > 0) {
     const _tv = pricingTravel();
-    s += `\nTRAVEL / ODCs: This effort includes ${_tv.mode === 'nte' ? 'a not-to-exceed travel CLIN' : 'reimbursable travel'}. Estimated travel is ${pricingFmt(_tt.total)} across all periods (${pricingFmt(_tt.annual)} per year), based on ${_tv.tripsPerYear || '0'} trip(s)/year for ${_tv.travelers || '1'} traveler(s)${_tv.method === 'perdiem' ? ` using GSA CONUS per-diem (lodging ${pricingFmtC(parseFloat(_tv.lodgingRate)||0)}/night, M&IE ${pricingFmtC(parseFloat(_tv.mieRate)||0)}/day, airfare ${pricingFmtC(parseFloat(_tv.airfare)||0)}/round-trip)` : ` at a flat ${pricingFmtC(parseFloat(_tv.flatPerTrip)||0)}/trip`}. ${_tt.markup ? `Travel is burdened with ${_tt.ga}% G&A (raw ${pricingFmt(_tt.raw)} plus G&A markup).` : `Travel is billed as a pass-through cost with no markup.`}${_tt.capped ? ` The estimate is capped at the stated NTE of ${pricingFmt(_tt.nte)}.` : ''} The Total Contract Value including travel is ${pricingFmt(pricingGrandTotal() + _tt.total)}. Present travel as a separate CLIN/line from labor and provide this basis of estimate in the price narrative.\n`;
+    s += `\nTRAVEL / ODCs: This effort includes ${_tv.mode === 'nte' ? 'a not-to-exceed travel CLIN' : 'reimbursable travel'}. Estimated travel is ${pricingFmt(_tt.total)} across all periods (${pricingFmt(_tt.annual)} per year), based on ${_tv.tripsPerYear || '0'} trip(s)/year for ${_tv.travelers || '1'} traveler(s)${_tv.method === 'perdiem' ? ` using GSA CONUS per-diem (lodging ${pricingFmtC(parseFloat(_tv.lodgingRate)||0)}/night, M&IE ${pricingFmtC(parseFloat(_tv.mieRate)||0)}/day, airfare ${pricingFmtC(parseFloat(_tv.airfare)||0)}/round-trip)` : ` at a flat ${pricingFmtC(parseFloat(_tv.flatPerTrip)||0)}/trip`}. ${(_tv.markup === 'markup') ? `Travel is burdened with ${parseFloat(_tv.gaPct) || 0}% G&A.` : `Travel is billed as a pass-through cost with no markup.`} Travel escalation ${(typeof _pxStreamEscLabel === 'function') ? _pxStreamEscLabel(_tv) : 'held flat'}.${(function(){
+      // ODCs are a separate stream with their own wrap and escalation, so the narrative
+      // states both treatments rather than implying travel's applies to everything.
+      try {
+        const _o = pricingOdc();
+        const _oArr = pricingOdcOnlyByPeriod();
+        const _oTot = _oArr.reduce((a,b)=>a+b,0);
+        if (!(_oTot > 0)) return '';
+        return ` Separately, ${_o.odcCategory || 'other direct costs'} total ${pricingFmt(_oTot)} across all periods, ${(_o.markup === 'markup') ? `burdened with ${parseFloat(_o.gaPct) || 0}% G&A` : 'billed as a pass-through cost with no markup'}, escalation ${_pxStreamEscLabel(_o)}. Travel and ODCs are priced as separate cost streams and are not interchangeable.`;
+      } catch (e) { return ''; }
+    })()}${_tt.capped ? ` The estimate is capped at the stated NTE of ${pricingFmt(_tt.nte)}.` : ''} The Total Contract Value including travel is ${pricingFmt(pricingGrandTotal() + _tt.total)}. Present travel as a separate CLIN/line from labor and provide this basis of estimate in the price narrative.\n`;
   }
   return s;
 }
@@ -16076,6 +16419,13 @@ function initSuites() {
   switchTab(tab);
 }
 function switchTab(name) {
+  // Opening Pricing on an already-analyzed opportunity pulls it in automatically, so the
+  // user is not asked to press a button whose answer is already known. Guarded to an empty
+  // model and to an analysis that is already in memory, so it never costs an API call and
+  // never overwrites anything.
+  if (name === 'pricing' && typeof pricingMaybeAutoPull === 'function') {
+    setTimeout(function () { try { pricingMaybeAutoPull(); } catch (e) {} }, 250);
+  }
   // Remember the Proposal tab's scroll position so "Back to Proposal" can return to it.
   const _prevPane = document.querySelector('.tab-pane.active');
   if (_prevPane && _prevPane.id === 'pane-proposal') _proposalScrollY = window.scrollY || window.pageYOffset || 0;
