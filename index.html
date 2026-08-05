@@ -260,6 +260,11 @@
     transition: width 0.4s ease, background-color 0.4s ease;
     background: var(--success);
   }
+  /* Hours run to the hundreds; a one-at-a-time stepper is useless and its arrows steal the
+     width the digits need, which is what made centred figures look off-centre. */
+  .px-hours-cell::-webkit-outer-spin-button,
+  .px-hours-cell::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .px-hours-cell { -moz-appearance: textfield; appearance: textfield; text-align: center; }
   .token-bar-fill.warn   { background: #f59e0b; }
   .token-bar-fill.danger { background: #ef4444; }
   /* #2: PROVISIONAL. Until every file behind a row has had its real text measured, the row is
@@ -3174,7 +3179,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '205';
+const APP_VERSION = '206';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -12593,6 +12598,11 @@ async function pricingPullBriefing() {
 let _pxAutoPullDone = false;
 async function pricingMaybeAutoPull() {
   if (_pxAutoPullDone) return false;
+  // An explicit clear must not be undone by the convenience that repopulates an empty model.
+  // The clear sets this marker immediately before the reload that carries it out.
+  try {
+    if (window._oppClearedThisLoad || sessionStorage.getItem('opp_flash')) { _pxAutoPullDone = true; return false; }
+  } catch (e) {}
   if (!pricingModel || pricingModel.tasks.length || pricingModel.lcats.length) return false;  // never clobber
   const haveAnalysis = (typeof cachedBriefing !== 'undefined' && cachedBriefing)
                     || (typeof window !== 'undefined' && window._lastBnaIntel);
@@ -14081,7 +14091,7 @@ function pricingRenderMatrix() {
         return;
       }
       h += `<td style="padding:1px;border:1px solid var(--border);background:${zero ? '#f1f5f9' : '#ffffff'}">` +
-        `<input type="number" min="0" step="1" value="${v > 0 ? v : 0}" onfocus="this.select()" oninput="pricingSetHours('${l.id}','${t.id}',this.value);pricingCellPaint(this)" style="width:42px;padding:3px 2px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;text-align:center;background:transparent;color:${zero ? 'var(--muted)' : 'var(--text)'}"/></td>`;
+        `<input class="px-hours-cell" type="number" min="0" step="1" value="${v > 0 ? v : 0}" onfocus="this.select()" oninput="pricingSetHours('${l.id}','${t.id}',this.value);pricingCellPaint(this)" style="width:52px;padding:3px 4px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;text-align:center;background:transparent;color:${zero ? 'var(--muted)' : 'var(--text)'}"/></td>`;
     });
     h += `<td id="prt-hours-${l.id}" style="padding:4px 8px;border:1px solid var(--border);text-align:center;background:#f0f9ff;font-weight:600">${pricingRowHours(l.id).toLocaleString()}</td>`;
     h += `<td id="prt-fte-${l.id}" style="padding:4px 8px;border:1px solid var(--border);text-align:center;background:#f0f9ff">${pricingRowFte(l).toFixed(2)}</td>`;
@@ -17264,6 +17274,10 @@ window.addEventListener('DOMContentLoaded', () => {
     var _oppFlash = sessionStorage.getItem('opp_flash');
     if (_oppFlash) {
       sessionStorage.removeItem('opp_flash');
+      // Remember it: this boot code runs BEFORE the deferred auto-pull, so reading
+      // sessionStorage there would always find the marker already consumed and the clear
+      // would be silently undone by the repopulate.
+      window._oppClearedThisLoad = (_oppFlash === 'cleared' || _oppFlash === 'factory');
       if (_oppFlash === 'cleared') showStatus('success', 'New opportunity started', 'Workspace cleared. Use "Restore previous" on any tab to bring the last opportunity back.');
       else if (_oppFlash === 'restored') showStatus('success', 'Previous opportunity restored', 'Your last cleared opportunity is back \u2014 re-upload its files if you need them.');
     }
@@ -19353,10 +19367,14 @@ function renderConstrainedDetect(data) {
     ? '<div style="margin-top:12px;font-size:12.5px;line-height:1.6;color:var(--text);background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:11px 13px"><span style="font-weight:700">Solve plan:</span> ' + esc(String(data.solve_plan)) + '</div>' : '';
   const oosHtml = oos
     ? '<div style="margin-top:12px;font-size:12.5px;line-height:1.6;color:#991b1b;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:11px 13px"><strong>\u26A0 Out of scope:</strong> ' + esc(String(data.feasibility_note || 'A fixed total with a blank labor mix cannot be reverse-solved.')) + '</div>' : '';
-  const solveBtn = (nSolve > 0)
-    ? '<button id="constrainedSolveBtn" onclick="runConstrainedSolve()" style="padding:9px 18px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">Solve the blank stage' + (nSolve === 1 ? '' : 's') + '</button>' : '';
+  // ALWAYS offered. Solving the gaps and applying the sheet are the same operation, and a
+  // fully-populated sheet still has to be APPLIED or the constraints never exist. Gating this
+  // on nSolve meant the most complete sheets were the ones silently discarded.
+  const solveBtn = '<button id="constrainedSolveBtn" onclick="runConstrainedSolve()" style="padding:9px 18px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">'
+    + (nSolve > 0 ? ('Solve the blank stage' + (nSolve === 1 ? '' : 's') + ' and apply') : 'Apply this sheet to pricing')
+    + '</button>';
   const pwsBtn = '<button id="constrainedPwsBtn" onclick="runConstrainedPwsCheck()" style="padding:9px 18px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">Check the sheet against the PWS</button>';
-  const noSolveNote = (nSolve === 0) ? '<p style="margin:10px 0 0;font-size:11.5px;color:var(--muted)">Every stage is already populated \u2014 nothing to solve, but you can still check it against the PWS.</p>' : '';
+  const noSolveNote = (nSolve === 0) ? '<p style="margin:10px 0 0;font-size:11.5px;color:var(--muted)">Every stage is already populated, so there is nothing to derive \u2014 but you still need to <strong>apply</strong> it, which loads your labor categories, FTEs, rates and hours into the pricing model and pins them for auto-build.</p>' : '';
   const nextHtml = oos ? '' :
     '<div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">' + solveBtn + pwsBtn + '</div>' + noSolveNote
     + '<div id="constrainedSolveProgress" style="display:none;margin-top:12px"></div>'
@@ -19527,7 +19545,22 @@ function _constrainedPwsContext() {
   add('Required clearance', o.required_clearance);
   add('Required certifications', o.required_certifications);
   add('Key personnel', b.key_personnel);
-  add('Required staffing / FTEs', (o.fte_count != null && o.fte_count !== '') ? o.fte_count : b.estimated_ftes);
+  // Label by PROVENANCE. A figure the tool inferred is not a requirement, and calling it one
+  // makes the checker flag the user's own correct sizing as non-compliant.
+  (function () {
+    const raw = (o.fte_count != null && o.fte_count !== '') ? o.fte_count : b.estimated_ftes;
+    const s = String(raw == null ? '' : raw).trim();
+    if (!s) return;
+    if (/^\s*\[(inferred|proposed)\]/i.test(s)) {
+      bits.push('Staffing / FTEs: the solicitation does NOT state a required staffing level. '
+        + 'This tool derived a figure of ' + s.replace(/^\s*\[[^\]]*\]\s*/, '') + ' as a starting point only. '
+        + 'It is NOT a requirement: do NOT report a conflict, a non-compliance, or a deviation because the '
+        + 'priced staffing differs from it. Where the solicitation leaves level of effort to the offeror, any '
+        + 'defensible staffing level is compliant.');
+    } else {
+      bits.push('Required staffing / FTEs (stated in the solicitation): ' + s);
+    }
+  })();
   add('Key capabilities required', o.key_capabilities || o.key_capabilities_needed);
   add('Period of performance', o.period_of_performance || b.period_structure);
   add('DCAA-approved accounting required', o.required_dcaa ? 'yes' : '');
