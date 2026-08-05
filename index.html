@@ -3179,7 +3179,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '206';
+const APP_VERSION = '207';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -7485,7 +7485,16 @@ function proposalPullRfpFromBna() {
   const beforeCo = companyFiles.length;
   if (haveCo) addFilesToArray(bnaCompanyFiles.slice(), companyFiles, 'fileListCompany');
   const addedCo = companyFiles.length - beforeCo;
-  if (addedRfp || addedCo) {
+  // The empty solicitation/RFP box is what actually blocks the user, and it is invisible:
+  // uploaded files do not survive the page reload that "Clear pricing" and "Restore previous"
+  // both trigger, while SharePoint company/past-performance docs auto-reload — so the user
+  // lands with a full company column and an empty RFP column and no idea why. Say so plainly
+  // instead of claiming everything is "already loaded".
+  if (rfpFiles.length === 0) {
+    const coPart = addedCo ? ('Pulled ' + addedCo + ' company / past-performance file' + (addedCo > 1 ? 's' : '') + ' into Step 4. ') : '';
+    showStatus('warn', 'Solicitation documents not loaded',
+      coPart + 'No RFP / PWS / solicitation documents are loaded on either tab \u2014 uploaded files can\'t survive the page reload that "Clear pricing" and "Restore previous" both trigger (browsers can\'t save uploaded files). Re-drop your solicitation documents in the "RFP / PWS / Solicitation Documents" box above before you analyze or generate.');
+  } else if (addedRfp || addedCo) {
     const parts = [];
     if (addedRfp) parts.push(addedRfp + ' RFP file' + (addedRfp > 1 ? 's' : ''));
     if (addedCo)  parts.push(addedCo + ' company / past-performance file' + (addedCo > 1 ? 's' : ''));
@@ -14090,7 +14099,7 @@ function pricingRenderMatrix() {
           `<span style="display:inline-block;font-size:10px;color:#64748b;line-height:20px">\u2013</span></td>`;
         return;
       }
-      h += `<td style="padding:1px;border:1px solid var(--border);background:${zero ? '#f1f5f9' : '#ffffff'}">` +
+      h += `<td style="padding:1px;border:1px solid var(--border);text-align:center;background:${zero ? '#f1f5f9' : '#ffffff'}">` +
         `<input class="px-hours-cell" type="number" min="0" step="1" value="${v > 0 ? v : 0}" onfocus="this.select()" oninput="pricingSetHours('${l.id}','${t.id}',this.value);pricingCellPaint(this)" style="width:52px;padding:3px 4px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;text-align:center;background:transparent;color:${zero ? 'var(--muted)' : 'var(--text)'}"/></td>`;
     });
     h += `<td id="prt-hours-${l.id}" style="padding:4px 8px;border:1px solid var(--border);text-align:center;background:#f0f9ff;font-weight:600">${pricingRowHours(l.id).toLocaleString()}</td>`;
@@ -19492,7 +19501,7 @@ async function runConstrainedSolve() {
     show('Solve failed: ' + (e && e.message ? e.message : e), true);
   } finally {
     pxProgEnd('constrainedSolveProgress');
-    if (btn) { btn.disabled = false; btn.textContent = 'Solve the blank stages'; }
+    if (btn) { btn.disabled = false; btn.textContent = (function () { const d = window._constrainedIntake, s = (d && d.stages) || {}, K = ['pws_tasks', 'lcats', 'gsa_mapping', 'ftes', 'pricing']; const nF = K.filter(function (k) { return (s[k] || {}).status === 'populated'; }).length; return (5 - nF) > 0 ? ('Solve the blank stage' + ((5 - nF) === 1 ? '' : 's') + ' and apply') : 'Apply this sheet to pricing'; })(); }
   }
 }
 
@@ -19508,14 +19517,36 @@ function renderConstrainedSolve(a) {
   };
   const notes = (a && a.notes && String(a.notes).trim())
     ? '<div style="margin-top:6px;font-size:12px;line-height:1.55;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:9px 11px"><strong>Note:</strong> ' + esc(String(a.notes)) + '</div>' : '';
+  // A compact, deterministic summary of what actually landed in the model — the model's own
+  // preserved/solved/assumptions prose ran to dozens of lines nobody reads. The detail is
+  // still available on demand, but the default is the one line a user needs.
+  const _lc = (typeof pricingModel !== 'undefined' && pricingModel.lcats) ? pricingModel.lcats : [];
+  const _nLc = _lc.length;
+  const _totFte = _lc.reduce(function (s, l) { const f = parseFloat(l && l.fte); return s + (isFinite(f) ? f : 0); }, 0);
+  const _nRated = _lc.filter(function (l) { return parseFloat(l && l.baseRate) > 0; }).length;
+  const _nTasks = (typeof pricingModel !== 'undefined' && pricingModel.tasks) ? pricingModel.tasks.length : 0;
+  const _fteTxt = _totFte.toFixed(_totFte % 1 ? 1 : 0);
+  const _sumBits = [
+    _nLc + ' labor categor' + (_nLc === 1 ? 'y' : 'ies'),
+    _fteTxt + ' FTE total',
+    'rates carried for ' + _nRated + ' of ' + _nLc,
+    'hours allocated across ' + _nTasks + ' PWS task' + (_nTasks === 1 ? '' : 's')
+  ];
+  const _rateGap = (_nRated < _nLc)
+    ? '<div style="margin-top:6px;font-size:12px;color:#92400e">' + (_nLc - _nRated) + ' role' + ((_nLc - _nRated) === 1 ? '' : 's') + ' came in without a rate \u2014 use \u2728 <strong>Recommend rates</strong> in Step 4 to fill them.</div>'
+    : '';
+  const _detailInner = list('Carried from your sheet', a.preserved, '#166534') + list('Solved', a.solved, 'var(--info-text)') + list('Assumptions', a.assumptions, '#6b7280');
+  const _detail = _detailInner
+    ? '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--muted)">What was carried, solved, and assumed</summary><div style="margin-top:8px">' + _detailInner + '</div></details>'
+    : '';
   results.innerHTML =
     '<div style="border:1px solid #86efac;background:#f0fdf4;border-radius:8px;padding:12px 14px">' +
-      '<div style="font-size:13px;font-weight:800;color:#166534;margin-bottom:8px">\u2713 Solved \u2014 loaded into the pricing model below</div>' +
-      list('Carried from your sheet', a.preserved, '#166534') +
-      list('Solved', a.solved, 'var(--info-text)') +
-      list('Assumptions', a.assumptions, '#6b7280') +
+      '<div style="font-size:13px;font-weight:800;color:#166534;margin-bottom:4px">\u2713 Applied \u2014 loaded into the pricing model below</div>' +
+      '<div style="font-size:12.5px;color:var(--text);line-height:1.55">' + esc(_sumBits.join(' \u00b7 ')) + '.</div>' +
+      _rateGap +
+      '<p style="margin:8px 0 0;font-size:11.5px;color:var(--muted)">This is now built into the pricing steps below \u2014 review Step 4 (rates) and Step 5 (hours), then it exports to Excel and flows into Volume III as usual. <strong>You don\'t need to run Auto-build</strong> \u2014 it would rebuild the structure from scratch and discard the values pinned from your sheet. Fixed rates were carried verbatim; nothing was invented.</p>' +
+      _detail +
       notes +
-      '<p style="margin:8px 0 0;font-size:11.5px;color:var(--muted)">Review and adjust the completed labor \u00d7 task structure in the pricing steps below \u2014 then it exports to Excel and flows into Volume III as usual. Fixed rates were carried verbatim; nothing was invented.</p>' +
     '</div>';
   results.style.display = 'block';
   const step = document.getElementById('pricingStep2') || document.getElementById('pricingStep1');
@@ -19616,6 +19647,32 @@ async function runConstrainedPwsCheck() {
   }
 }
 
+// Deterministic staffing reconciliation for the PWS check: the sheet's total FTE (from the
+// solved sheet, or the applied model) against the tool's BNA figure, WITH provenance — a
+// derived figure is a comparison, a solicitation-stated one is a requirement. Surfaces the
+// quantitative crux (e.g. sheet 3 FTE vs derived 2) that the qualitative LLM pass omitted,
+// without re-flagging the user's own defensible sizing as a non-compliance.
+function _constrainedFteRecon() {
+  let sheetFte = null;
+  const sl = window._constrainedSolveLast;
+  if (sl && Array.isArray(sl.labor_mix) && sl.labor_mix.length) {
+    sheetFte = sl.labor_mix.reduce(function (s, m) { const f = parseFloat(m && m.fte); return s + (isFinite(f) ? f : 0); }, 0);
+  } else if (typeof pricingModel !== 'undefined' && pricingModel.lcats && pricingModel.lcats.length) {
+    sheetFte = pricingModel.lcats.reduce(function (s, l) { const f = parseFloat(l && l.fte); return s + (isFinite(f) ? f : 0); }, 0);
+  }
+  const b = (typeof cachedBriefing !== 'undefined' && cachedBriefing) ? cachedBriefing : {};
+  const o = (window._bnaOpp) ? window._bnaOpp : {};
+  const raw = (o.fte_count != null && o.fte_count !== '') ? o.fte_count : b.estimated_ftes;
+  const rs = String(raw == null ? '' : raw).trim();
+  let toolFte = null, toolDerived = false, solStated = false;
+  if (rs) {
+    const num = parseFloat(rs.replace(/[^0-9.]/g, ''));
+    toolFte = isFinite(num) ? num : null;
+    if (/^\s*\[(inferred|proposed)\]/i.test(rs)) toolDerived = true; else solStated = true;
+  }
+  return { sheetFte: sheetFte, toolFte: toolFte, toolDerived: toolDerived, solStated: solStated };
+}
+
 function renderConstrainedPws(data) {
   const results = document.getElementById('constrainedPwsResults');
   if (!results) return;
@@ -19655,7 +19712,26 @@ function renderConstrainedPws(data) {
       '</div>';
   }).join('');
 
-  results.innerHTML = '<div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px">Pricing vs. PWS</div>' + head + summary + body;
+  const _rec = _constrainedFteRecon();
+  let recon = '';
+  if (_rec.sheetFte != null && _rec.sheetFte > 0) {
+    const _sTxt = _rec.sheetFte.toFixed(_rec.sheetFte % 1 ? 1 : 0);
+    let _line = 'Your sheet prices <strong>' + _sTxt + ' FTE</strong>.';
+    if (_rec.toolFte != null) {
+      const _tTxt = _rec.toolFte.toFixed(_rec.toolFte % 1 ? 1 : 0);
+      const _d = _rec.sheetFte - _rec.toolFte;
+      const _dTxt = (_d > 0 ? '+' : '') + _d.toFixed(Math.abs(_d) % 1 ? 1 : 0);
+      if (_rec.solStated) {
+        _line += ' The solicitation states <strong>' + _tTxt + ' FTE</strong> \u2014 a difference of ' + _dTxt + ' FTE. A stated Government staffing level is a requirement: reconcile it, or justify the difference in the narrative.';
+      } else {
+        _line += ' The tool\u2019s BNA sizing derived <strong>' + _tTxt + ' FTE</strong> as a starting point \u2014 a difference of ' + _dTxt + ' FTE. That figure is <strong>not</strong> a Government requirement; where the solicitation leaves level of effort to the offeror, your sheet\u2019s staffing is what governs. This is a comparison, not a non-compliance.';
+      }
+    } else {
+      _line += ' The solicitation does not state a required staffing level, so your sheet\u2019s figure is what governs \u2014 there is nothing to reconcile it against.';
+    }
+    recon = '<div style="margin-bottom:10px;font-size:12.5px;line-height:1.6;color:var(--text);background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:11px 13px"><div style="font-weight:800;font-size:11px;letter-spacing:.03em;color:#1e40af;text-transform:uppercase;margin-bottom:3px">Staffing reconciliation</div>' + _line + '</div>';
+  }
+  results.innerHTML = '<div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px">Pricing vs. PWS</div>' + recon + head + summary + body;
   results.style.display = 'block';
 }
 
