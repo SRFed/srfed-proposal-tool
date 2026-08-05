@@ -2189,6 +2189,7 @@
         <label id="constrainedUploadBtn" style="font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:7px;padding:9px 16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px">Upload pricing spreadsheet<input type="file" id="constrainedFile" accept=".xlsx,.xls,.csv" onchange="constrainedFileChosen(event)" style="display:none"/></label>
         <span id="constrainedFileName" style="font-size:12px;color:var(--muted)"></span>
       </div>
+      <div id="constrainedDetectProgress" style="display:none;margin-top:12px"></div>
       <div id="constrainedStatus" style="display:none;font-size:13px;color:var(--muted);margin-top:12px"></div>
       <div id="constrainedResults" style="display:none;margin-top:14px"></div>
     </div>
@@ -3173,7 +3174,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '203';
+const APP_VERSION = '205';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -12631,10 +12632,14 @@ function pricingApplyBriefing(b) {
     : [];
   if (_wbl.length) {
     pricingModel.statedWorkloadByLcat = _wbl;
+    // This path reads the SOLICITATION's own workload table, so the provenance is known
+    // rather than inferred. Recorded explicitly so auto-build never has to guess it.
+    pricingModel.workloadSource = 'government';
     pricingModel.fteSource = 'stated';
     pricingModel.statedFteTotal = Math.round((_wbl.reduce((s, r) => s + r.hours, 0) / defaultHpf()) * 100) / 100;
   } else {
     pricingModel.statedWorkloadByLcat = [];
+    pricingModel.workloadSource = null;
   }
   // Period-of-performance start (drives GSA year selection). Prefer the briefing; fall back to the
   // analyzed opportunity's pop_start_date (strip an [Inferred]/[GovEst] prefix) so the schedule year
@@ -12828,8 +12833,8 @@ async function pricingParseWd() {
       function (p) {
         const n = p.items || 0;
         pxProgMark('pricingWdProgress', null,
-          (n > 0 ? (n + ' occupation' + (n === 1 ? '' : 's') + ' read') : 'Extracting the occupation table\u2026')
-          + ' \u00b7 ' + p.chars.toLocaleString('en-US') + ' characters received');
+          (n > 0 ? ('Read ' + n + ' occupation' + (n === 1 ? '' : 's') + ' so far\u2026')
+                 : 'Extracting the occupation table\u2026'));
       },
       /"wage"\s*:/g);
     const occ = Array.isArray(parsed && parsed.occupations) ? parsed.occupations : [];
@@ -13059,12 +13064,125 @@ function pricingRenderGate() {
 // ── AI structural auto-build ────────────────────────────────────────────────
 let pricingAutoBuildLast = null;   // transient: last analysis, for the results panel
 
+// ── reverse-solve constraints ─────────────────────────────────────────────
+// Which stages did the user pin by uploading a sheet? The detect pass already worked this
+// out; auto-build was ignoring it.
+function _pxFixedStages() {
+  const d = (typeof window !== 'undefined') ? window._constrainedIntake : null;
+  const st = (d && d.stages) || {};
+  const on = k => (st[k] || {}).status === 'populated';
+  return { pws_tasks: on('pws_tasks'), lcats: on('lcats'), gsa_mapping: on('gsa_mapping'),
+           ftes: on('ftes'), pricing: on('pricing'),
+           any: ['pws_tasks','lcats','gsa_mapping','ftes','pricing'].some(on) };
+}
+
+// Everything the user may have pinned, captured BEFORE the rebuild so it can be restored
+// after. pricingApplyAutoBuild replaces lcats/hours/mask outright.
+function _pxSnapshotConstraints() {
+  const M = pricingModel;
+  return {
+    lcats: (M.lcats || []).map(l => ({
+      name: l.name, gsaLcat: l.gsaLcat, advertised: l.advertised, hpf: l.hpf,
+      baseRate: l.baseRate, rateInput: l.rateInput, rateBasis: l.rateBasis,
+      rateStatus: l.rateStatus, scaCovered: l.scaCovered, wdWage: l.wdWage,
+    })),
+    tasks: (M.tasks || []).map(t => ({ id: t.id, code: t.code, name: t.name })),
+    hours: JSON.parse(JSON.stringify(M.hours || {})),
+    ids: (M.lcats || []).map(l => l.id),
+  };
+}
+
+const _pxNorm = s => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+// Re-assert the pinned values on top of whatever the build produced. This is what makes the
+// constraint a guarantee rather than a request the model may decline.
+function _pxReassertConstraints(snap, fixed) {
+  const M = pricingModel;
+  if (!snap || !fixed || !fixed.any) return { restored: [], added: [] };
+  const restored = [], added = [];
+
+  // A pinned LABOR CATEGORY LIST means every role on the sheet must survive the rebuild.
+  if (fixed.lcats) {
+    snap.lcats.forEach(function (s) {
+      if (!String(s.name || '').trim()) return;
+      const hit = M.lcats.find(l => _pxNorm(l.name) === _pxNorm(s.name));
+      if (!hit) {
+        // The build dropped a role the user had fixed — put it back rather than lose it.
+        const nl = { id: (typeof _prId === 'function' ? _prId('l_') : ('l_' + Math.random().toString(36).slice(2, 8))),
+                     name: s.name, gsaLcat: s.gsaLcat || '', advertised: s.advertised || 0,
+                     hpf: s.hpf || '', baseRate: s.baseRate || 0, rateInput: s.rateInput || '',
+                     rateBasis: s.rateBasis || 'paid', rateStatus: s.rateStatus || '',
+                     scaCovered: !!s.scaCovered, wdWage: s.wdWage || '', evaluated: false };
+        M.lcats.push(nl);
+        M.hours[nl.id] = {};
+        added.push(s.name);
+      }
+    });
+    if (snap.lcats.length) restored.push('labor categories');
+  }
+
+  // Field-level pins, matched by name so a reordered build still lands correctly.
+  const byName = {};
+  snap.lcats.forEach(s => { if (String(s.name || '').trim()) byName[_pxNorm(s.name)] = s; });
+  let nFte = 0, nGsa = 0, nRate = 0;
+  M.lcats.forEach(function (l) {
+    const s = byName[_pxNorm(l.name)];
+    if (!s) return;
+    if (fixed.ftes && s.advertised !== '' && s.advertised != null) { l.advertised = s.advertised; nFte++; }
+    if (fixed.gsa_mapping && s.gsaLcat) { l.gsaLcat = s.gsaLcat; nGsa++; }
+    if (fixed.pricing && (s.rateInput !== '' && s.rateInput != null)) {
+      l.rateInput = s.rateInput; l.baseRate = s.baseRate;
+      l.rateBasis = s.rateBasis || 'paid';
+      // A rate the user supplied is theirs: mark it entered so nothing downstream treats it
+      // as a proposal to be overwritten.
+      l.rateStatus = 'entered';
+      nRate++;
+    }
+  });
+  if (nFte) restored.push(nFte + ' FTE figure' + (nFte === 1 ? '' : 's'));
+  if (nGsa) restored.push(nGsa + ' Schedule mapping' + (nGsa === 1 ? '' : 's'));
+  if (nRate) restored.push(nRate + ' rate' + (nRate === 1 ? '' : 's'));
+
+  // A pinned PWS-task list means the tasks and the hours against them survive too.
+  if (fixed.pws_tasks && snap.tasks.length) {
+    snap.tasks.forEach(function (st) {
+      const hit = M.tasks.find(t => _pxNorm((t.code || '') + (t.name || '')) === _pxNorm((st.code || '') + (st.name || '')));
+      if (!hit) M.tasks.push({ id: st.id, code: st.code, name: st.name });
+    });
+    // restore hours for role/task pairs that still exist on both sides
+    let nH = 0;
+    Object.keys(snap.hours || {}).forEach(function (oldLid) {
+      const s = snap.lcats[snap.ids.indexOf(oldLid)];
+      if (!s) return;
+      const l = M.lcats.find(x => _pxNorm(x.name) === _pxNorm(s.name));
+      if (!l) return;
+      Object.keys(snap.hours[oldLid] || {}).forEach(function (tid) {
+        const v = parseFloat(snap.hours[oldLid][tid]) || 0;
+        if (v <= 0) return;
+        if (!M.tasks.some(t => t.id === tid)) return;
+        M.hours[l.id] = M.hours[l.id] || {};
+        M.hours[l.id][tid] = v;
+        nH++;
+      });
+    });
+    if (nH) restored.push(nH + ' hour allocation' + (nH === 1 ? '' : 's'));
+  }
+  return { restored: restored, added: added };
+}
+
 async function pricingAutoBuildStructure() {
   const apiKey = getApiKey();
   if (!apiKey) { alert('Enter your Anthropic API key on the Proposal tab (Step 2) first.'); return; }
   if (pricingModel.gsaDecision == null) { alert('Answer the GSA Schedule step (Step 1) first.'); return; }
   const gsa = pricingIsGsa();
   if (gsa && !(pricingModel.gsaRateCard || []).length) { alert('Read or add your GSA Schedule rates in Step 1 first, so roles can be mapped to Schedule LCATs.'); return; }
+  // No confirmation and no warning: a reverse-solved sheet is a PARTIAL constraint set, and
+  // auto-build's job is to build the rest of the matrix around it. The pinned values are
+  // snapshotted here and re-asserted after the build, so they are never at risk.
+  const _existing = (pricingModel.lcats || []).filter(l => String(l.name || '').trim());
+  const _exFte = _existing.reduce((s, l) => s + (parseFloat(l.advertised) || 0), 0);
+  const _fixed = _pxFixedStages();
+  const _snap = _pxSnapshotConstraints();
   const btn = document.getElementById('pricingAutoBuildBtn');
   const setBusy = (busy, msg) => { if (btn) { btn.disabled = busy; btn.innerHTML = busy ? ('<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> ' + (msg || 'Working…')) : '\u2728 Auto-build structure'; } };
   setBusy(true, 'Thinking\u2026');
@@ -13096,12 +13214,16 @@ async function pricingAutoBuildStructure() {
     let _govWorkload = (Array.isArray(pricingModel.statedWorkloadByLcat) && pricingModel.statedWorkloadByLcat.length)
       ? pricingModel.statedWorkloadByLcat.map(r => ({ lcat: String((r && r.lcat) || '').trim(), hours: parseFloat(r && r.hours) || 0 })).filter(r => r.lcat && r.hours > 0)
       : [];
-    let _wlProposed = false;
+    // The briefing path stamps its own provenance; only the intel fallback must be judged.
+    let _wlProposed = _govWorkload.length > 0 && pricingModel.workloadSource !== 'government';
     if (!_govWorkload.length && window._lastBnaIntel && Array.isArray(window._lastBnaIntel.labor_categories)) {
       _govWorkload = window._lastBnaIntel.labor_categories
         .map(c => ({ lcat: String((c && c.lcat) || '').trim(), hours: parseFloat(String(((c && c.base_year_hours) != null ? c.base_year_hours : '')).replace(/[^0-9.]/g, '')) || 0 }))
         .filter(r => r.lcat && r.hours > 0);
-      _wlProposed = _govWorkload.length > 0 && (window._lastBnaIntel.staffing_source === 'proposed-loe');
+      // AFFIRMATIVE evidence required. Anything other than an explicit government-workload
+      // stamp — including a missing field — is PROPOSED, because we cannot tell a Government
+      // table from a figure the analysis derived or the user supplied on a spreadsheet.
+      _wlProposed = _govWorkload.length > 0 && (window._lastBnaIntel.staffing_source !== 'government-workload');
     }
     if (_govWorkload.length) {
       pricingModel.statedWorkloadByLcat = _govWorkload;
@@ -13135,6 +13257,30 @@ async function pricingAutoBuildStructure() {
         : ('\nGOVERNMENT-STATED WORKLOAD BY LABOR CATEGORY (AUTHORITATIVE - reproduce EXACTLY):\nThe solicitation gives an estimated base-year hours figure for each labor category below. Build "labor_mix" as EXACTLY these categories, and set each role\'s "fte" to its stated base-year hours divided by ' + defaultHpf() + ', to 4 decimal places - KEEP the fraction; do NOT round to a whole or half FTE. These per-category levels of effort are mandatory: do not add, merge, drop, or re-balance categories. This is a workload-HOURS table, not a headcount table, so put these in "labor_mix" and leave "directed_labor" empty unless the Government separately states exact headcounts.\n' + _govWorkload.map(r => '- ' + r.lcat + ': ' + Math.round(r.hours) + ' base-year hours (= ' + (r.hours / defaultHpf()).toFixed(4) + ' FTE)').join('\n') + '\n'))
       : '';
 
+    // The structure already in the model is evidence about the size of this effort, whatever
+    // produced it. Stated as a FLOOR so a rebuild cannot quietly shrink a team the user
+    // already established on their own spreadsheet.
+    // The user may have pinned some stages by uploading a partly-built sheet. Those are
+    // CONSTRAINTS to build around, not a finished model and not a Government mandate.
+    const _fixedNames = [];
+    if (_fixed.pws_tasks) _fixedNames.push('the PWS task list and the hours allocated against it');
+    if (_fixed.lcats) _fixedNames.push('the labor categories (the exact role list)');
+    if (_fixed.gsa_mapping) _fixedNames.push('the GSA Schedule LCAT mapping');
+    if (_fixed.ftes) _fixedNames.push('the FTE count for each role');
+    if (_fixed.pricing) _fixedNames.push('the rates');
+    const _exBlock = !_existing.length ? '' : (_fixed.any
+      ? ('\nUSER-FIXED CONSTRAINTS FROM AN UPLOADED PRICING SHEET \u2014 REPRODUCE EXACTLY, THEN BUILD EVERYTHING ELSE AROUND THEM:\n'
+         + 'The user supplied a partly-built pricing spreadsheet. These stages are ALREADY DECIDED and are NOT yours to change: '
+         + _fixedNames.join('; ') + '.\n'
+         + 'Current structure: ' + _existing.length + ' labor categories totalling ' + (Math.round(_exFte * 100) / 100) + ' FTE \u2014 '
+         + _existing.map(l => l.name + (parseFloat(l.advertised) > 0 ? (' (' + l.advertised + ' FTE)') : '')).join(', ') + '.\n'
+         + 'Reproduce every fixed value verbatim, INCLUDING the exact role names and FTE counts, and never drop a role that is listed above. '
+         + 'Your job is to FILL THE GAPS the sheet left: any stage not listed as fixed, plus the hours allocation for any role/task pair the sheet did not set. '
+         + 'These are the user\u2019s own figures, NOT a Government mandate \u2014 do not describe them as directed or stated by the solicitation.\n')
+      : ('\nSTRUCTURE ALREADY IN THE MODEL (from an earlier build): '
+         + _existing.length + ' labor categories totalling ' + (Math.round(_exFte * 100) / 100)
+         + ' FTE \u2014 ' + _existing.map(l => l.name).join(', ')
+         + '. This is the user\u2019s own established sizing, NOT a Government mandate: treat that FTE total as a FLOOR unless the PWS scope genuinely warrants fewer, and say so explicitly if you propose fewer.\n'));
     const _statedFte = pricingModel.statedFteTotal != null ? pricingModel.statedFteTotal : null;
     const _statedFteStr = _statedFte != null ? pricingFmtFte(_statedFte) : '';
     const fteLine = (pricingModel.fteSource === 'stated' && _statedFte != null)
@@ -13174,7 +13320,7 @@ ${taskList}
 
 OPPORTUNITY CONTEXT:
 ${ctx}
-
+${_exBlock}
 FTE BASIS: ${fteLine} Assume ${hpf} billable hours per FTE per 12-month period UNLESS the solicitation explicitly states a different productive-hours/FTE basis (e.g. 1,920 or 2,080) - if it does, size to the solicitation's figure for all roles and report it in hours_per_fte.${_workloadBlock}
 PRICING MODE: ${gsa ? 'GSA Schedule (rates come from the Schedule below).' : 'Build-up (the offeror sets base rates; you only propose structure and give market context).'}${schedBlock}${scaBlock}
 
@@ -13222,12 +13368,24 @@ ${pricingScaActive() ? '- For SCA-covered roles the direct wage must meet or exc
       function (p) {
         const n = p.items || 0;
         pxProgMark('pricingAutoBuildProgress', null,
-          (n > 0 ? (n + ' role' + (n === 1 ? '' : 's') + ' drafted') : 'Reading the PWS\u2026')
-          + ' \u00b7 ' + p.chars.toLocaleString('en-US') + ' characters received');
+          (n > 0 ? ('Drafted ' + n + ' role' + (n === 1 ? '' : 's') + ' so far\u2026')
+                 : 'Reading the PWS and sizing the team\u2026'));
       },
       /"lcat"\s*:/g);
     if (!parsed || !Array.isArray(parsed.labor_mix) || !parsed.labor_mix.length) throw new Error('The model did not return a usable labor mix. Try again, or pull the RFP / add tasks first.');
     pricingApplyAutoBuild(parsed);
+    // The prompt ASKED the model to honour the pinned stages; this GUARANTEES it.
+    // pricingApplyAutoBuild replaces lcats/hours/mask outright, so without re-asserting,
+    // a model that drifted would silently overwrite the user's own sheet.
+    const _re = _pxReassertConstraints(_snap, _fixed);
+    if (_re.restored.length || _re.added.length) {
+      try { if (typeof pricingRecalc === 'function') pricingRecalc(); } catch (e) {}
+      if (typeof showStatus === 'function') showStatus('info', 'Your fixed values were kept',
+        'Auto-build filled in everything the spreadsheet left blank and held your own figures unchanged: '
+        + _re.restored.join(', ') + '.'
+        + (_re.added.length ? (' ' + _re.added.length + ' role' + (_re.added.length === 1 ? '' : 's')
+           + ' the rebuild had dropped ' + (_re.added.length === 1 ? 'was' : 'were') + ' put back: ' + _re.added.join(', ') + '.') : ''));
+    }
     pricingAutoBuildLast = parsed;
     pricingRenderAll();
     showStatus('success', 'Structure proposed', `Built ${parsed.labor_mix.length} labor categor${parsed.labor_mix.length > 1 ? 'ies' : 'y'} with hours and role rules. Review the analysis and adjust anything below \u2014 it is all editable.`);
@@ -15874,8 +16032,8 @@ async function pricingAnalyzeGap(btn) {
       function (p) {
         const n = p.items || 0;
         pxProgMark('pricingGapProgress', null,
-          (n > 0 ? (n + ' move' + (n === 1 ? '' : 's') + ' drafted') : 'Diagnosing\u2026')
-          + ' \u00b7 ' + p.chars.toLocaleString('en-US') + ' characters received');
+          (n > 0 ? ('Found ' + n + ' recommended move' + (n === 1 ? '' : 's') + ' so far\u2026')
+                 : 'Diagnosing the price model\u2026'));
       },
       /"headline"\s*:/g);
     const moves = (parsed && Array.isArray(parsed.moves)) ? parsed.moves.filter(m => m && (m.headline || m.detail)) : [];
@@ -19129,17 +19287,25 @@ function _constrainedDetectContent(csv) {
 async function runConstrainedDetect() {
   const status = document.getElementById('constrainedStatus');
   const results = document.getElementById('constrainedResults');
-  const show = function (msg, err) { if (status) { status.style.display = 'block'; status.style.color = err ? 'var(--error)' : 'var(--muted)'; status.textContent = msg; } };
+  // Errors only. Progress goes to the standard pxProg bar, like every other long operation
+    // in the tool — grey running commentary under the button was the odd one out.
+    const show = function (msg, err) {
+      if (!status) return;
+      if (!err) { status.style.display = 'none'; status.textContent = ''; return; }
+      status.style.display = 'block'; status.style.color = 'var(--error)'; status.textContent = msg;
+    };
   if (!window._constrainedCsv) { show('Upload a pricing spreadsheet first.', true); return; }
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
   if (!apiKey) { show('Enter your Anthropic API key (top of the page) first.', true); return; }
   if (results) { results.style.display = 'none'; results.innerHTML = ''; }
   // Detection runs automatically when a spreadsheet is chosen — there is no button to spin.
+  pxProgStart('constrainedDetectProgress', 1, 'Reading your pricing spreadsheet\u2026', 'Detecting which stages are already populated\u2026', 22);
   // The status line below is the only feedback surface, and it already reports progress.
   show('Detecting which pricing stages are already populated\u2026', false);
   try {
     const data = await callClaudeForJson(apiKey, [{ type: 'text', text: _constrainedDetectContent(window._constrainedCsv) }], 1800, 90000, 'Constrained-pricing detection');
     window._constrainedIntake = data;
+    pxProgEnd('constrainedDetectProgress');
     if (status) status.style.display = 'none';
     renderConstrainedDetect(data);
   } catch (e) {
@@ -19193,8 +19359,10 @@ function renderConstrainedDetect(data) {
   const noSolveNote = (nSolve === 0) ? '<p style="margin:10px 0 0;font-size:11.5px;color:var(--muted)">Every stage is already populated \u2014 nothing to solve, but you can still check it against the PWS.</p>' : '';
   const nextHtml = oos ? '' :
     '<div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">' + solveBtn + pwsBtn + '</div>' + noSolveNote
+    + '<div id="constrainedSolveProgress" style="display:none;margin-top:12px"></div>'
     + '<div id="constrainedSolveStatus" style="display:none;font-size:13px;color:var(--muted);margin-top:12px"></div>'
     + '<div id="constrainedSolveResults" style="display:none;margin-top:14px"></div>'
+    + '<div id="constrainedPwsProgress" style="display:none;margin-top:12px"></div>'
     + '<div id="constrainedPwsStatus" style="display:none;font-size:13px;color:var(--muted);margin-top:12px"></div>'
     + '<div id="constrainedPwsResults" style="display:none;margin-top:14px"></div>';
 
@@ -19261,7 +19429,13 @@ async function runConstrainedSolve() {
   const status = document.getElementById('constrainedSolveStatus');
   const results = document.getElementById('constrainedSolveResults');
   const btn = document.getElementById('constrainedSolveBtn');
-  const show = function (msg, err) { if (status) { status.style.display = 'block'; status.style.color = err ? 'var(--error)' : 'var(--muted)'; status.textContent = msg; } };
+  // Errors only. Progress goes to the standard pxProg bar, like every other long operation
+    // in the tool — grey running commentary under the button was the odd one out.
+    const show = function (msg, err) {
+      if (!status) return;
+      if (!err) { status.style.display = 'none'; status.textContent = ''; return; }
+      status.style.display = 'block'; status.style.color = 'var(--error)'; status.textContent = msg;
+    };
   if (!det || !window._constrainedCsv) { show('Run detection first.', true); return; }
   if (det.feasibility === 'out_of_scope') { show('This combination is out of scope (a fixed total with a blank labor mix cannot be reverse-solved).', true); return; }
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
@@ -19285,6 +19459,8 @@ async function runConstrainedSolve() {
   add('Scope', b.scope_summary || b.requirement_summary); add('Periods', b.period_structure); add('Estimated FTEs', b.estimated_ftes);
   const ctx = ctxBits.join('\n') || '(no structured briefing available \u2014 work from the spreadsheet and the task areas)';
 
+  pxProgStart('constrainedSolveProgress', 1, 'Solving the blank stages…', 'Deriving what the sheet does not already fix…', 22);
+
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Solving\u2026'; }
   if (results) { results.style.display = 'none'; results.innerHTML = ''; }
   show('Solving the blank stages while holding the fixed ones\u2026', false);
@@ -19297,6 +19473,7 @@ async function runConstrainedSolve() {
   } catch (e) {
     show('Solve failed: ' + (e && e.message ? e.message : e), true);
   } finally {
+    pxProgEnd('constrainedSolveProgress');
     if (btn) { btn.disabled = false; btn.textContent = 'Solve the blank stages'; }
   }
 }
@@ -19377,12 +19554,19 @@ async function runConstrainedPwsCheck() {
   const status = document.getElementById('constrainedPwsStatus');
   const results = document.getElementById('constrainedPwsResults');
   const btn = document.getElementById('constrainedPwsBtn');
-  const show = function (msg, err) { if (status) { status.style.display = 'block'; status.style.color = err ? 'var(--error)' : 'var(--muted)'; status.textContent = msg; } };
+  // Errors only. Progress goes to the standard pxProg bar, like every other long operation
+    // in the tool — grey running commentary under the button was the odd one out.
+    const show = function (msg, err) {
+      if (!status) return;
+      if (!err) { status.style.display = 'none'; status.textContent = ''; return; }
+      status.style.display = 'block'; status.style.color = 'var(--error)'; status.textContent = msg;
+    };
   if (!window._constrainedCsv) { show('Upload and detect a pricing spreadsheet first.', true); return; }
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
   if (!apiKey) { show('Enter your Anthropic API key (top of the page) first.', true); return; }
   const pws = _constrainedPwsContext();
   if (!pws || pws.trim().length < 10) { show('No PWS/RFP requirements are loaded to check against. Pull your RFP analysis on Pricing Step 2 (or the Proposal tab) first.', true); return; }
+  pxProgStart('constrainedPwsProgress', 1, 'Checking the sheet against the PWS…', 'Comparing your priced scope with the requirement…', 22);
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Checking\u2026'; }
   if (results) { results.style.display = 'none'; results.innerHTML = ''; }
   show('Checking the sheet against the PWS requirements\u2026', false);
@@ -19394,6 +19578,7 @@ async function runConstrainedPwsCheck() {
   } catch (e) {
     show('Check failed: ' + (e && e.message ? e.message : e), true);
   } finally {
+    pxProgEnd('constrainedPwsProgress');
     if (btn) { btn.disabled = false; btn.textContent = 'Check the sheet against the PWS'; }
   }
 }
