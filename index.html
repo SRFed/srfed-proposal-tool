@@ -265,6 +265,10 @@
   .px-hours-cell::-webkit-outer-spin-button,
   .px-hours-cell::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   .px-hours-cell { -moz-appearance: textfield; appearance: textfield; text-align: center; }
+  /* Number inputs never show spinner up/down arrows anywhere in the tool — users type values. */
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   .token-bar-fill.warn   { background: #f59e0b; }
   .token-bar-fill.danger { background: #ef4444; }
   /* #2: PROVISIONAL. Until every file behind a row has had its real text measured, the row is
@@ -379,17 +383,20 @@
   /* ── Uniform raised affordance for inline blue action buttons across all tabs ── */
   /* These are styled inline with background:var(--blue); the gradient + shadow makes
      them read as raised buttons, distinct from the flat blue section/step headers. */
-  button[style*="background:var(--blue)"]:not(:disabled) {
+  button[style*="background:var(--blue)"]:not(:disabled),
+  label[style*="background:var(--blue)"] {
     background: linear-gradient(180deg, var(--btn-top) 0%, var(--btn-bottom) 100%) !important;
     box-shadow: 0 2px 5px rgba(0,68,153,0.35), inset 0 1px 0 rgba(255,255,255,0.30);
     transition: all 0.15s;
   }
-  button[style*="background:var(--blue)"]:not(:disabled):hover {
+  button[style*="background:var(--blue)"]:not(:disabled):hover,
+  label[style*="background:var(--blue)"]:hover {
     background: linear-gradient(180deg, #3d8fff 0%, #0a6ae6 100%) !important;
     transform: translateY(-1px);
     box-shadow: 0 5px 14px rgba(0,68,153,0.42), inset 0 1px 0 rgba(255,255,255,0.35);
   }
-  button[style*="background:var(--blue)"]:not(:disabled):active {
+  button[style*="background:var(--blue)"]:not(:disabled):active,
+  label[style*="background:var(--blue)"]:active {
     transform: translateY(0);
     box-shadow: 0 1px 3px rgba(0,68,153,0.40), inset 0 2px 4px rgba(0,0,0,0.18);
   }
@@ -2352,6 +2359,7 @@
       <div id="pricingTravel" style="margin-bottom:16px"></div>
       <div id="pricingMaterials" style="margin-bottom:16px"></div>
       <div id="pricingClin" style="margin-bottom:16px"></div>
+      <div id="pricingPivot" style="margin-bottom:16px"></div>
 
       <!-- Live summary -->
       <div id="pricingSummary" style="margin-bottom:16px"></div>
@@ -3179,7 +3187,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '207';
+const APP_VERSION = '212';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -11604,14 +11612,14 @@ function pricingPeriodTotalFte(i) { return pricingModel.lcats.reduce((s, l) => s
 // ── Materials / direct-material costs ─────────────────────────────────────────
 // A modeled cost stream parallel to Travel/ODC (its own per-period dollars), so Materials can be
 // priced as its own CLIN and shown as its own line — distinct from Travel/ODC.
-function pricingMaterials() { if (!pricingModel.materials) pricingModel.materials = { mode: 'none', basis: 'perPeriod', amount: '', gaPct: '', notes: '' }; return pricingModel.materials; }
+function pricingMaterials() { if (!pricingModel.materials) pricingModel.materials = { mode: 'none', basis: 'perPeriod', amount: '', gaPct: '', notes: '', escMode: 'none', escFlat: '' }; const _m = pricingModel.materials; if (_m.escMode == null || _m.escMode === 'inherit') _m.escMode = 'none'; return _m; }
 function pricingMaterialsByPeriod() {
   const m = pricingMaterials(); const P = pricingModel.periods || [];
   if (!m || !m.mode || m.mode === 'none') return P.map(() => 0);
   const amt = parseFloat(m.amount) || 0;
   const ga = 1 + (parseFloat(m.gaPct) || 0) / 100;
   const base = (m.basis === 'total') ? P.map(() => (P.length ? amt / P.length : 0)) : P.map(() => amt);
-  const _om = pricingOdcMultipliers();
+  const _om = (typeof _pxStreamMult === 'function') ? _pxStreamMult(m) : pricingOdcMultipliers();
   return base.map((x, i) => x * ga * (_om[i] || 1));
 }
 function pricingMaterialsTotal() { const bp = pricingMaterialsByPeriod(); return { total: bp.reduce((s, x) => s + x, 0), byPeriod: bp }; }
@@ -11675,6 +11683,7 @@ function pricingClinLineAmount(line, pd) {
   if (line.scope === 'travelodc') { const tp = (typeof pricingTravelByPeriod === 'function') ? pricingTravelByPeriod() : []; amt = tp[pd.srcIdx] || 0; }
   else if (line.scope === 'materials') { const mp = (typeof pricingMaterialsByPeriod === 'function') ? pricingMaterialsByPeriod() : []; amt = mp[pd.srcIdx] || 0; }
   else amt = pricingClinPeriodCost(line.scope === 'tasks' ? (line.taskIds || []) : null, pd.srcIdx);
+  if (line.nte != null && line.nte !== '' && +line.nte > 0 && amt > +line.nte) amt = +line.nte;  // reimbursable ceiling
   return pd.isExt ? amt * (pd.extFactor || 1) : amt;
 }
 function pricingClinLineHours(line, pd) {
@@ -11690,6 +11699,12 @@ function pricingClinScheduleRows() {
   const emitPeriod = (pd) => {
     let pTot = 0;
     c.lines.forEach((line, li) => {
+      // Stated-CLIN model: a line bound to a specific period appears ONLY in that period (the
+      // government's 00010=base / 00020=OY1 scheme), and an 'unpriced' optional-track CLIN is
+      // listed separately below rather than folded into the contract value. Legacy lines carry
+      // neither field, so they still expand across every period exactly as before.
+      if (line.unpriced) return;
+      if (line.periodBind != null && line.periodBind !== pd.srcIdx) return;
       const amt = pricingClinLineAmount(line, pd), hrs = pricingClinLineHours(line, pd), type = (line.type || 'FFP').toUpperCase();
       if (line.scope === 'custom' && amt === 0) return;                 // one-time custom: omit periods where it does not apply
       let qty, unit, unitPrice;
@@ -11698,7 +11713,7 @@ function pricingClinScheduleRows() {
       else if (type === 'COST') { qty = 1; unit = 'Lot'; unitPrice = amt; }
       else if (monthly) { qty = pd.months; unit = 'Month'; unitPrice = pd.months ? amt / pd.months : amt; }
       else { qty = 1; unit = (pd.months === 12 ? 'Year' : 'Lot'); unitPrice = amt; }
-      rows.push({ clin: pricingClinNumber(li, pd.prefix), desc: line.title || 'Line item', period: pd.name, type: (type === 'COST' ? 'Cost/NTE' : type), qty, unit, unitPrice, total: amt, isExt: pd.isExt });
+      rows.push({ clin: (line.clinNo ? String(line.clinNo) : pricingClinNumber(li, pd.prefix)), desc: line.title || 'Line item', period: pd.name, type: (type === 'COST' ? 'Cost/NTE' : type), qty, unit, unitPrice, total: amt, isExt: pd.isExt });
       pTot += amt;
     });
     rows.push({ subtotal: true, period: pd.name, total: pTot, isExt: pd.isExt });
@@ -11709,6 +11724,21 @@ function pricingClinScheduleRows() {
   let grand = 0;
   pds.filter(pd => !pd.isExt).forEach(pd => { grand += emitPeriod(pd); });
   rows.push({ grand: true, total: grand });
+  // Optional / separately-priced CLINs the government stated but that sit outside the priced
+  // base+options (e.g. a parallel optional task track). Listed verbatim so nothing is invented
+  // and nothing is dropped; kept OUT of the contract value above.
+  const _optLines = c.lines.filter(l => l.unpriced);
+  if (_optLines.length) {
+    rows.push({ optHeader: true });
+    _optLines.forEach(l => {
+      const _t = (l.type || 'FFP').toUpperCase();
+      const _amt = (l.nte != null && l.nte !== '') ? (+l.nte || 0) : (parseFloat(l.amount) || 0);
+      rows.push({ opt: true, clin: (l.clinNo ? String(l.clinNo) : ''), desc: l.title || 'Line item',
+        period: (l.periodLabel || 'Optional / separately priced'), type: (_t === 'COST' ? 'Cost/NTE' : _t),
+        qty: 1, unit: ((_t === 'COST' || l.scope === 'travelodc') ? 'NTE' : 'Lot'),
+        unitPrice: _amt, total: _amt, nte: (l.nte != null && l.nte !== '') });
+    });
+  }
   const exts = pds.filter(pd => pd.isExt);
   if (exts.length) {
     rows.push({ extHeader: true });
@@ -11719,6 +11749,226 @@ function pricingClinScheduleRows() {
   return rows;
 }
 
+// ── Stated-CLIN ingestion ─────────────────────────────────────────────────────
+// The government's own CLIN list, extracted by the analysis. This is the AUTHORITATIVE CLIN
+// structure — the tool maps pricing onto it and never invents numbers. Read from the BNA intel
+// (what the Pricing tab already reads) with the proposal briefing as a fallback.
+function pricingStatedClins() {
+  const pick = o => (o && (Array.isArray(o.stated_clins) ? o.stated_clins : (Array.isArray(o.statedClins) ? o.statedClins : null)));
+  let a = (typeof window !== 'undefined') ? pick(window._lastBnaIntel) : null;
+  if (!a && typeof cachedBriefing !== 'undefined') a = pick(cachedBriefing);
+  return Array.isArray(a) ? a.filter(Boolean) : [];
+}
+// Map a stated period label to a tool period index for the PRIMARY track, or null if it does
+// not correspond to one of the priced base+option periods.
+function _clinMapPeriod(label) {
+  const P = pricingModel.periods || []; const s = String(label == null ? '' : label).toLowerCase();
+  if (/\bbase\b/.test(s) && !/option/.test(s)) return 0;
+  const m = s.match(/option\s*(?:period|year)?\s*(\d+)/) || s.match(/\boy\s*(\d+)/) || s.match(/\bop\s*(\d+)/);
+  if (m) { const idx = parseInt(m[1], 10); if (idx >= 1 && idx < P.length) return idx; }
+  return null;
+}
+// Build clins.lines from the stated CLINs. Primary-track CLINs are period-bound and priced from
+// the matrix/travel; optional/separate-track CLINs are captured verbatim as 'unpriced' and listed
+// (not folded into contract value). Deterministic — the accuracy rides only on the extraction.
+function pricingClinBuildFromStated() {
+  const scs = pricingStatedClins(); if (!scs.length) return false;
+  const c = pricingClin();
+  c.lines = scs.map(sc => {
+    const num  = String(sc.number != null ? sc.number : (sc.clin != null ? sc.clin : '')).trim();
+    const hint = String(sc.scope_hint != null ? sc.scope_hint : (sc.scope != null ? sc.scope : '')).toLowerCase();
+    const raw  = String(sc.clin_type != null ? sc.clin_type : (sc.type != null ? sc.type : 'FFP')).toLowerCase();
+    const isTravelHint = (hint.indexOf('travel') >= 0);
+    const type = /t\s*&\s*m|time.*material/.test(raw) ? 'T&M'
+               : (/cost|reimburs|nte/.test(raw) || isTravelHint) ? 'cost' : 'FFP';
+    let nte = null;
+    if (sc.nte != null && sc.nte !== '') { const v = parseFloat(String(sc.nte).replace(/[^0-9.]/g, '')); if (!isNaN(v)) nte = v; }
+    const label = String(sc.period_label != null ? sc.period_label : '');
+    const optional = (sc.optional === true) || (String(sc.optional).toLowerCase() === 'true') || /\boptional\b/i.test(label + ' ' + String(sc.track != null ? sc.track : ''));
+    const line = { id: _prId('clin_'), clinNo: num, title: String(sc.title != null ? sc.title : (sc.description != null ? sc.description : ('CLIN ' + num))).trim(), type: type, nte: nte, stated: true, optional: optional, periodLabel: label, taskIds: [] };
+    const scopeFor = h => (h.indexOf('travel') >= 0) ? 'travelodc' : (h.indexOf('material') >= 0) ? 'materials' : 'labor';
+    if (optional) {
+      line.unpriced = true; line.periodBind = null;
+      const sc2 = scopeFor(hint); line.scope = (sc2 === 'labor') ? 'custom' : sc2;
+      if (line.scope === 'custom') { line.amount = (nte != null ? String(nte) : ''); line.placement = 'base'; }
+    } else {
+      const pb = _clinMapPeriod(label); line.periodBind = pb; line.scope = scopeFor(hint);
+      if (pb == null) { line.unpriced = true; if (line.scope === 'labor') { line.scope = 'custom'; line.amount = ''; line.placement = 'base'; } }
+    }
+    return line;
+  });
+  c.enabled = true; c._fromStated = true; c._fromTasks = false;
+  if (typeof pricingSave === 'function') pricingSave();
+  if (typeof pricingRenderClin === 'function') pricingRenderClin();
+  if (typeof pricingRenderAll === 'function') pricingRenderAll();
+  return true;
+}
+// ── Pricing pivot ("slice & dice") ────────────────────────────────────────────
+// The CLIN dimension, factored out so the Excel Line-Item Detail AND the pivot use ONE definition.
+function pricingClinDim() {
+  const M = pricingModel;
+  if (!(M.clins && M.clins.enabled) || typeof pricingClinPeriods !== 'function' || typeof pricingClinNumber !== 'function') return null;
+  let pds = [];
+  try { pds = pricingClinPeriods().filter(pd => !pd.isExt); } catch (e) { return null; }
+  const lines = (typeof pricingClin === 'function' ? (pricingClin().lines || []) : []);
+  const numFor = (li, i) => { if (li < 0 || !pds[i]) return ''; const _l = lines[li]; return (_l && _l.clinNo) ? String(_l.clinNo) : pricingClinNumber(li, pds[i].prefix); };
+  const _bind = (l, i) => !l.unpriced && (l.periodBind == null || l.periodBind === i);
+  return {
+    forTask: (taskId, i) => { let li = lines.findIndex(l => _bind(l, i) && l.scope === 'tasks' && (l.taskIds || []).indexOf(taskId) >= 0); if (li < 0) li = lines.findIndex(l => _bind(l, i) && l.scope === 'labor'); return numFor(li, i); },
+    forScope: (scope, i) => numFor(lines.findIndex(l => _bind(l, i) && l.scope === scope), i)
+  };
+}
+// One flat, tidy row per (LCAT x task x period) plus travel/ODC/materials rows — the same dataset
+// the Line-Item Detail export is built from, using the IDENTICAL per-cell price formula so any
+// pivot ties out to the period totals. Every row carries every dimension, so it pivots any way.
+function pricingFlatRows() {
+  const M = pricingModel, P = M.periods || [], rows = [];
+  if (!M.lcats || !M.lcats.length) return rows;
+  const gsa = pricingIsGsa();
+  const mult = pricingMultipliers();
+  const frac = i => pricingPeriodFraction(P[i]);
+  const effRate = (l, i) => (gsa ? pricingLoadedRate(l, i) : pricingLoadedRate(l, 0) * (mult[i] || 1)) * pricingCompDiscountFactor(l, i);
+  const pName = i => (P[i] && P[i].name) || ('Period ' + (i + 1));
+  const dim = (typeof pricingClinDim === 'function') ? pricingClinDim() : null;
+  const clinT = (tid, i) => dim ? (dim.forTask(tid, i) || '') : '';
+  const clinS = (sc, i) => dim ? (dim.forScope(sc, i) || '') : '';
+  M.lcats.forEach(l => { (M.tasks || []).forEach(t => { P.forEach((p, i) => {
+    const ch = pricingPeriodCellHours(l.id, t.id, i); if (ch <= 0) return;
+    const hrs = ch * frac(i), price = hrs * effRate(l, i), fte = ch / (pricingHpf(l) || defaultHpf() || 1);
+    rows.push({ category: 'Labor', lcat: (l.name || '(unnamed)'), task: (((t.code ? t.code + ' ' : '') + (t.name || '')).trim() || '(task)'), clin: clinT(t.id, i), period: pName(i), periodIdx: i, price: price, hours: hrs, fte: fte });
+  }); }); });
+  const _tp = (typeof pricingTravelOnlyByPeriod === 'function') ? pricingTravelOnlyByPeriod() : [];
+  const _op = (typeof pricingOdcOnlyByPeriod === 'function') ? pricingOdcOnlyByPeriod() : [];
+  const _mp = (typeof pricingMaterialsByPeriod === 'function') ? pricingMaterialsByPeriod() : [];
+  P.forEach((p, i) => {
+    if ((_tp[i] || 0) > 0) rows.push({ category: 'Travel', lcat: 'Travel', task: 'Travel', clin: clinS('travelodc', i), period: pName(i), periodIdx: i, price: _tp[i], hours: 0, fte: 0 });
+    if ((_op[i] || 0) > 0) rows.push({ category: 'ODC', lcat: 'ODC', task: 'ODC', clin: clinS('travelodc', i), period: pName(i), periodIdx: i, price: _op[i], hours: 0, fte: 0 });
+    if ((_mp[i] || 0) > 0) rows.push({ category: 'Materials', lcat: 'Materials', task: 'Materials', clin: clinS('materials', i), period: pName(i), periodIdx: i, price: _mp[i], hours: 0, fte: 0 });
+  });
+  return rows;
+}
+var _PX_DIMS = { category: 'Category', lcat: 'Labor Category', task: 'PWS Task', clin: 'CLIN', period: 'Period' };
+var _PX_MEAS = { price: 'Price ($)', hours: 'Hours', fte: 'FTE' };
+var _pxPivot = { r1: 'clin', r2: '', col: 'period', meas: 'price' };
+// Aggregate the flat rows into a 2-D table (array-of-arrays). Up to two row dimensions, one optional
+// column dimension, one measure; sum. Returns the AOA plus metadata for rendering/copy/download.
+function pricingPivotBuild() {
+  const cfg = _pxPivot;
+  let rowDims = [cfg.r1, cfg.r2].filter(d => _PX_DIMS[d]);
+  rowDims = rowDims.filter((d, i) => rowDims.indexOf(d) === i);
+  if (!rowDims.length) rowDims = ['clin'];
+  const colDim = (_PX_DIMS[cfg.col] && rowDims.indexOf(cfg.col) < 0) ? cfg.col : '';
+  const meas = _PX_MEAS[cfg.meas] ? cfg.meas : 'price';
+  const rows = (typeof pricingFlatRows === 'function') ? pricingFlatRows() : [];
+  const val = r => r[meas] || 0;
+  const rkArr = r => rowDims.map(d => (r[d] == null || r[d] === '') ? '\u2014' : String(r[d]));
+  const NOCOL = '\u0002';
+  const cell = {}, order = [], labels = {}, colKeys = [];
+  rows.forEach(r => {
+    const arr = rkArr(r), k = arr.join('\u0001');
+    if (!(k in cell)) { cell[k] = {}; order.push(k); labels[k] = arr; }
+    const ck = colDim ? ((r[colDim] == null || r[colDim] === '') ? '\u2014' : String(r[colDim])) : NOCOL;
+    if (colDim && colKeys.indexOf(ck) < 0) colKeys.push(ck);
+    cell[k][ck] = (cell[k][ck] || 0) + val(r);
+  });
+  const rnd = v => meas === 'fte' ? Math.round(v * 100) / 100 : Math.round(v);
+  const header = rowDims.map(d => _PX_DIMS[d]);
+  if (colDim) { colKeys.forEach(ck => header.push(ck)); header.push('Total'); }
+  else header.push(_PX_MEAS[meas]);
+  const aoa = [header]; const colTot = {}; let grand = 0;
+  order.forEach(k => {
+    const row = labels[k].slice();
+    if (colDim) { let rt = 0; colKeys.forEach(ck => { const v = cell[k][ck] || 0; row.push(rnd(v)); rt += v; colTot[ck] = (colTot[ck] || 0) + v; }); row.push(rnd(rt)); grand += rt; }
+    else { const v = cell[k][NOCOL] || 0; row.push(rnd(v)); grand += v; }
+    aoa.push(row);
+  });
+  const tot = rowDims.map((_, i) => i === 0 ? 'Total' : '');
+  if (colDim) { colKeys.forEach(ck => tot.push(rnd(colTot[ck] || 0))); tot.push(rnd(grand)); }
+  else tot.push(rnd(grand));
+  aoa.push(tot);
+  return { aoa: aoa, nRowDims: rowDims.length, meas: meas, colDim: colDim, empty: order.length === 0 };
+}
+function pricingSetPivot(field, val) { _pxPivot[field] = val; pricingPivotRender(); }
+function pricingPivotRender() {
+  const el = document.getElementById('pricingPivot'); if (!el) return;
+  const M = pricingModel;
+  if (!M.lcats || !M.lcats.length || !M.tasks || !M.tasks.length) { el.innerHTML = ''; return; }
+  const sel = (id, cur, opts, none) => '<select onchange="pricingSetPivot(\'' + id + '\',this.value)" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#fff">' + (none ? '<option value="" ' + (cur ? '' : 'selected') + '>\u2014 none \u2014</option>' : '') + Object.keys(opts).map(k => '<option value="' + k + '" ' + (cur === k ? 'selected' : '') + '>' + opts[k] + '</option>').join('') + '</select>';
+  const btn = (fn, lbl, primary) => '<button onclick="' + fn + '" style="padding:6px 12px;font-size:12px;font-weight:700;border:1px solid ' + (primary ? 'var(--blue)' : 'var(--border)') + ';background:' + (primary ? 'var(--blue)' : '#fff') + ';color:' + (primary ? '#fff' : 'var(--text)') + ';border-radius:6px;cursor:pointer">' + lbl + '</button>';
+  const built = pricingPivotBuild();
+  let h = '<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:#fff">' +
+    '<div style="font-weight:700;font-size:14px;margin-bottom:2px">\uD83D\uDCCA Pricing pivot \u2014 slice &amp; dice</div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Lay the priced model out any way \u2014 by CLIN, PWS task, labor category, period, or a combination. Copy it straight into Excel (each value lands in its own cell) or download an .xlsx.</div>' +
+    '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">' +
+    '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Rows</label>' + sel('r1', _pxPivot.r1, _PX_DIMS, false) + '</div>' +
+    '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">then (optional)</label>' + sel('r2', _pxPivot.r2, _PX_DIMS, true) + '</div>' +
+    '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Columns (optional)</label>' + sel('col', _pxPivot.col, _PX_DIMS, true) + '</div>' +
+    '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Value</label>' + sel('meas', _pxPivot.meas, _PX_MEAS, false) + '</div>' +
+    '<div style="display:flex;gap:8px">' + btn('pricingPivotCopy()', 'Copy for Excel', true) + btn('pricingPivotDownload()', 'Download .xlsx', false) + '</div>' +
+    '</div>';
+  if (built.empty) { h += '<div style="font-size:12px;color:var(--muted)">No priced rows yet \u2014 add labor hours (and any travel/materials) above, then build your view here.</div>'; }
+  else {
+    const aoa = built.aoa, nrd = built.nRowDims;
+    const disp = (v) => built.meas === 'price' ? pricingFmt(v) : (built.meas === 'fte' ? (v).toFixed(2) : (v).toLocaleString('en-US'));
+    h += '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:12.5px;min-width:100%">';
+    aoa.forEach((row, ri) => {
+      const isHead = ri === 0, isTot = ri === aoa.length - 1;
+      h += '<tr' + (isHead ? ' style="background:#f1f5f9"' : (isTot ? ' style="border-top:2px solid #1e293b;font-weight:800"' : '')) + '>';
+      row.forEach((c, ci) => {
+        const numeric = ci >= nrd, tag = isHead ? 'th' : 'td';
+        const cellTxt = isHead ? escHtml(String(c)) : (numeric ? (c === '' ? '' : disp(c)) : escHtml(String(c)));
+        h += '<' + tag + ' style="padding:5px 9px;text-align:' + (numeric ? 'right' : 'left') + ';border-bottom:1px solid var(--border);white-space:nowrap' + (isHead ? ';font-weight:700' : '') + '">' + cellTxt + '</' + tag + '>';
+      });
+      h += '</tr>';
+    });
+    h += '</table></div><div id="pxPivotMsg" style="font-size:11px;color:var(--muted);margin-top:6px"></div>';
+  }
+  h += '</div>';
+  el.innerHTML = h;
+}
+// Copy so Excel drops each value into its OWN cell: text/html <table> (Excel prefers it, keeps
+// numbers numeric + bold headers) with a text/plain TSV fallback (tab => new cell). Raw numbers,
+// no currency symbols, so nothing is parsed as text or split across cells.
+function pricingPivotCopy() {
+  const built = pricingPivotBuild(); if (built.empty) return;
+  const aoa = built.aoa, nrd = built.nRowDims;
+  const tsv = aoa.map(row => row.map(c => (typeof c === 'number') ? String(c) : String(c).replace(/\t/g, ' ').replace(/\r?\n/g, ' ')).join('\t')).join('\r\n');
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let html = '<table border="1" style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:11pt">';
+  aoa.forEach((row, ri) => {
+    const isHead = ri === 0, isTot = ri === aoa.length - 1;
+    html += '<tr>';
+    row.forEach((c, ci) => {
+      const numeric = ci >= nrd && typeof c === 'number';
+      const st = 'padding:3px 7px;border:1px solid #b0b0b0;' + (numeric ? 'text-align:right;' : '') + (isHead || isTot ? 'font-weight:bold;' : '') + (isHead ? 'background:#dbeafe;' : '');
+      html += '<td style="' + st + '">' + (c === '' ? '' : esc(c)) + '</td>';
+    });
+    html += '</tr>';
+  });
+  html += '</table>';
+  const msg = t => { const m = document.getElementById('pxPivotMsg'); if (m) { m.textContent = t; setTimeout(() => { if (m) m.textContent = ''; }, 6000); } };
+  const ok = () => msg('Copied \u2014 paste into Excel (Ctrl/Cmd-V). Each value lands in its own cell.');
+  try {
+    if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+      navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([tsv], { type: 'text/plain' }) })]).then(ok, () => _pxCopyFallback(tsv, ok, msg));
+    } else _pxCopyFallback(tsv, ok, msg);
+  } catch (e) { _pxCopyFallback(tsv, ok, msg); }
+}
+function _pxCopyFallback(tsv, ok, msg) {
+  try { const ta = document.createElement('textarea'); ta.value = tsv; ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.focus(); ta.select(); const done = document.execCommand('copy'); document.body.removeChild(ta); done ? ok() : (msg && msg('Copy failed \u2014 select the table and copy manually.')); } catch (e) { msg && msg('Copy failed \u2014 select the table and copy manually.'); }
+}
+function pricingPivotDownload() {
+  const built = pricingPivotBuild(); if (built.empty || typeof XLSX === 'undefined') return;
+  const aoa = built.aoa, nrd = built.nRowDims;
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const z = built.meas === 'price' ? '$#,##0' : (built.meas === 'fte' ? '0.00' : '#,##0');
+  for (let r = 1; r < aoa.length; r++) for (let c = nrd; c < aoa[r].length; c++) { const a = XLSX.utils.encode_cell({ r: r, c: c }); if (ws[a] && typeof ws[a].v === 'number') ws[a].z = z; }
+  ws['!cols'] = aoa[0].map((_, c) => ({ wch: c < nrd ? 22 : 15 }));
+  for (let c = 0; c < aoa[0].length; c++) { const a = XLSX.utils.encode_cell({ r: 0, c: c }); if (ws[a]) ws[a].s = { font: { bold: true } }; }
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Pricing Pivot');
+  const nm = ('SRFed-Pricing-Pivot-' + [_pxPivot.r1, _pxPivot.r2, _pxPivot.col].filter(x => x).join('-by-')).replace(/[^A-Za-z0-9._-]/g, '_') + '.xlsx';
+  XLSX.writeFile(wb, nm);
+}
 function pricingFmt(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
 function pricingFmtC(n) { return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
@@ -13792,6 +14042,7 @@ function pricingRenderAll() {
   pricingRenderTravel();
   pricingRenderMaterials();
   pricingRenderClin();
+  if (typeof pricingPivotRender === 'function') pricingPivotRender();
   pricingRenderFteBar();
   pricingRenderSummary();
   pricingRenderGapPanel();
@@ -14281,6 +14532,8 @@ function pricingRenderMaterials() {
   const m = pricingMaterials();
   const calc = pricingMaterialsTotal();
   const modeBtn = (val, label) => '<label style="font-size:13px;margin-right:14px;cursor:pointer"><input type="radio" name="matMode" ' + (m.mode === val ? 'checked' : '') + ' onchange="pricingSetMaterials(\'mode\',\'' + val + '\')"> ' + label + '</label>';
+  const _mEscOn = (mm) => (m.escMode || 'none') === mm;
+  const _escBtn = (mm, label) => '<button onclick="pricingSetMaterials(\'escMode\',\'' + mm + '\')" style="padding:4px 9px;font-size:11px;font-weight:700;border:1px solid ' + (_mEscOn(mm) ? 'var(--blue)' : 'var(--border)') + ';background:' + (_mEscOn(mm) ? 'var(--blue)' : '#fff') + ';color:' + (_mEscOn(mm) ? '#fff' : 'var(--text)') + ';border-radius:6px;cursor:pointer">' + label + '</button>';
   let h = '<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:#fff">' +
     '<div style="font-weight:700;font-size:14px;margin-bottom:2px">Materials / direct material costs</div>' +
     '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">A separate cost stream from Travel/ODC, modeled with its own per-period dollars so it can be its own CLIN and its own line in the schedule. Leave as None unless the solicitation calls for materials.</div>' +
@@ -14290,13 +14543,14 @@ function pricingRenderMaterials() {
       '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Amount ($)</label><input type="text" inputmode="decimal" value="' + _pxFmtMoney(m.amount) + '" onchange="pricingSetMaterials(\'amount\',this.value)" style="width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px"></div>' +
       '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Applied</label><select onchange="pricingSetMaterials(\'basis\',this.value)" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#fff"><option value="perPeriod" ' + (m.basis !== 'total' ? 'selected' : '') + '>Per period</option><option value="total" ' + (m.basis === 'total' ? 'selected' : '') + '>Total (split evenly)</option></select></div>' +
       '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">G&amp;A / handling %</label><input type="number" min="0" step="0.1" value="' + (m.gaPct != null ? pricingEsc(m.gaPct) : '') + '" onchange="pricingSetMaterials(\'gaPct\',this.value)" placeholder="0" style="width:96px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px"></div></div>' +
+      '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:8px 0 2px;padding-top:8px;border-top:1px dashed var(--border)"><span style="font-size:11.5px;font-weight:700">Materials escalation</span>' + _escBtn('none','Held flat') + _escBtn('match','Match labor') + _escBtn('flat','Own rate') + ((m.escMode === 'flat') ? '<input type="number" step="0.1" min="0" value="' + (m.escFlat != null ? pricingEsc(String(m.escFlat)) : '') + '" onchange="pricingSetMaterials(\'escFlat\',this.value)" placeholder="0" style="width:64px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/><span style="font-size:11.5px;color:var(--muted)">%</span>' : '') + '<span style="font-size:11px;color:var(--muted);margin-left:auto">' + ((typeof _pxStreamEscLabel === 'function') ? _pxStreamEscLabel(m) : 'held flat') + '</span></div>' +
       '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px">All periods: <strong>' + pricingFmt(calc.total) + '</strong>' + (m.basis === 'total' ? ' (split evenly across periods)' : ' (per period)') + '</div>' +
       '<div style="font-size:11px;color:var(--muted);margin-top:6px">Shows as its own <strong>Materials</strong> line per period in the workbook, and as a Materials CLIN when the CLIN layer is on.</div>';
   }
   h += '</div>';
   el.innerHTML = h;
 }
-function pricingSetMaterials(field, val) { const m = pricingMaterials(); m[field] = (field === 'amount') ? _pxCleanNum(val) : val; pricingRenderMaterials(); if (typeof pricingRenderClin === 'function') pricingRenderClin(); }
+function pricingSetMaterials(field, val) { const m = pricingMaterials(); m[field] = (field === 'amount' || field === 'escFlat') ? _pxCleanNum(val) : val; pricingRenderMaterials(); if (typeof pricingRenderClin === 'function') pricingRenderClin(); }
 
 // ═══ #6 CLIN DISCOVERABILITY (Wave 5) ════════════════════════════════════════════════════════════
 // The CLIN builder already works; nothing here changes the math. This adds three things: a signal on
@@ -14405,7 +14659,7 @@ function pricingRenderClin() {
     h += '</tbody></table>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">' +
       '<button onclick="pricingAddClinLine()" style="padding:5px 12px;font-size:12px;font-weight:600;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:6px;cursor:pointer">+ Add CLIN line</button>' +
-      (M.tasks.length ? '<button onclick="pricingClinGenerateFromTasks()" title="Replace the labor line with one CLIN per PWS task, so each task group is priced on its own line. Travel/ODC, materials and custom lines are kept." style="padding:5px 12px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">\u2728 Generate CLINs from PWS task groups (' + M.tasks.length + ')</button>' : '') +
+      ((typeof pricingStatedClins === 'function' && pricingStatedClins().length) ? '<button onclick="pricingClinBuildFromStated()" title="Build the CLIN schedule from the CLINs the Government stated in the solicitation — real CLIN numbers, mapped to your pricing by period. Nothing is invented." style="padding:5px 12px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">\u2728 Build CLINs from the solicitation (' + pricingStatedClins().length + ')</button>' : '') +
       '</div></div>';
     const rows = pricingClinScheduleRows();
     h += '<div style="margin-top:14px;overflow-x:auto"><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Schedule preview</div>' +
@@ -14416,6 +14670,8 @@ function pricingRenderClin() {
       else if (r.extHeader) h += '<tr><td colspan="8" style="padding:8px;background:#faf5ff;color:#6b21a8;font-size:11.5px">Option to Extend Services (FAR 52.217-8) &mdash; shown for evaluation only, at the final option-year rates. Exercised later if needed; not part of the contract value above.</td></tr>';
       else if (r.grandWithExt) h += '<tr style="border-top:1px solid #c4b5fd;font-weight:700;color:#6b21a8"><td colspan="7" style="padding:6px 8px">Total evaluated price incl. 6-month extension</td><td style="padding:6px 8px;text-align:right">' + pricingFmt(r.total) + '</td></tr>';
       else if (r.subtotal) h += '<tr style="background:' + (r.isExt ? '#faf5ff' : '#f8fafc') + ';font-weight:700"><td colspan="7" style="padding:5px 8px">' + escHtml(r.period) + ' subtotal</td><td style="padding:5px 8px;text-align:right">' + pricingFmt(r.total) + '</td></tr>';
+      else if (r.optHeader) h += '<tr><td colspan="8" style="padding:8px;background:#fff7ed;color:#9a3412;font-size:11.5px">Optional / separately-priced CLINs &mdash; stated by the Government; not part of the contract value above.</td></tr>';
+      else if (r.opt) h += '<tr style="border-top:1px solid var(--border);background:#fffbf5;color:#7c2d12"><td style="padding:5px 8px;font-variant-numeric:tabular-nums">' + escHtml(r.clin) + '</td><td style="padding:5px 8px">' + escHtml(r.desc) + '</td><td style="padding:5px 8px">' + escHtml(r.period) + '</td><td style="padding:5px 8px">' + escHtml(r.type) + '</td><td style="padding:5px 8px;text-align:right">' + r.qty + '</td><td style="padding:5px 8px">' + escHtml(r.unit) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.unitPrice) + '</td><td style="padding:5px 8px;text-align:right">' + (r.nte ? 'NTE ' : '') + pricingFmtC(r.total) + '</td></tr>';
       else h += '<tr style="border-top:1px solid var(--border)"><td style="padding:5px 8px;font-variant-numeric:tabular-nums">' + r.clin + '</td><td style="padding:5px 8px">' + escHtml(r.desc) + '</td><td style="padding:5px 8px">' + escHtml(r.period) + '</td><td style="padding:5px 8px">' + escHtml(r.type) + '</td><td style="padding:5px 8px;text-align:right">' + r.qty + '</td><td style="padding:5px 8px">' + escHtml(r.unit) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.unitPrice) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.total) + '</td></tr>';
     });
     h += '</tbody></table>';
@@ -14470,9 +14726,23 @@ function pricingRenderFteBar() {
 // GSA standard CONUS per-diem starting points (editable per opportunity).
 const PRICING_TRAVEL_DEFAULTS = { travelers: '1', tripsPerYear: '4', nightsPerTrip: '2', airfare: '500', lodgingRate: '110', mieRate: '68', localTransport: '75', flatPerTrip: '1500', gaPct: '10' };
 
+// "Default (inherit)" was removed from the per-stream escalation controls — it was
+// indistinguishable from "Held flat" (its only driver, odcEscalationMode, is permanently
+// 'none'). Any stream still carrying the old 'inherit' value, or a new stream with none set,
+// is resolved ONCE to its concrete equivalent, so behavior is preserved and the right button
+// highlights. Resolving against odcEscalationMode keeps it correct even if that ever changes.
+function _pxResolveStreamEsc(s) {
+  if (!s) return;
+  if (s.escMode == null || s.escMode === 'inherit') {
+    var mw = (pricingModel.odcEscalationMode || 'none');
+    s.escMode = mw;
+    if (mw === 'flat' && (s.escFlat == null || s.escFlat === '')) s.escFlat = (pricingModel.odcEscalationFlat != null ? pricingModel.odcEscalationFlat : '');
+  }
+}
 function pricingTravel() {
   if (!pricingModel.travel) pricingModel.travel = { mode: 'none', method: 'lump', lumpBasis: 'perPeriod', lumpAmount: '', odcCategory: 'Travel & ODC', markup: 'passthrough', gaPct: '', nte: '', travelers: '1', tripsPerYear: '', nightsPerTrip: '', airfare: '', lodgingRate: '', mieRate: '', localTransport: '', flatPerTrip: '', notes: '' };
   if (!pricingModel.travel.markup) pricingModel.travel.markup = 'passthrough';
+  _pxResolveStreamEsc(pricingModel.travel);
   return pricingModel.travel;
 }
 function pricingSetTravelMode(mode) {
@@ -14518,8 +14788,9 @@ function pricingTravelAnnual() {
 function pricingOdc() {
   if (!pricingModel.odc) pricingModel.odc = { mode: 'none', method: 'lump', lumpBasis: 'perPeriod',
     lumpAmount: '', odcCategory: 'Other Direct Costs', markup: 'passthrough', gaPct: '',
-    nte: '', escMode: 'inherit', escFlat: '', notes: '' };
+    nte: '', escMode: 'none', escFlat: '', notes: '' };
   if (!pricingModel.odc.markup) pricingModel.odc.markup = 'passthrough';
+  _pxResolveStreamEsc(pricingModel.odc);
   return pricingModel.odc;
 }
 
@@ -14654,7 +14925,7 @@ function _pxOdcBlock() {
       + ((o.markup === 'markup') ? '<div style="margin:4px 0"><label style="font-size:11px;color:var(--muted)">G&amp;A %</label> <input type="number" min="0" step="any" value="' + esc(String(o.gaPct == null ? '' : o.gaPct)) + '" onchange="pricingSetOdc(\'gaPct\',this.value)" style="width:80px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/></div>' : '')
       + '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:8px 0 2px;padding-top:8px;border-top:1px dashed var(--border)">'
       + '<span style="font-size:11.5px;font-weight:700">ODC escalation</span>'
-      + _pxEscBtn('odc', 'inherit', 'Default') + _pxEscBtn('odc', 'none', 'Held flat')
+      + _pxEscBtn('odc', 'none', 'Held flat')
       + _pxEscBtn('odc', 'match', 'Match labor') + _pxEscBtn('odc', 'flat', 'Own rate')
       + ((o.escMode === 'flat') ? '<input type="number" step="0.1" min="0" value="' + esc(String(o.escFlat == null ? '' : o.escFlat)) + '" onchange="pricingSetOdc(\'escFlat\',this.value)" placeholder="0" style="width:64px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/><span style="font-size:11.5px;color:var(--muted)">%</span>' : '')
       + '<span style="font-size:11px;color:var(--muted);margin-left:auto">' + _pxStreamEscLabel(o) + '</span></div>'
@@ -14699,7 +14970,7 @@ function pricingRenderTravel() {
     const wrapRow = `<div style="font-size:12px;margin:8px 0 2px">Markup: ${gradio('passthrough', 'Pass-through (no markup)')}${gradio('markup', 'Apply G&amp;A')}</div>${(t.markup === 'markup') ? `<div style="margin:4px 0">${num('gaPct', 'G&amp;A %', '')}</div>` : ''}`;
     const escRow = `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:8px 0 2px;padding-top:8px;border-top:1px dashed var(--border)">
       <span style="font-size:11.5px;font-weight:700">Travel escalation</span>
-      ${_pxEscBtn('travel','inherit','Default')}${_pxEscBtn('travel','none','Held flat')}${_pxEscBtn('travel','match','Match labor')}${_pxEscBtn('travel','flat','Own rate')}
+      ${_pxEscBtn('travel','none','Held flat')}${_pxEscBtn('travel','match','Match labor')}${_pxEscBtn('travel','flat','Own rate')}
       ${(t.escMode === 'flat') ? `<input type="number" step="0.1" min="0" value="${t.escFlat != null ? t.escFlat : ''}" onchange="pricingSetTravel('escFlat',this.value)" placeholder="0" style="width:64px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:right"/><span style="font-size:11.5px;color:var(--muted)">%</span>` : ''}
       <span style="font-size:11px;color:var(--muted);margin-left:auto">${_pxStreamEscLabel(t)}</span>
     </div>`;
@@ -15055,6 +15326,8 @@ function pricingBuildWorkbook() {
       else if (r.extHeader) cs.push(['', 'Option to Extend Services (FAR 52.217-8) - evaluation only, at final option-year rates; not part of the contract value above', '', '', '', '', '', '']);
       else if (r.grandWithExt) cs.push(['', 'Total evaluated price incl. 6-month extension', '', '', '', '', '', xv(r.total)]);
       else if (r.subtotal) cs.push(['', r.period + ' subtotal', '', '', '', '', '', xv(r.total)]);
+      else if (r.optHeader) cs.push(['', 'Optional / separately-priced CLINs — stated by the Government; NOT included in the contract value above', '', '', '', '', '', '']);
+      else if (r.opt) cs.push([r.clin, r.desc, r.period, r.type, r.qty, r.unit, xv(r.unitPrice), xv(r.total)]);
       // Qty x Unit Price is a LIVE formula on this row, so both operands and the
       // result are cached at full precision; the money number format rounds for display.
       else cs.push([r.clin, r.desc, r.period, r.type, r.qty, r.unit, xv(r.unitPrice), xv(r.total)]);
@@ -15067,12 +15340,15 @@ function pricingBuildWorkbook() {
     XLSX.utils.book_append_sheet(wb, wsCS, 'CLIN Schedule');
 
     const _pds = pricingClinPeriods().filter(p => !p.isExt);
-    const sm = [['CLIN Line'].concat(_pds.map(p => p.name)).concat(['Total ($)'])];
-    M.clins.lines.forEach(line => {
-      const per = _pds.map(pd => r2(pricingClinLineAmount(line, pd)));
-      sm.push([line.title || 'Line item'].concat(per).concat([r2(per.reduce((s, x) => s + x, 0))]));
+    const _smPriced = M.clins.lines.filter(l => !l.unpriced);
+    // A period-bound stated CLIN (00010 = base, 00020 = OY1 ...) only carries a value in ITS period.
+    const _smAmt = (line, pd) => (line.periodBind != null && line.periodBind !== pd.srcIdx) ? 0 : pricingClinLineAmount(line, pd);
+    const sm = [['CLIN'].concat(_pds.map(p => p.name)).concat(['Total ($)'])];
+    _smPriced.forEach(line => {
+      const per = _pds.map(pd => r2(_smAmt(line, pd)));
+      sm.push([((line.clinNo ? line.clinNo + '  ' : '') + (line.title || 'Line item'))].concat(per).concat([r2(per.reduce((s, x) => s + x, 0))]));
     });
-    const _smTot = ['TOTAL'].concat(_pds.map(pd => r2(M.clins.lines.reduce((s, line) => s + pricingClinLineAmount(line, pd), 0))));
+    const _smTot = ['TOTAL'].concat(_pds.map(pd => r2(_smPriced.reduce((s, line) => s + _smAmt(line, pd), 0))));
     _smTot.push(r2(_smTot.slice(1).reduce((s, x) => s + x, 0)));
     sm.push(_smTot);
     const wsSM = XLSX.utils.aoa_to_sheet(sm);
@@ -15089,25 +15365,10 @@ function pricingBuildWorkbook() {
   // dataset has to carry it or it cannot be pivoted by CLIN. Appended as the LAST
   // column, which keeps every existing column index, number format and SUMIFS
   // reference exactly where it was.
-  const _clinDim = (() => {
-    if (!(M.clins && M.clins.enabled) || typeof pricingClinPeriods !== 'function'
-        || typeof pricingClinNumber !== 'function') return null;
-    let pds = [];
-    try { pds = pricingClinPeriods().filter(pd => !pd.isExt); } catch (e) { return null; }
-    const lines = (typeof pricingClin === 'function' ? (pricingClin().lines || []) : []);
-    const numFor = (li, i) => (li >= 0 && pds[i]) ? pricingClinNumber(li, pds[i].prefix) : '';
-    return {
-      forTask: (taskId, i) => {
-        let li = lines.findIndex(l => l.scope === 'tasks' && (l.taskIds || []).indexOf(taskId) >= 0);
-        if (li < 0) li = lines.findIndex(l => l.scope === 'labor');
-        return numFor(li, i);
-      },
-      forScope: (scope, i) => numFor(lines.findIndex(l => l.scope === scope), i)
-    };
-  })();
+  const _clinDim = pricingClinDim();
   // Labor and non-labor now escalate on separate rates, so the workbook names the basis on
   // every non-labor row rather than leaving the reader to assume the labor rate applied.
-  const _odcBasisLabel = 'Non-labor \u00b7 escalation ' + ((typeof pricingOdcEscLabel === 'function') ? pricingOdcEscLabel() : 'held flat');
+  const _odcBasisLabel = 'Materials \u00b7 escalation ' + ((typeof _pxStreamEscLabel === 'function') ? _pxStreamEscLabel(pricingMaterials()) : 'held flat');
   const det = [['Category', 'Labor Category / Item', (gsa ? 'GSA LCAT' : 'Base Rate ($/hr)'), 'Task / CLIN Code', 'Task / CLIN Name', 'Period', 'Term (mo)', 'Hours', 'FTE', (gsa ? 'Net Rate ($/hr)' : 'Fully Burdened Rate ($/hr)'), (gsa ? 'GSA Year' : 'Wrap Factor'), 'Price ($)', 'Paid Rate ($/hr)', 'Salary ($/yr)', 'Fully Burdened Rate pre-disc ($/hr)', 'Discount (%)', 'COLA (%)', 'Pinned Anchor', 'Gov Price pre-disc ($)'].concat(_locOn ? ['Employer Tax (%)'] : []).concat(['CLIN'])];
   const _alab = (l) => { const b = l && l.rateBasis; return b === 'paid' ? 'Company Paid Hourly Rate' : b === 'loaded' ? 'Fully Burdened Hourly Rate' : b === 'salary' ? 'Company Paid Annualized Salary' : b === 'annual' ? 'Fully Burdened Annualized Salary' : '—'; };
   const _detMeta = {}, _rowsLP = {}, _rowsTP = {};
@@ -17093,7 +17354,7 @@ function _oppClearScoped(scope, btn) {
   try { if (typeof _pricingSaveTimer !== 'undefined' && _pricingSaveTimer) clearTimeout(_pricingSaveTimer); } catch (e) {}
   try {
     spec.keys.forEach(function (k) { localStorage.removeItem(k); });
-    sessionStorage.setItem('opp_flash', 'cleared');
+    sessionStorage.setItem('opp_flash', 'cleared:' + scope);
   } catch (e) {}
   location.reload();
 }
@@ -17286,9 +17547,21 @@ window.addEventListener('DOMContentLoaded', () => {
       // Remember it: this boot code runs BEFORE the deferred auto-pull, so reading
       // sessionStorage there would always find the marker already consumed and the clear
       // would be silently undone by the repopulate.
-      window._oppClearedThisLoad = (_oppFlash === 'cleared' || _oppFlash === 'factory');
-      if (_oppFlash === 'cleared') showStatus('success', 'New opportunity started', 'Workspace cleared. Use "Restore previous" on any tab to bring the last opportunity back.');
-      else if (_oppFlash === 'restored') showStatus('success', 'Previous opportunity restored', 'Your last cleared opportunity is back \u2014 re-upload its files if you need them.');
+      var _flashKind = _oppFlash.split(':')[0];      // cleared | restored | factory
+      var _flashScope = _oppFlash.split(':')[1] || '';
+      window._oppClearedThisLoad = (_flashKind === 'cleared' || _flashKind === 'factory');
+      if (_flashKind === 'cleared') {
+        // Name exactly what was cleared, so a scoped clear (e.g. pricing only) never reads
+        // as "the whole workspace is gone" — which is what this toast used to imply.
+        var _ct = ({
+          pricing: { t: 'Pricing model cleared',       m: 'Your pricing model was cleared. The rest of the opportunity (analysis, win strategy) is intact. Use \u201cRestore previous\u201d on any tab to undo.' },
+          bna:     { t: 'Bid/No-Bid analysis cleared',  m: 'The Bid/No-Bid analysis and win strategy were cleared. Your pricing model is intact. Use \u201cRestore previous\u201d on any tab to undo.' },
+          docs:    { t: 'Documents and drafts cleared', m: 'Loaded documents and generated drafts were cleared. Your saved work (analysis, pricing, strategy) is intact \u2014 re-upload documents to continue.' },
+          all:     { t: 'Workspace cleared',            m: 'Everything for this opportunity was cleared. Use \u201cRestore previous\u201d on any tab to bring it back.' }
+        })[_flashScope] || { t: 'Workspace cleared', m: 'Use \u201cRestore previous\u201d on any tab to bring the last opportunity back.' };
+        showStatus('success', _ct.t, _ct.m);
+      }
+      else if (_flashKind === 'restored') showStatus('success', 'Previous opportunity restored', 'Your last cleared opportunity is back \u2014 re-upload its files if you need them.');
     }
   } catch (e) {}
 });
@@ -19382,7 +19655,7 @@ function renderConstrainedDetect(data) {
   const solveBtn = '<button id="constrainedSolveBtn" onclick="runConstrainedSolve()" style="padding:9px 18px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">'
     + (nSolve > 0 ? ('Solve the blank stage' + (nSolve === 1 ? '' : 's') + ' and apply') : 'Apply this sheet to pricing')
     + '</button>';
-  const pwsBtn = '<button id="constrainedPwsBtn" onclick="runConstrainedPwsCheck()" style="padding:9px 18px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">Check the sheet against the PWS</button>';
+  const pwsBtn = '<button id="constrainedPwsBtn" onclick="runConstrainedPwsCheck()" style="padding:9px 18px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1.5px solid var(--mid-blue);border-radius:8px;cursor:pointer;box-shadow:0 1px 3px rgba(0,68,153,0.12)">Check the sheet against the PWS</button>';
   const noSolveNote = (nSolve === 0) ? '<p style="margin:10px 0 0;font-size:11.5px;color:var(--muted)">Every stage is already populated, so there is nothing to derive \u2014 but you still need to <strong>apply</strong> it, which loads your labor categories, FTEs, rates and hours into the pricing model and pins them for auto-build.</p>' : '';
   const nextHtml = oos ? '' :
     '<div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">' + solveBtn + pwsBtn + '</div>' + noSolveNote
@@ -19872,10 +20145,14 @@ function updateBnaBtn() {
 //      there is nothing to go back to.
 let _gsbHideTimer = null;
 const _GSB_AUTO_HIDE_MS = 10000;
+// Warnings carry more to read (often a full paragraph) and cost more if missed, so they
+// linger noticeably longer than a success/info toast before fading. Errors never auto-hide.
+const _GSB_AUTO_HIDE_MS_WARN = 30000;
 
 function _gsbArmAutoHide(type, showProgress) {
   if (_gsbHideTimer) { clearTimeout(_gsbHideTimer); _gsbHideTimer = null; }
   if (showProgress || type === 'error') return;
+  const _hideMs = (type === 'warn') ? _GSB_AUTO_HIDE_MS_WARN : _GSB_AUTO_HIDE_MS;
   _gsbHideTimer = setTimeout(function () {
     _gsbHideTimer = null;
     const bar = document.getElementById('globalStatusBar');
@@ -19887,7 +20164,7 @@ function _gsbArmAutoHide(type, showProgress) {
       if (_gsbHideTimer !== null || bar.style.opacity !== '0') return;
       if (typeof _gsbHide === 'function') _gsbHide();
     }, 550);
-  }, _GSB_AUTO_HIDE_MS);
+  }, _hideMs);
 }
 
 function _gsb(type, title, msg, showProgress) {
@@ -21069,7 +21346,7 @@ async function extractOpportunityIntel(docContent, apiKey) {
 Respond with ONLY a raw JSON object. No markdown. No backticks. Start with { end with }.\n` +
     `WORKLOAD / LEVEL-OF-EFFORT TABLE (OVERRIDES rule 10 whenever such a table is present): If the solicitation gives an estimated-hours / workload / level-of-effort table by labor category, treat those hours as the authoritative basis and do NOT estimate. (a) ANNUAL hours = the sum of the BASE-YEAR hours column ONLY; NEVER add the base-year and option-year columns together (option periods are SEPARATE performance periods, not additional concurrent staff). (b) fte_count = annual hours / 1912, rounded to ONE decimal, PREFIXED with "[GovEst] " because it is derived from the government's STATED workload estimate (an estimate, not a firm requirement) - e.g. "[GovEst] 7.7". (c) For EACH labor category, base_year_fte = that category base-year hours / 1912 to one decimal, and set base_year_hours to that category's base-year hours as an INTEGER exactly as stated in the table. (d) base_year_value and total_contract_value are the government's stated workload priced at a rate WE assume, so PREFIX BOTH with "[Inferred] ". Compute base_year_value = annual hours times a REALISTIC blended fully-loaded hourly rate: for analytical / professional-services labor (data analysts, business process engineers, program managers, and similar) a defensible blended fully-loaded rate is roughly $100-$150/hr - use a higher rate ONLY for genuinely specialized or cleared labor and note that in award_value_rationale. Do NOT use inflated rates (e.g. $250+/hr) for standard analyst / professional labor. Example base_year_value "[Inferred] ~$1.8M/yr". total_contract_value = base_year_value times the real contract LENGTH IN YEARS, not the number of ordering periods - a 6-month base plus four 12-month option years is 4.5 years, not 5 - e.g. "[Inferred] ~$3.6M". In award_value_rationale state the hours basis and the assumed blended rate (e.g. "RFQ base-year workload of 14685 hours across 5 labor categories at a blended loaded rate of ~$125/hr").\n\n` +
     `IMPORTANT: Use only plain ASCII in all string values. No special characters, no em-dashes, no smart quotes, no newlines inside strings.\n\n` +
-    `{"department_agency":"top-level Cabinet Department or independent agency, with abbreviation","sub_agency":"operating division/bureau/command beneath it with abbreviation, or empty string if none","contracting_office":"specific contracting/buying office issuing this action, or empty string if not stated","requirement_name":"EXACT verbatim title from document","id_number":"exact solicitation/RFQ/RFP number","stage":"exactly one of: Sources Sought | RFI | Draft | Pre-solicitation | RFQ | RFP (per rule 5); never 'Draft PWS'; or 'Not stated in documents'","next_due_date":"","opportunity_url":"","source":"where this opportunity was found/sourced if the user or documents state it - e.g. SAM.gov, GSA eBuy, Unison Marketplace/ORBIT, an agency forecast (APFS/AFPS), GovWin, a direct agency email, or a sources-sought notice. This is the portal/channel it came through, distinct from the contract vehicle. Use the value the user provided if noted; empty string if not stated","description":"2-3 sentence description in your own words; if this opportunity establishes or is itself a contract vehicle (IDIQ/MATOC/BPA/GWAC), state that explicitly","fte_count":"per the WORKLOAD / LEVEL-OF-EFFORT rule above when such a table is present (base-year hours only / 1912, one decimal, PREFIXED [GovEst]); else the explicitly stated figure (no prefix); else empty string","contract_years":"total years in the period of performance as a PLAIN INTEGER (base year + all option years), e.g. 5 for a base plus four option years; empty string if not stated - do NOT put hours, dollars, or dates here","place_of_performance":"","work_setting":"","period_of_performance":"","pop_start_date":"the START date of the base period of performance if the documents state one (e.g. an anticipated award date or base-period start); if only estimated/anticipated, prefix [Inferred]; empty if not stated","pop_end_date":"the END date of the BASE period ONLY (the first ordering/performance period, typically ~364-365 days after pop_start_date) as YYYY-MM-DD. This is NOT the end of the option years - if the base period is 12 months and starts 2025-10-01 this is 2026-09-30. Use a stated base-period end if given; else compute it from pop_start_date + the base period length (prefix [Inferred] if computed). Do NOT put the final option-year end date here - that is last_possible_performance_date. Empty if neither stated nor computable","last_possible_performance_date":"the LAST date performance can occur on the contract, INCLUDING every option period - the end of the final option year (typically ~5 years after pop_start_date for a base + four options) as YYYY-MM-DD. This is DISTINCT from pop_end_date: pop_end_date ends the base period, this ends the whole contract. On a single-period contract with no options the two are the SAME. Use a stated final/option end date if given; else compute it from pop_start_date + total contract duration (base + all options), prefix [Inferred]; empty if neither stated nor computable","facility_clearance_required":"","personnel_clearance_required":"","set_aside":"the EXACT operative set-aside from the solicitation (the SAM.gov Set-Aside Type, the 'Set-Aside:' block, or the FAR clause: 52.219-6 = Total Small Business, 52.219-27 = SDVOSB, 52.219-30 = WOSB, 52.219-29 = EDWOSB, 52.219-3 = HUBZone, 52.219-18 = 8(a)). These are DISTINCT categories - never substitute one for another; a Total Small Business set-aside is NOT WOSB/SDVOSB/8(a)/HUBZone. Cross-check against the required certifications - if offerors must hold a specific certification, the set_aside MUST match it. Do NOT infer a socioeconomic set-aside from small-business subcontracting goals, agency socioeconomic goals, or NAICS size-standard eligibility - classify ONLY from the operative set-aside determination. Use 'Not stated in documents' only if genuinely absent","contract_vehicle":"the NAME of the existing contract vehicle this work is ordered under, if any - e.g. SEWP V, OASIS+, Alliant 2, GSA MAS / Federal Supply Schedule, CIO-SP4, 8(a) STARS III, or a specifically named agency IDIQ or BPA. This is a PROPER NAME, not a contract type or structure: do NOT put IDIQ, MATOC, BPA, GWAC, single/multiple award, FFP, or T&M here (those belong in contract_type). If this opportunity is ITSELF establishing a new vehicle (e.g. standing up an IDIQ/MATOC/BPA that is being competed), put N/A here and make that clear in requirement_name and description instead. If the work is open-market/standalone or no named vehicle is identified, put N/A","ko_name_office":"","cor_name_office":"","naics_code":"","sin":"","psc":"","base_year_value":"","total_contract_value":"","award_value_rationale":"","new_or_recompete":"","incumbent":"","contract_type":"","sca_coverage":"whether the contract is covered by the Service Contract Act / Service Contract Labor Standards (SCLS). Answer 'Yes - SCA covered' if a Wage Determination is attached or referenced (a WD document, an SF-98/98a, a WD number such as 2015-XXXX or a state/area WD, or DOL occupation-and-wage tables) OR FAR 52.222-41 applies - the PRESENCE of a Wage Determination is DECISIVE, answer Yes. Answer 'No - exempt' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption). Do NOT answer No merely because the work sounds professional or technical. Use 'Not stated in documents' only if genuinely not addressed","loe_basis":"government if the solicitation gives a workload/staffing/hours table, otherwise quoter (you propose the team in a pricing model); empty if unclear","certifications_required":[],"labor_categories":[{"lcat":"Exact Labor Category Title","key_personnel":false,"is_sca":false,"min_hourly_rate":"","clearance":"","experience_yrs":"","education":"","base_year_fte":"","base_year_hours":"","est_loaded_rate":"","notes":""}],"pursuit_recommendation":"prime/sub/pass with brief rationale"}`;
+    `{"department_agency":"top-level Cabinet Department or independent agency, with abbreviation","sub_agency":"operating division/bureau/command beneath it with abbreviation, or empty string if none","contracting_office":"specific contracting/buying office issuing this action, or empty string if not stated","requirement_name":"EXACT verbatim title from document","id_number":"exact solicitation/RFQ/RFP number","stage":"exactly one of: Sources Sought | RFI | Draft | Pre-solicitation | RFQ | RFP (per rule 5); never 'Draft PWS'; or 'Not stated in documents'","next_due_date":"","opportunity_url":"","source":"where this opportunity was found/sourced if the user or documents state it - e.g. SAM.gov, GSA eBuy, Unison Marketplace/ORBIT, an agency forecast (APFS/AFPS), GovWin, a direct agency email, or a sources-sought notice. This is the portal/channel it came through, distinct from the contract vehicle. Use the value the user provided if noted; empty string if not stated","description":"2-3 sentence description in your own words; if this opportunity establishes or is itself a contract vehicle (IDIQ/MATOC/BPA/GWAC), state that explicitly","fte_count":"per the WORKLOAD / LEVEL-OF-EFFORT rule above when such a table is present (base-year hours only / 1912, one decimal, PREFIXED [GovEst]); else the explicitly stated figure (no prefix); else empty string","contract_years":"total years in the period of performance as a PLAIN INTEGER (base year + all option years), e.g. 5 for a base plus four option years; empty string if not stated - do NOT put hours, dollars, or dates here","place_of_performance":"","work_setting":"","period_of_performance":"","pop_start_date":"the START date of the base period of performance if the documents state one (e.g. an anticipated award date or base-period start); if only estimated/anticipated, prefix [Inferred]; empty if not stated","pop_end_date":"the END date of the BASE period ONLY (the first ordering/performance period, typically ~364-365 days after pop_start_date) as YYYY-MM-DD. This is NOT the end of the option years - if the base period is 12 months and starts 2025-10-01 this is 2026-09-30. Use a stated base-period end if given; else compute it from pop_start_date + the base period length (prefix [Inferred] if computed). Do NOT put the final option-year end date here - that is last_possible_performance_date. Empty if neither stated nor computable","last_possible_performance_date":"the LAST date performance can occur on the contract, INCLUDING every option period - the end of the final option year (typically ~5 years after pop_start_date for a base + four options) as YYYY-MM-DD. This is DISTINCT from pop_end_date: pop_end_date ends the base period, this ends the whole contract. On a single-period contract with no options the two are the SAME. Use a stated final/option end date if given; else compute it from pop_start_date + total contract duration (base + all options), prefix [Inferred]; empty if neither stated nor computable","facility_clearance_required":"","personnel_clearance_required":"","set_aside":"the EXACT operative set-aside from the solicitation (the SAM.gov Set-Aside Type, the 'Set-Aside:' block, or the FAR clause: 52.219-6 = Total Small Business, 52.219-27 = SDVOSB, 52.219-30 = WOSB, 52.219-29 = EDWOSB, 52.219-3 = HUBZone, 52.219-18 = 8(a)). These are DISTINCT categories - never substitute one for another; a Total Small Business set-aside is NOT WOSB/SDVOSB/8(a)/HUBZone. Cross-check against the required certifications - if offerors must hold a specific certification, the set_aside MUST match it. Do NOT infer a socioeconomic set-aside from small-business subcontracting goals, agency socioeconomic goals, or NAICS size-standard eligibility - classify ONLY from the operative set-aside determination. Use 'Not stated in documents' only if genuinely absent","contract_vehicle":"the NAME of the existing contract vehicle this work is ordered under, if any - e.g. SEWP V, OASIS+, Alliant 2, GSA MAS / Federal Supply Schedule, CIO-SP4, 8(a) STARS III, or a specifically named agency IDIQ or BPA. This is a PROPER NAME, not a contract type or structure: do NOT put IDIQ, MATOC, BPA, GWAC, single/multiple award, FFP, or T&M here (those belong in contract_type). If this opportunity is ITSELF establishing a new vehicle (e.g. standing up an IDIQ/MATOC/BPA that is being competed), put N/A here and make that clear in requirement_name and description instead. If the work is open-market/standalone or no named vehicle is identified, put N/A","ko_name_office":"","cor_name_office":"","naics_code":"","sin":"","psc":"","base_year_value":"","total_contract_value":"","award_value_rationale":"","new_or_recompete":"","incumbent":"","contract_type":"","sca_coverage":"whether the contract is covered by the Service Contract Act / Service Contract Labor Standards (SCLS). Answer 'Yes - SCA covered' if a Wage Determination is attached or referenced (a WD document, an SF-98/98a, a WD number such as 2015-XXXX or a state/area WD, or DOL occupation-and-wage tables) OR FAR 52.222-41 applies - the PRESENCE of a Wage Determination is DECISIVE, answer Yes. Answer 'No - exempt' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption). Do NOT answer No merely because the work sounds professional or technical. Use 'Not stated in documents' only if genuinely not addressed","loe_basis":"government if the solicitation gives a workload/staffing/hours table, otherwise quoter (you propose the team in a pricing model); empty if unclear","certifications_required":[],"labor_categories":[{"lcat":"Exact Labor Category Title","key_personnel":false,"is_sca":false,"min_hourly_rate":"","clearance":"","experience_yrs":"","education":"","base_year_fte":"","base_year_hours":"","est_loaded_rate":"","notes":""}],"stated_clins":[{"number":"the CLIN number EXACTLY as written in the solicitation's pricing/CLIN schedule (Section B, or a Section 1.2 'Contract Line Item Number' table), preserving ALL leading zeros and the exact width used (e.g. '00010','00011','0001','1001','0002AA'); copy verbatim - never renumber, pad, or normalize. Include EVERY CLIN listed, base and option and optional","title":"the CLIN description/title as written (e.g. 'Activity-Based Costing Support','Travel')","clin_type":"one of 'FFP' (firm-fixed-price), 'reimbursable' (a cost-reimbursable / travel / ODC / not-to-exceed line), 'T&M', or 'cost'; use any explicit FFP-vs-reimbursable CLIN instruction list in the pricing section to classify","nte":"the not-to-exceed / ceiling dollar amount stated for THIS CLIN as a number (e.g. 7500, 25000); '' if none stated","period_label":"the performance period this CLIN sits under, copied from its heading (e.g. 'Base Period','Option Period 1','Option Year 2','Optional Base','Optional Task Option Period 1')","scope_hint":"one of 'labor' (the priced services/effort CLIN), 'travel', 'materials', or 'other'","optional":"true if this CLIN is an OPTIONAL / separately-exercisable line or belongs to a separate optional task track (not part of the primary base+option-year pricing); else false"}],"pursuit_recommendation":"prime/sub/pass with brief rationale"}`;
 
   const content = [...docContent, { type: 'text', text: prompt }];
 
