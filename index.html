@@ -2194,7 +2194,7 @@
 
   <!-- ── Constrained / reverse pricing (Phase 8) — pin populated stages, solve the rest ── -->
   <div class="card" id="constrainedCard" style="margin-bottom:20px">
-    <div class="card-header"><span class="icon">🧩</span> Constrained pricing (reverse-solve) <span style="font-size:11px;font-weight:700;color:#3730a3;background:#e0e7ff;border:1px solid #c7d2fe;border-radius:20px;padding:2px 10px;margin-left:8px;vertical-align:middle">Optional · reverse-solve entry point</span></div>
+    <div class="card-header"><span class="icon">🧩</span> Start from an existing pricing sheet <span style="font-size:11px;font-weight:700;color:#3730a3;background:#e0e7ff;border:1px solid #c7d2fe;border-radius:20px;padding:2px 10px;margin-left:8px;vertical-align:middle">Optional · reverse-solve</span></div>
     <div class="card-body">
       <p style="font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.6">Already have a partly-built pricing spreadsheet? Upload it and the tool detects which stages are already populated — PWS-task mapping, labor categories, GSA-schedule mapping, FTEs, and rates — treats those as fixed, and solves only what's blank. <strong>Optional</strong> — skip this and build forward from the steps below if you're starting fresh.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -2264,8 +2264,8 @@
       <!-- AI structural auto-build -->
       <div style="border:1px dashed var(--blue);border-radius:10px;padding:12px 14px;margin-bottom:16px;background:#f5f9ff">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-          <div style="font-size:12.5px;color:var(--text);max-width:560px"><strong>✨ Auto-build the labor structure.</strong> <span style="color:var(--muted)">Your PWS task list above is the input — confirm it first, then build.</span> Claude proposes a labor mix, integer headcount, an hours allocation across your PWS tasks, and the role rules — and, in GSA mode, maps each role to the best-fit Schedule LCAT by education, experience, and scope. It also runs a cost-realism check. <span style="color:var(--muted)">You review and adjust everything; rates are never invented.</span></div>
-          <button onclick="pricingAutoBuildStructure()" id="pricingAutoBuildBtn" style="padding:8px 15px;font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:7px;cursor:pointer;white-space:nowrap">✨ Auto-build structure</button>
+          <div style="font-size:12.5px;color:var(--text);max-width:560px"><strong>✨ Draft the staffing plan.</strong> <span style="color:var(--muted)">Your PWS task list above is the input — confirm it first, then build.</span> Claude proposes a labor mix, integer headcount, an hours allocation across your PWS tasks, and the role rules — and, in GSA mode, maps each role to the best-fit Schedule LCAT by education, experience, and scope. It also runs a cost-realism check. <span style="color:var(--muted)">You review and adjust everything; rates are never invented.</span></div>
+          <button onclick="pricingAutoBuildStructure()" id="pricingAutoBuildBtn" style="padding:8px 15px;font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:7px;cursor:pointer;white-space:nowrap">✨ Draft the staffing plan</button>
         </div>
         <div id="pricingAutoBuildProgress" style="display:none;margin-top:10px"></div>
         <div id="pricingAutoBuildPanel" style="margin-top:12px"></div>
@@ -2359,7 +2359,28 @@
       <div id="pricingTravel" style="margin-bottom:16px"></div>
       <div id="pricingMaterials" style="margin-bottom:16px"></div>
       <div id="pricingClin" style="margin-bottom:16px"></div>
+      <!-- Finalize: the ONE explicit build-join. The model is assembled continuously; this locks in
+           the solicitation's CLINs onto it as the single source of truth. Check + export come after. -->
+      <div style="margin-bottom:16px;border-top:1px solid var(--border);padding-top:16px">
+        <div style="font-weight:700;font-size:13px;margin-bottom:2px">🔨 Finalize &amp; build</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">One button, at the end: joins the solicitation's CLIN structure onto your assembled pricing (labor, rates, hours, discount, travel) into a single source of truth. Everything else has been live all along \u2014 this locks the CLINs in. Do this before checking against the PWS or exporting.</div>
+        <button id="pricingFinalizeBtn" onclick="pricingFinalizeBuild(this)" style="padding:9px 18px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">🔨 Finalize &amp; build</button>
+        <div id="pricingFinalizeStatus" style="display:none;font-size:12.5px;margin-top:12px"></div>
+      </div>
+
+      <!-- Pivot: slice & dice the FINALIZED model (CLINs applied above). -->
       <div id="pricingPivot" style="margin-bottom:16px"></div>
+
+      <!-- End-of-flow PWS check: moved here from the reverse-solve card so it runs AFTER the pricing
+           is built (labor, rates, hours, discount, travel, CLINs), not before. Reads the current model. -->
+      <div style="margin-bottom:16px;border-top:1px solid var(--border);padding-top:16px">
+        <div style="font-weight:700;font-size:13px;margin-bottom:2px">🧭 Check pricing against the PWS</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Run this once your pricing is built \u2014 labor, rates, hours, discount, travel, and (if the solicitation states them) the CLINs applied above. It compares your current priced model against the PWS / solicitation requirements.</div>
+        <button id="constrainedPwsBtn" onclick="runConstrainedPwsCheck()" style="padding:9px 18px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1.5px solid var(--mid-blue);border-radius:8px;cursor:pointer;box-shadow:0 1px 3px rgba(0,68,153,0.12)">Check pricing against the PWS</button>
+        <div id="constrainedPwsProgress" style="display:none;margin-top:12px"></div>
+        <div id="constrainedPwsStatus" style="display:none;font-size:13px;color:var(--muted);margin-top:12px"></div>
+        <div id="constrainedPwsResults" style="display:none;margin-top:14px"></div>
+      </div>
 
       <!-- Live summary -->
       <div id="pricingSummary" style="margin-bottom:16px"></div>
@@ -3187,7 +3208,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '212';
+const APP_VERSION = '221';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -11771,7 +11792,7 @@ function _clinMapPeriod(label) {
 // Build clins.lines from the stated CLINs. Primary-track CLINs are period-bound and priced from
 // the matrix/travel; optional/separate-track CLINs are captured verbatim as 'unpriced' and listed
 // (not folded into contract value). Deterministic — the accuracy rides only on the extraction.
-function pricingClinBuildFromStated() {
+function pricingClinBuildFromStated(opts) {
   const scs = pricingStatedClins(); if (!scs.length) return false;
   const c = pricingClin();
   c.lines = scs.map(sc => {
@@ -11798,9 +11819,11 @@ function pricingClinBuildFromStated() {
     return line;
   });
   c.enabled = true; c._fromStated = true; c._fromTasks = false;
-  if (typeof pricingSave === 'function') pricingSave();
-  if (typeof pricingRenderClin === 'function') pricingRenderClin();
-  if (typeof pricingRenderAll === 'function') pricingRenderAll();
+  if (!(opts && opts.silent)) {
+    if (typeof pricingSave === 'function') pricingSave();
+    if (typeof pricingRenderClin === 'function') pricingRenderClin();
+    if (typeof pricingRenderAll === 'function') pricingRenderAll();
+  }
   return true;
 }
 // ── Pricing pivot ("slice & dice") ────────────────────────────────────────────
@@ -11829,64 +11852,99 @@ function pricingFlatRows() {
   const frac = i => pricingPeriodFraction(P[i]);
   const effRate = (l, i) => (gsa ? pricingLoadedRate(l, i) : pricingLoadedRate(l, 0) * (mult[i] || 1)) * pricingCompDiscountFactor(l, i);
   const pName = i => (P[i] && P[i].name) || ('Period ' + (i + 1));
+  const gsaYear = i => (typeof pricingGsaScheduleYearForPeriod === 'function') ? pricingGsaScheduleYearForPeriod(i) : 1;
   const dim = (typeof pricingClinDim === 'function') ? pricingClinDim() : null;
   const clinT = (tid, i) => dim ? (dim.forTask(tid, i) || '') : '';
   const clinS = (sc, i) => dim ? (dim.forScope(sc, i) || '') : '';
-  M.lcats.forEach(l => { (M.tasks || []).forEach(t => { P.forEach((p, i) => {
-    const ch = pricingPeriodCellHours(l.id, t.id, i); if (ch <= 0) return;
-    const hrs = ch * frac(i), price = hrs * effRate(l, i), fte = ch / (pricingHpf(l) || defaultHpf() || 1);
-    rows.push({ category: 'Labor', lcat: (l.name || '(unnamed)'), task: (((t.code ? t.code + ' ' : '') + (t.name || '')).trim() || '(task)'), clin: clinT(t.id, i), period: pName(i), periodIdx: i, price: price, hours: hrs, fte: fte });
-  }); }); });
+  // Every LCAT x task x period row carries the FULL attribute set so the pivot can slice by any of
+  // them. Rate/salary/discount are per-role-per-period; for GSA roles the paid rate is implied back
+  // out of the Schedule rate (loaded / wrap), matching the Step 4 Rate Detail.
+  M.lcats.forEach(l => {
+    const W = pricingEffectiveWrapFactor(l);
+    const gLcat = l.gsaLcat || '';
+    (M.tasks || []).forEach(t => { P.forEach((p, i) => {
+      const ch = pricingPeriodCellHours(l.id, t.id, i); if (ch <= 0) return;
+      const hrs = ch * frac(i), price = hrs * effRate(l, i), fte = ch / (pricingHpf(l) || defaultHpf() || 1);
+      // billed = the SAME per-period rate the price uses (effRate), so burdenedRate x hours == price
+      // in every period (escalation included). paid/undisc are escalated to match (non-GSA carries the
+      // option-year multiplier; GSA carries it via the schedule year already baked into loaded(i)).
+      const esc = gsa ? 1 : (mult[i] || 1);
+      const paid = gsa ? (W > 0 ? pricingLoadedRate(l, i) / W : 0) : (pricingEffectiveBaseRate(l) * esc);
+      const billed = effRate(l, i);
+      const undisc = gsa ? (pricingGsaRateFor(l, gsaYear(i)) || 0) : (pricingEffectiveBaseRate(l) * W * esc);
+      const discount = undisc > 0 ? (1 - billed / undisc) * 100 : 0;
+      const baseBilled = effRate(l, 0);
+      const escalation = baseBilled > 0 ? (billed / baseBilled - 1) * 100 : 0;
+      rows.push({ category: 'Labor', lcat: (l.name || '(unnamed)'), gsaLcat: gLcat, task: (((t.code ? t.code + ' ' : '') + (t.name || '')).trim() || '(task)'), clin: clinT(t.id, i), period: pName(i), periodIdx: i, price: price, hours: hrs, fte: fte, baseRate: paid, burdenedRate: billed, listRate: undisc, salary: paid * 2080, discount: discount, escalation: escalation });
+    }); });
+  });
   const _tp = (typeof pricingTravelOnlyByPeriod === 'function') ? pricingTravelOnlyByPeriod() : [];
   const _op = (typeof pricingOdcOnlyByPeriod === 'function') ? pricingOdcOnlyByPeriod() : [];
   const _mp = (typeof pricingMaterialsByPeriod === 'function') ? pricingMaterialsByPeriod() : [];
+  const _nl = (cat, amt, i, scope) => ({ category: cat, lcat: cat, gsaLcat: '', task: cat, clin: clinS(scope, i), period: pName(i), periodIdx: i, price: amt, hours: 0, fte: 0, baseRate: 0, burdenedRate: 0, listRate: 0, salary: 0, discount: 0, escalation: 0 });
   P.forEach((p, i) => {
-    if ((_tp[i] || 0) > 0) rows.push({ category: 'Travel', lcat: 'Travel', task: 'Travel', clin: clinS('travelodc', i), period: pName(i), periodIdx: i, price: _tp[i], hours: 0, fte: 0 });
-    if ((_op[i] || 0) > 0) rows.push({ category: 'ODC', lcat: 'ODC', task: 'ODC', clin: clinS('travelodc', i), period: pName(i), periodIdx: i, price: _op[i], hours: 0, fte: 0 });
-    if ((_mp[i] || 0) > 0) rows.push({ category: 'Materials', lcat: 'Materials', task: 'Materials', clin: clinS('materials', i), period: pName(i), periodIdx: i, price: _mp[i], hours: 0, fte: 0 });
+    if ((_tp[i] || 0) > 0) rows.push(_nl('Travel', _tp[i], i, 'travelodc'));
+    if ((_op[i] || 0) > 0) rows.push(_nl('ODC', _op[i], i, 'travelodc'));
+    if ((_mp[i] || 0) > 0) rows.push(_nl('Materials', _mp[i], i, 'materials'));
   });
   return rows;
 }
-var _PX_DIMS = { category: 'Category', lcat: 'Labor Category', task: 'PWS Task', clin: 'CLIN', period: 'Period' };
-var _PX_MEAS = { price: 'Price ($)', hours: 'Hours', fte: 'FTE' };
-var _pxPivot = { r1: 'clin', r2: '', col: 'period', meas: 'price' };
+var _PX_DIMS = { category: 'Category', lcat: 'Labor Category', gsaLcat: 'GSA LCAT', task: 'PWS Task', clin: 'CLIN', period: 'Period' };
+var _PX_MEAS = { price: 'Price ($)', hours: 'Hours', fte: 'FTE', baseRate: 'Base rate ($/hr)', burdenedRate: 'Burdened rate ($/hr)', listRate: 'List rate ($/hr, pre-discount)', salary: 'Salary ($/yr)', discount: 'Discount (%)', escalation: 'Escalation (% vs base yr)' };
+// Quantities SUM across a cell; rates AVERAGE (summing $/hr is meaningless). Rate averages ignore
+// zero rows (e.g. travel/ODC/materials carry no rate), so they reflect only the priced labor.
+var _PX_MEAS_AGG = { price: 'sum', hours: 'sum', fte: 'sum', baseRate: 'avg', burdenedRate: 'avg', listRate: 'avg', salary: 'avg', discount: 'avg', escalation: 'avg' };
+var _pxPivot = { r1: 'clin', r2: '', r3: '', col: 'period', meas: 'price' };
+var _pxAskQ = '', _pxAskNote = '';
 // Aggregate the flat rows into a 2-D table (array-of-arrays). Up to two row dimensions, one optional
 // column dimension, one measure; sum. Returns the AOA plus metadata for rendering/copy/download.
 function pricingPivotBuild() {
   const cfg = _pxPivot;
-  let rowDims = [cfg.r1, cfg.r2].filter(d => _PX_DIMS[d]);
+  let rowDims = [cfg.r1, cfg.r2, cfg.r3].filter(d => _PX_DIMS[d]);
   rowDims = rowDims.filter((d, i) => rowDims.indexOf(d) === i);
   if (!rowDims.length) rowDims = ['clin'];
   const colDim = (_PX_DIMS[cfg.col] && rowDims.indexOf(cfg.col) < 0) ? cfg.col : '';
   const meas = _PX_MEAS[cfg.meas] ? cfg.meas : 'price';
+  const avg = (_PX_MEAS_AGG[meas] === 'avg');
   const rows = (typeof pricingFlatRows === 'function') ? pricingFlatRows() : [];
   const val = r => r[meas] || 0;
   const rkArr = r => rowDims.map(d => (r[d] == null || r[d] === '') ? '\u2014' : String(r[d]));
   const NOCOL = '\u0002';
-  const cell = {}, order = [], labels = {}, colKeys = [];
+  const cell = {}, order = [], labels = {}, colKeys = [], colTot = {}, grand = { s: 0, n: 0 };
+  const acc = (o, v, use) => { if (avg) { if (use) { o.s += v; o.n += 1; } } else { o.s += v; o.n += 1; } };
   rows.forEach(r => {
-    const arr = rkArr(r), k = arr.join('\u0001');
+    const arr = rkArr(r), k = arr.join('\u0001'), v = val(r);
+    // Rate/ratio averages apply to LABOR rows only (travel/ODC/materials carry no rate); a labor
+    // row's legitimate 0 (base-year escalation, a 0% discount) still counts.
+    const use = (r.category === 'Labor');
     if (!(k in cell)) { cell[k] = {}; order.push(k); labels[k] = arr; }
     const ck = colDim ? ((r[colDim] == null || r[colDim] === '') ? '\u2014' : String(r[colDim])) : NOCOL;
     if (colDim && colKeys.indexOf(ck) < 0) colKeys.push(ck);
-    cell[k][ck] = (cell[k][ck] || 0) + val(r);
+    if (!cell[k][ck]) cell[k][ck] = { s: 0, n: 0 };
+    acc(cell[k][ck], v, use);
+    if (colDim) { if (!colTot[ck]) colTot[ck] = { s: 0, n: 0 }; acc(colTot[ck], v, use); }
+    acc(grand, v, use);
   });
-  const rnd = v => meas === 'fte' ? Math.round(v * 100) / 100 : Math.round(v);
+  const fin = o => o ? (avg ? (o.n > 0 ? o.s / o.n : 0) : o.s) : 0;
+  const rnd = x => (meas === 'fte' || avg) ? Math.round(x * 100) / 100 : Math.round(x);
   const header = rowDims.map(d => _PX_DIMS[d]);
-  if (colDim) { colKeys.forEach(ck => header.push(ck)); header.push('Total'); }
+  if (colDim) { colKeys.forEach(ck => header.push(ck)); header.push(avg ? 'Avg' : 'Total'); }
   else header.push(_PX_MEAS[meas]);
-  const aoa = [header]; const colTot = {}; let grand = 0;
+  const aoa = [header];
   order.forEach(k => {
     const row = labels[k].slice();
-    if (colDim) { let rt = 0; colKeys.forEach(ck => { const v = cell[k][ck] || 0; row.push(rnd(v)); rt += v; colTot[ck] = (colTot[ck] || 0) + v; }); row.push(rnd(rt)); grand += rt; }
-    else { const v = cell[k][NOCOL] || 0; row.push(rnd(v)); grand += v; }
+    if (colDim) {
+      const rs = { s: 0, n: 0 };
+      colKeys.forEach(ck => { const o = cell[k][ck]; row.push(rnd(fin(o))); if (o) { rs.s += o.s; rs.n += o.n; } });
+      row.push(rnd(fin(rs)));
+    } else { row.push(rnd(fin(cell[k][NOCOL]))); }
     aoa.push(row);
   });
-  const tot = rowDims.map((_, i) => i === 0 ? 'Total' : '');
-  if (colDim) { colKeys.forEach(ck => tot.push(rnd(colTot[ck] || 0))); tot.push(rnd(grand)); }
-  else tot.push(rnd(grand));
+  const tot = rowDims.map((_, i) => i === 0 ? (avg ? 'Avg' : 'Total') : '');
+  if (colDim) { colKeys.forEach(ck => tot.push(rnd(fin(colTot[ck])))); tot.push(rnd(fin(grand))); }
+  else tot.push(rnd(fin(grand)));
   aoa.push(tot);
-  return { aoa: aoa, nRowDims: rowDims.length, meas: meas, colDim: colDim, empty: order.length === 0 };
+  return { aoa: aoa, nRowDims: rowDims.length, meas: meas, colDim: colDim, avg: avg, empty: order.length === 0 };
 }
 function pricingSetPivot(field, val) { _pxPivot[field] = val; pricingPivotRender(); }
 function pricingPivotRender() {
@@ -11899,9 +11957,15 @@ function pricingPivotRender() {
   let h = '<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:#fff">' +
     '<div style="font-weight:700;font-size:14px;margin-bottom:2px">\uD83D\uDCCA Pricing pivot \u2014 slice &amp; dice</div>' +
     '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Lay the priced model out any way \u2014 by CLIN, PWS task, labor category, period, or a combination. Copy it straight into Excel (each value lands in its own cell) or download an .xlsx.</div>' +
+    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">' +
+      '<input id="pxAskInput" type="text" value="' + pricingEsc(_pxAskQ) + '" oninput="_pxAskQ=this.value" onkeydown="if(event.key===\'Enter\')pricingPivotAsk()" placeholder="Ask or describe what you want to see \u2014 e.g. \'burdened rate by CLIN per year\', \'show me hours by labor category and task\'" style="flex:1;min-width:280px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12.5px" />' +
+      '<button id="pxAskBtn" onclick="pricingPivotAsk()" style="padding:8px 14px;font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">Ask</button>' +
+    '</div>' +
+    (_pxAskNote ? ('<div style="font-size:11px;margin:-4px 0 10px;color:' + (_pxAskNote.charAt(0) === '\u2713' ? '#166534' : 'var(--warn)') + '">' + escHtml(_pxAskNote) + '</div>') : '') +
     '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Rows</label>' + sel('r1', _pxPivot.r1, _PX_DIMS, false) + '</div>' +
-    '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">then (optional)</label>' + sel('r2', _pxPivot.r2, _PX_DIMS, true) + '</div>' +
+    '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">then</label>' + sel('r2', _pxPivot.r2, _PX_DIMS, true) + '</div>' +
+    '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">then</label>' + sel('r3', _pxPivot.r3, _PX_DIMS, true) + '</div>' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Columns (optional)</label>' + sel('col', _pxPivot.col, _PX_DIMS, true) + '</div>' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Value</label>' + sel('meas', _pxPivot.meas, _PX_MEAS, false) + '</div>' +
     '<div style="display:flex;gap:8px">' + btn('pricingPivotCopy()', 'Copy for Excel', true) + btn('pricingPivotDownload()', 'Download .xlsx', false) + '</div>' +
@@ -11909,7 +11973,7 @@ function pricingPivotRender() {
   if (built.empty) { h += '<div style="font-size:12px;color:var(--muted)">No priced rows yet \u2014 add labor hours (and any travel/materials) above, then build your view here.</div>'; }
   else {
     const aoa = built.aoa, nrd = built.nRowDims;
-    const disp = (v) => built.meas === 'price' ? pricingFmt(v) : (built.meas === 'fte' ? (v).toFixed(2) : (v).toLocaleString('en-US'));
+    const disp = (v) => { const m = built.meas; if (m === 'price' || m === 'salary') return pricingFmt(v); if (m === 'fte') return (v).toFixed(2); if (m === 'discount' || m === 'escalation') return (Math.round(v * 10) / 10) + '%'; if (m === 'baseRate' || m === 'burdenedRate' || m === 'listRate') return '$' + (Math.round(v * 100) / 100).toFixed(2); return (v).toLocaleString('en-US'); };
     h += '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:12.5px;min-width:100%">';
     aoa.forEach((row, ri) => {
       const isHead = ri === 0, isTot = ri === aoa.length - 1;
@@ -11929,6 +11993,44 @@ function pricingPivotRender() {
 // Copy so Excel drops each value into its OWN cell: text/html <table> (Excel prefers it, keeps
 // numbers numeric + bold headers) with a text/plain TSV fallback (tab => new cell). Raw numbers,
 // no currency symbols, so nothing is parsed as text or split across cells.
+async function pricingPivotAsk() {
+  const inp = document.getElementById('pxAskInput');
+  const q = inp ? String(inp.value || '').trim() : String(_pxAskQ || '').trim();
+  _pxAskQ = q;
+  const btn = document.getElementById('pxAskBtn');
+  const setNote = (t) => { _pxAskNote = t; };
+  if (!q) { setNote('Type a question first \u2014 or just use the dropdowns.'); pricingPivotRender(); return; }
+  const apiKey = (typeof getApiKey === 'function') ? getApiKey() : '';
+  if (!apiKey) { setNote('Add your Anthropic API key at the top to use the question box (the dropdowns work without it).'); pricingPivotRender(); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Asking\u2026'; }
+  const dims = Object.keys(_PX_DIMS).map(k => '"' + k + '" (' + _PX_DIMS[k] + ')').join(', ');
+  const meas = Object.keys(_PX_MEAS).map(k => '"' + k + '" (' + _PX_MEAS[k] + ')').join(', ');
+  const prompt = 'You configure a pricing PIVOT TABLE from the user\'s plain-English request \u2014 it may be a QUESTION ("what is the burdened rate by CLIN?") or a DESCRIPTION ("show me hours by task and period", "price by labor category, discounted"). Map it to up to 3 ORDERED row dimensions, an optional column dimension, and one value measure.\n\n'
+    + 'DIMENSIONS (categorical \u2014 rows or column): ' + dims + '.\n'
+    + 'MEASURES (the value): ' + meas + '. Quantities (price/hours/fte) are summed; rates (baseRate/burdenedRate/salary/discount) are averaged.\n\n'
+    + 'QUESTION: ' + q + '\n\n'
+    + 'Return ONLY JSON: {"r1":"<dim key>","r2":"<dim key or empty string>","r3":"<dim key or empty string>","col":"<dim key or empty string>","meas":"<measure key>"}. '
+    + 'Use the EXACT keys listed. r1 and meas are required. Put the primary grouping in r1. For an "X by Y" matrix put one in a row and the other in col. Use "" for anything not needed. Never repeat a dimension across r1/r2/r3/col.';
+  try {
+    const data = await callClaudeForJson(apiKey, [{ type: 'text', text: prompt }], 400, 60000, 'Pricing question');
+    const pickDim = (v) => (typeof v === 'string' && _PX_DIMS[v]) ? v : '';
+    const cfg = {
+      r1: (data && _PX_DIMS[data.r1]) ? data.r1 : _pxPivot.r1,
+      r2: pickDim(data && data.r2), r3: pickDim(data && data.r3),
+      col: pickDim(data && data.col),
+      meas: (data && _PX_MEAS[data.meas]) ? data.meas : _pxPivot.meas
+    };
+    const seen = {}; ['r1', 'r2', 'r3'].forEach(k => { if (cfg[k] && seen[cfg[k]]) cfg[k] = ''; else if (cfg[k]) seen[cfg[k]] = 1; });
+    if (cfg.col && seen[cfg.col]) cfg.col = '';
+    Object.assign(_pxPivot, cfg);
+    const rowsTxt = ['r1', 'r2', 'r3'].map(k => cfg[k] ? _PX_DIMS[cfg[k]] : null).filter(Boolean).join(' \u203a ');
+    setNote('\u2713 Showing ' + _PX_MEAS[cfg.meas] + ' by ' + rowsTxt + (cfg.col ? (' across ' + _PX_DIMS[cfg.col]) : '') + '. Fine-tune with the dropdowns if needed.');
+  } catch (e) {
+    setNote('Could not read that \u2014 try rephrasing, or use the dropdowns. (' + (e && e.message ? e.message : e) + ')');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Ask'; }
+  pricingPivotRender();
+}
 function pricingPivotCopy() {
   const built = pricingPivotBuild(); if (built.empty) return;
   const aoa = built.aoa, nrd = built.nRowDims;
@@ -11961,7 +12063,7 @@ function pricingPivotDownload() {
   const built = pricingPivotBuild(); if (built.empty || typeof XLSX === 'undefined') return;
   const aoa = built.aoa, nrd = built.nRowDims;
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const z = built.meas === 'price' ? '$#,##0' : (built.meas === 'fte' ? '0.00' : '#,##0');
+  const z = (built.meas === 'price' || built.meas === 'salary') ? '$#,##0' : (built.meas === 'fte' ? '0.00' : ((built.meas === 'discount' || built.meas === 'escalation') ? '0.0"%"' : ((built.meas === 'baseRate' || built.meas === 'burdenedRate' || built.meas === 'listRate') ? '$#,##0.00' : '#,##0')));
   for (let r = 1; r < aoa.length; r++) for (let c = nrd; c < aoa[r].length; c++) { const a = XLSX.utils.encode_cell({ r: r, c: c }); if (ws[a] && typeof ws[a].v === 'number') ws[a].z = z; }
   ws['!cols'] = aoa[0].map((_, c) => ({ wch: c < nrd ? 22 : 15 }));
   for (let c = 0; c < aoa[0].length; c++) { const a = XLSX.utils.encode_cell({ r: 0, c: c }); if (ws[a]) ws[a].s = { font: { bold: true } }; }
@@ -12668,7 +12770,7 @@ function pricingRenderRateLegend() {
 // #4: look up a market rate for each named role and drop it in as a "proposed" starting anchor.
 // Never overwrites a rate the user entered; fills only roles without an "entered" rate.
 async function pricingRecommendRates(btn) {
-  if (typeof pricingModel === 'undefined' || !pricingModel || !pricingModel.lcats || !pricingModel.lcats.length) { if (typeof showStatus === 'function') showStatus('warn', 'No roles yet', 'Add labor categories first \u2014 or run Auto-build structure \u2014 then recommend rates.'); return; }
+  if (typeof pricingModel === 'undefined' || !pricingModel || !pricingModel.lcats || !pricingModel.lcats.length) { if (typeof showStatus === 'function') showStatus('warn', 'No roles yet', 'Add labor categories first \u2014 or run Draft the staffing plan \u2014 then recommend rates.'); return; }
   if (typeof pricingIsGsa === 'function' && pricingIsGsa()) { if (typeof showStatus === 'function') showStatus('warn', 'GSA mode', 'In GSA mode rates come from your Schedule, so there is nothing to recommend.'); return; }
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
   if (!apiKey) { if (typeof showStatus === 'function') showStatus('warn', 'API key needed', 'Enter your Anthropic API key (top of the page) to look up market rates.'); return; }
@@ -12884,13 +12986,20 @@ function pricingApplyBriefing(b) {
   const wlHours = parseFloat(String(b.workload_hours_base_year || '').replace(/[^0-9.]/g, '')) || 0;
   const fteRaw = String(b.estimated_ftes || '');
   const fteNum = (fteRaw.match(/(\d+(?:\.\d+)?)/) || [])[1];
+  // 'stated' = Government-stated ONLY (precedence: solicitation > user > AI). loe_basis is the
+  // extraction's explicit judgment — 'government' only when the solicitation gives a workload/
+  // staffing table. A bare estimated_ftes number WITHOUT a Government workload/LOE signal is an
+  // offeror/AI estimate, not a mandate, and must never be labeled "Government-stated."
+  const _loe = String((b && b.loe_basis) || (typeof window !== 'undefined' && window._lastBnaIntel && window._lastBnaIntel.loe_basis) || '');
+  const _govLoe = /govern|directed|mandat|stipulat|prescrib/i.test(_loe);
   if (wlHours > 0) {
     pricingModel.fteSource = 'stated';
     pricingModel.statedFteTotal = Math.round((wlHours / defaultHpf()) * 100) / 100;
-  } else if (fteNum && !/not\s+specified|tbd|unknown|n\/?a/i.test(fteRaw)) {
+  } else if (_govLoe && fteNum && !/not\s+specified|tbd|unknown|n\/?a/i.test(fteRaw)) {
     pricingModel.fteSource = 'stated';
     pricingModel.statedFteTotal = parseFloat(fteNum);
   } else {
+    // No Government workload/LOE signal — the offeror sizes the team; any figure is an estimate.
     pricingModel.fteSource = 'estimated';
     pricingModel.statedFteTotal = null;
   }
@@ -13453,7 +13562,7 @@ async function pricingAutoBuildStructure() {
   const _fixed = _pxFixedStages();
   const _snap = _pxSnapshotConstraints();
   const btn = document.getElementById('pricingAutoBuildBtn');
-  const setBusy = (busy, msg) => { if (btn) { btn.disabled = busy; btn.innerHTML = busy ? ('<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> ' + (msg || 'Working…')) : '\u2728 Auto-build structure'; } };
+  const setBusy = (busy, msg) => { if (btn) { btn.disabled = busy; btn.innerHTML = busy ? ('<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> ' + (msg || 'Working…')) : '\u2728 Draft the staffing plan'; } };
   setBusy(true, 'Thinking\u2026');
   try {
     let briefing = cachedBriefing;
@@ -13622,7 +13731,7 @@ Rules:
 - "fte" is the staffing decision and drives the math: each role's total base-period hours are set to exactly fte times ${hpf}. When the GOVERNMENT-STATED WORKLOAD block lists per-category hours, reproduce those exact fractional FTEs and DO NOT apply any whole-number preference. Otherwise, WHOLE-NUMBER FTEs ARE STRONGLY PREFERRED because they make staffing cleaner - default each role to an integer FTE. Use a fractional fte ONLY when genuinely justified: the Government stipulates a fractional FTE, or a role's scope truly needs only part of a full-time person (a small, well-bounded effort that clearly does not justify a whole FTE). Never split a role into a fraction just to make a total come out even. "headcount" is the number of distinct people (a single part-time person is headcount 1, fte 0.5). Use "hours_by_task" only to show how each role's hours split across its tasks; those per-task numbers are rescaled so the role total equals fte times ${hpf}.
 - Allocate hours so that EVERY PWS task listed above receives hours from at least one labor category \u2014 the union of all roles' allowed_tasks must cover every task. Only leave a task with no labor if it is genuinely not a labor effort (a pure travel/ODC or materials line); list any such task codes in "non_labor_tasks".
 - Per-year staffing is CONSTANT by default. ONLY if the solicitation explicitly specifies different staffing by ordering period (a manning/staffing table that changes year to year, or wording like "base year: N FTE; option years: M FTE") provide "fte_by_period" for each affected role, aligned in order to the ${pricingModel.periods.length} period(s). If staffing does not change by year, OMIT fte_by_period for every role.
-- ${gsa ? 'Map by EDUCATION, EXPERIENCE, and SCOPE \u2014 never by title alone. If the closest Schedule LCAT does not reasonably meet what the Government requires, set gsa_lcat=null, match_confidence="none", and list it under "unmatched". Be honest; do not force a poor match.' : 'Do not invent specific dollar rates for our cost; market_low/high are rough reference ranges only.'}
+- ${gsa ? 'Map by SCOPE, EDUCATION, and EXPERIENCE \u2014 never by title alone. A Schedule LCAT is a valid vehicle for a role only if ONE person could satisfy BOTH the Government\'s stated minimums for the role AND the Schedule LCAT\'s own minimums. EDUCATION IS HIERARCHICAL \u2014 rank it High School/GED < Associate\'s < Bachelor\'s < Master\'s < Doctorate, where a HIGHER credential satisfies any LOWER requirement (a Doctorate satisfies everything; a Master\'s satisfies a Bachelor\'s or Associate\'s requirement; a Bachelor\'s does NOT satisfy a Master\'s or Doctorate requirement). So the staffed person\'s degree must be >= BOTH the Government\'s required degree AND the Schedule LCAT\'s required degree; treat EXPERIENCE the same way (years must clear both minimums). Prefer the Schedule LCAT whose SCOPE fits AND whose education/experience sit at the CLOSEST appropriate level: if the Schedule LCAT requires a HIGHER degree or MORE years than the Government role, it over-levels the role (billable, but more senior and costly than required) \u2014 say so in match_rationale; if it requires LESS, it clears the bar comfortably. Do not force a scope mismatch just to hit a degree, and do not over-level a role. If nothing reasonably fits, set gsa_lcat=null, match_confidence="none", and list it under "unmatched" with the specific gap. Be honest.' : 'Do not invent specific dollar rates for our cost; market_low/high are rough reference ranges only.'}
 - If the RFP explicitly directs a level of effort, hours, or staffing for any task (e.g. "the contractor shall provide X hours" or a staffing/manning table), USE those numbers exactly instead of proposing your own, and record what you honored in directed_hours_note.
 - DIRECTED LABOR TABLE OVERRIDES TASK-DERIVED STAFFING. If the solicitation explicitly specifies the required labor categories AND their quantities (a staffing/manning table, or wording such as "the contractor shall provide 1 Project Manager, 2 Data Analysts, and 3 Risk Managers"), then (1) list them in "directed_labor" with the EXACT titles and counts, and (2) make "labor_mix" consist of EXACTLY those categories at EXACTLY those headcounts - same titles, same counts, no additions, no substitutions, no merging, no splitting - no matter how many PWS task areas are listed. The PWS tasks then only govern how each role's hours spread across tasks, never which roles exist or how many. Never add a role just to cover a task the directed table does not staff. If the Government does NOT direct a specific labor mix, return "directed_labor":[] and size the team from scope.
 ${pricingScaActive() ? '- For SCA-covered roles the direct wage must meet or exceed the Wage Determination minimum; treat the WD minimum plus H&W as the cost floor and flag any role whose pricing falls below it.\n' : ''}- Treat market figures as ESTIMATES to be verified against GSA CALC+, BLS OES, and SCA wage determinations \u2014 not authoritative.`;
@@ -13630,7 +13739,7 @@ ${pricingScaActive() ? '- For SCA-covered roles the direct wage must meet or exc
     // One call, so one unit of work -- the bar creeps asymptotically toward it and only
     // ARRIVES when the response really lands. The detail line carries the honest signal:
     // roles actually drafted so far, counted out of the partial JSON as it streams in.
-    pxProgStart('pricingAutoBuildProgress', 1, 'Auto-building the labor structure\u2026',
+    pxProgStart('pricingAutoBuildProgress', 1, 'Drafting the staffing plan\u2026',
                 'Reading the PWS and drafting roles\u2026', 30);
     const parsed = await callClaudeForJsonStreaming(
       apiKey, [{ type: 'text', text: prompt }], 10000, 120000, 'Auto-building structure',
@@ -14159,7 +14268,7 @@ function pricingRateMatrixHtml(l) {
     + '<thead><tr><th></th>' + colLbl('Hourly') + colLbl('Annual') + '</tr></thead>'
     + '<tbody>'
     + '<tr>' + rowLbl(_gsaMode ? 'Implied' : 'Company', _gsaMode ? 'Company-paid rate implied by the Schedule rate and your wrap' : 'What you pay the employee') + cell(paid, false, _gsaMode ? 'Implied company paid hourly rate (loaded \u00f7 wrap)' : 'Company paid hourly rate') + cell(salary, false, 'Paid hourly \u00d7 2,080 payroll hours \u2014 the employee\u2019s salary') + '</tr>'
-    + '<tr>' + rowLbl('Burdened', 'What you bill the Government') + cell(loaded, true, 'Fully burdened hourly rate (paid \u00d7 ' + W.toFixed(3) + ' wrap)') + cell(annual, false, 'Loaded hourly \u00d7 ' + Math.round(H).toLocaleString() + ' billable Hrs/FTE \u2014 revenue per FTE-year') + '</tr>'
+    + '<tr>' + rowLbl(_gsaMode ? '\uD83D\uDD12 Burdened' : 'Burdened', _gsaMode ? 'Locked to your GSA Schedule \u2014 the Schedule sets this rate; company/manual rates do not apply in Schedule mode' : 'What you bill the Government') + cell(loaded, true, 'Fully burdened hourly rate (paid \u00d7 ' + W.toFixed(3) + ' wrap)') + cell(annual, false, 'Loaded hourly \u00d7 ' + Math.round(H).toLocaleString() + ' billable Hrs/FTE \u2014 revenue per FTE-year') + '</tr>'
     + '</tbody></table></div>';
 }
 
@@ -14302,7 +14411,7 @@ function pricingClearMask() {
   pricingRenderAll();
   if (typeof showStatus === 'function') showStatus('info', 'Restrictions cleared',
     n + ' task restriction' + (n === 1 ? '' : 's') + ' removed. Every role can now bill every task. '
-    + 'Re-run Auto-build structure to take them from the solicitation again.');
+    + 'Re-run Draft the staffing plan to take them from the solicitation again.');
 }
 
 function pricingRenderMatrix() {
@@ -14659,7 +14768,7 @@ function pricingRenderClin() {
     h += '</tbody></table>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">' +
       '<button onclick="pricingAddClinLine()" style="padding:5px 12px;font-size:12px;font-weight:600;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:6px;cursor:pointer">+ Add CLIN line</button>' +
-      ((typeof pricingStatedClins === 'function' && pricingStatedClins().length) ? '<button onclick="pricingClinBuildFromStated()" title="Build the CLIN schedule from the CLINs the Government stated in the solicitation — real CLIN numbers, mapped to your pricing by period. Nothing is invented." style="padding:5px 12px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">\u2728 Build CLINs from the solicitation (' + pricingStatedClins().length + ')</button>' : '') +
+      ((typeof pricingStatedClins === 'function' && pricingStatedClins().length) ? '<span style="font-size:11.5px;color:var(--muted)">The solicitation states ' + pricingStatedClins().length + ' CLIN(s) \u2014 they\'re applied when you <strong>Finalize &amp; build</strong> at the end of the flow.</span>' : '') +
       '</div></div>';
     const rows = pricingClinScheduleRows();
     h += '<div style="margin-top:14px;overflow-x:auto"><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Schedule preview</div>' +
@@ -14697,12 +14806,15 @@ function pricingRenderFteBar() {
   if (!pricingModel.lcats.length) { el.innerHTML = ''; return; }
   const allocated = pricingTotalHours() / defaultHpf();
   const advTotal = pricingModel.lcats.reduce((s, l) => s + (parseFloat(l.advertised) || 0), 0);
-  const stated = (pricingModel.fteSource === 'stated' && pricingModel.statedFteTotal != null) ? pricingModel.statedFteTotal : null;
+  const _isUserFte = pricingModel.fteSource === 'user';
+  const stated = ((pricingModel.fteSource === 'stated' || _isUserFte) && pricingModel.statedFteTotal != null) ? pricingModel.statedFteTotal : null;
   const statedStr = stated != null ? pricingFmtFte(stated) : '—';
   const src = pricingModel.directedLabor
     ? `Government-<strong>directed</strong> labor table (<strong>${statedStr} FTE</strong>, exact categories &amp; counts)`
     : pricingModel.fteSource === 'stated'
     ? `Government-stated: <strong>${statedStr} FTE</strong>`
+    : _isUserFte
+    ? `From your <strong>uploaded sheet</strong>: <strong>${statedStr} FTE</strong> (your figures)`
     : `<strong>You are sizing the effort</strong> (PWS didn't state FTEs)`;
   const advOk = stated == null ? null : Math.abs(advTotal - stated) < 0.05;
   const allocOk = stated == null ? null : Math.abs(allocated - stated) < 0.05;
@@ -14711,10 +14823,15 @@ function pricingRenderFteBar() {
   if (stated != null) {
     const _okMsg = pricingModel.directedLabor
       ? '✓ Locked to the Government-directed labor table — exactly these ' + statedStr + ' FTE in the directed categories. PWS tasks only spread the hours.'
+      : _isUserFte
+      ? '✓ Matches your uploaded sheet — ' + statedStr + ' FTE; headcount and hours reconcile.'
       : '✓ Staffing matches the Government-stated ' + statedStr + ' FTE — headcount and hours both reconcile.';
+    const _missMsg = _isUserFte
+      ? ('⚠ Does not reconcile with your uploaded ' + statedStr + ' FTE (advertised ' + advTotal.toFixed(2) + ', allocated ' + allocated.toFixed(2) + '). Check the sheet.')
+      : ('⚠ Does NOT match the Government-stated ' + statedStr + ' FTE (advertised ' + advTotal.toFixed(2) + ', allocated ' + allocated.toFixed(2) + '). Deviating from the stated FTE can be disqualifying — adjust headcount/hours to hit ' + statedStr + '.');
     badge = (advOk && allocOk)
       ? `<div style="flex-basis:100%;font-size:12px;font-weight:700;color:#065f46;background:#d1fae5;border:1px solid #6ee7b7;border-radius:8px;padding:8px 12px">${_okMsg}</div>`
-      : `<div style="flex-basis:100%;font-size:12px;font-weight:700;color:#991b1b;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:8px 12px">⚠ Does NOT match the Government-stated ${statedStr} FTE (advertised ${advTotal.toFixed(2)}, allocated ${allocated.toFixed(2)}). Deviating from the stated FTE can be disqualifying — adjust headcount/hours to hit ${statedStr}.</div>`;
+      : `<div style="flex-basis:100%;font-size:12px;font-weight:700;color:#991b1b;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:8px 12px">${_missMsg}</div>`;
   }
   const _hpf = defaultHpf();
   const _hpfTag = (pricingModel.hoursPerFte > 0) ? 'per PWS' : 'standard';
@@ -15771,7 +15888,7 @@ function pricingOppMismatchHtml(compact) {
   const body = (m.kind === 'mismatch')
     ? 'This price model was built for <strong>' + pricingEsc(m.was) + '</strong>, not for <strong>' + pricingEsc(m.now) + '</strong>. Its labor categories, rates and hours are carried over from that opportunity.'
     : 'This price model predates the opportunity now loaded (<strong>' + pricingEsc(m.now) + '</strong>), so it may be carried over from an earlier one.';
-  const fix = ' Rebuild it on the Pricing tab with <strong>Auto-build structure</strong>, or start clean with <strong>Clear for new opportunity</strong>.';
+  const fix = ' Rebuild it on the Pricing tab with <strong>Draft the staffing plan</strong>, or start clean with <strong>Clear for new opportunity</strong>.';
   if (compact) return '<div style="font-size:12px;color:#991b1b;margin-top:5px">\u26a0 ' + body + fix + '</div>';
   return '<div style="margin-top:14px;border:1px solid #fca5a5;background:#fef2f2;border-radius:10px;padding:12px 14px">'
     + '<div style="font-weight:800;font-size:13px;color:#991b1b;margin-bottom:5px">\u26a0 This price model belongs to another opportunity</div>'
@@ -16016,7 +16133,7 @@ function _pxRoleBand(l) {
 function pricingGapFacts() {
   const f = { ok: false, reason: '', at: Date.now() };
   const M = (typeof pricingModel !== 'undefined' && pricingModel) ? pricingModel : null;
-  if (!M || !Array.isArray(M.lcats) || !M.lcats.length) { f.reason = 'No labor categories yet \u2014 run \u2728 Auto-build structure in Step 3 first.'; return f; }
+  if (!M || !Array.isArray(M.lcats) || !M.lcats.length) { f.reason = 'No labor categories yet \u2014 run \u2728 Draft the staffing plan in Step 3 first.'; return f; }
   if (!Array.isArray(M.tasks) || !M.tasks.length) { f.reason = 'No PWS tasks yet \u2014 add tasks in Step 3, or pull the RFP analysis in Step 2.'; return f; }
 
   const t = pricingValueTieOut();
@@ -19545,8 +19662,17 @@ async function constrainedFileChosen(event) {
       const wb = XLSX.read(buf, { type: 'array' });
       wb.SheetNames.forEach(function (name) {
         const sheet = wb.Sheets[name];
-        const c = XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
-        if (c && c.trim().length) csv += '\n=== Sheet: ' + name + ' ===\n' + c + '\n';
+        let c = XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
+        if (c && c.trim().length) {
+          // A pricing workbook's Line-Item Detail can be hundreds of rows; unchecked it eats the whole
+          // size budget and starves the compact summary sheets (By Labor Category, rate table) that
+          // carry the clean role/GSA/FTE/rate list — which is how a 3rd labor category got dropped.
+          // Cap EACH sheet so every summary survives; a header + sample rows is enough to detect and
+          // solve, and the summaries hold the full picture.
+          const _CAP = 10000;
+          if (c.length > _CAP) c = c.slice(0, _CAP) + '\n\u2026 (rows truncated for length \u2014 see the summary sheets for the complete list)';
+          csv += '\n=== Sheet: ' + name + ' ===\n' + c + '\n';
+        }
       });
       csv = csv.trim();
     }
@@ -19655,16 +19781,12 @@ function renderConstrainedDetect(data) {
   const solveBtn = '<button id="constrainedSolveBtn" onclick="runConstrainedSolve()" style="padding:9px 18px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">'
     + (nSolve > 0 ? ('Solve the blank stage' + (nSolve === 1 ? '' : 's') + ' and apply') : 'Apply this sheet to pricing')
     + '</button>';
-  const pwsBtn = '<button id="constrainedPwsBtn" onclick="runConstrainedPwsCheck()" style="padding:9px 18px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1.5px solid var(--mid-blue);border-radius:8px;cursor:pointer;box-shadow:0 1px 3px rgba(0,68,153,0.12)">Check the sheet against the PWS</button>';
   const noSolveNote = (nSolve === 0) ? '<p style="margin:10px 0 0;font-size:11.5px;color:var(--muted)">Every stage is already populated, so there is nothing to derive \u2014 but you still need to <strong>apply</strong> it, which loads your labor categories, FTEs, rates and hours into the pricing model and pins them for auto-build.</p>' : '';
   const nextHtml = oos ? '' :
-    '<div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">' + solveBtn + pwsBtn + '</div>' + noSolveNote
+    '<div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">' + solveBtn + '</div>' + noSolveNote
     + '<div id="constrainedSolveProgress" style="display:none;margin-top:12px"></div>'
     + '<div id="constrainedSolveStatus" style="display:none;font-size:13px;color:var(--muted);margin-top:12px"></div>'
-    + '<div id="constrainedSolveResults" style="display:none;margin-top:14px"></div>'
-    + '<div id="constrainedPwsProgress" style="display:none;margin-top:12px"></div>'
-    + '<div id="constrainedPwsStatus" style="display:none;font-size:13px;color:var(--muted);margin-top:12px"></div>'
-    + '<div id="constrainedPwsResults" style="display:none;margin-top:14px"></div>';
+    + '<div id="constrainedSolveResults" style="display:none;margin-top:14px"></div>';
 
   results.innerHTML = header + rows + detectedHtml + planHtml + oosHtml + nextHtml;
   results.style.display = 'block';
@@ -19707,6 +19829,10 @@ function _constrainedSolveContent(csv, det, taskList, ctx) {
 }
 
 function _constrainedApply(a) {
+  // The uploaded sheet is the USER'S own figures — Gospel (precedence: solicitation > user > AI),
+  // NEVER Government-stated. Clear any stale 'stated' provenance FIRST so the build preserves the
+  // sheet's exact per-role FTEs (free-sizing) instead of snapping them to a prior Government total.
+  pricingModel.fteSource = 'user'; pricingModel.directedLabor = false; pricingModel.statedFteTotal = null;
   pricingApplyAutoBuild(a);   // builds labor categories, FTEs, hours allocation, task masks, tasks
   // Carry the FIXED rates and GSA mapping from the upload. pricingApplyAutoBuild blanks rates by
   // design (it never invents them) — but here the rate IS the user's own fixed figure, so carry it.
@@ -19721,6 +19847,11 @@ function _constrainedApply(a) {
   });
   // An already-rated uploaded sheet is a build-up price — unlock the model if GSA was left undecided.
   if (pricingModel.gsaDecision == null) pricingModel.gsaDecision = 'na';
+  // Re-assert USER provenance: pricingApplyAutoBuild ends by stamping 'estimated', but the sheet's
+  // FTEs are the user's OWN stated figures — label them "from your uploaded sheet" and reconcile
+  // against them, never as Government-stated.
+  const _uT = pricingModel.lcats.reduce(function (s, l) { return s + (parseFloat(l.advertised) || 0); }, 0);
+  pricingModel.fteSource = 'user'; pricingModel.statedFteTotal = _uT > 0 ? Math.round(_uT * 100) / 100 : null;
   if (typeof pricingRenderAll === 'function') pricingRenderAll();
 }
 
@@ -19814,10 +19945,9 @@ function renderConstrainedSolve(a) {
     : '';
   results.innerHTML =
     '<div style="border:1px solid #86efac;background:#f0fdf4;border-radius:8px;padding:12px 14px">' +
-      '<div style="font-size:13px;font-weight:800;color:#166534;margin-bottom:4px">\u2713 Applied \u2014 loaded into the pricing model below</div>' +
-      '<div style="font-size:12.5px;color:var(--text);line-height:1.55">' + esc(_sumBits.join(' \u00b7 ')) + '.</div>' +
+      '<div style="font-size:13px;font-weight:800;color:#166534;margin-bottom:4px">\u2713 Ingested \u2014 factored into your pricing below</div>' +
+      '<div style="font-size:12.5px;color:var(--text);line-height:1.55">' + esc(_sumBits.join(' \u00b7 ')) + '. Review Step 4 (rates) and Step 5 (hours), set discount and travel in Step 6, then build the structure (apply the solicitation\'s CLINs) and run the PWS check \u2014 all at the end. Fixed values from your sheet were carried verbatim; nothing was invented.</div>' +
       _rateGap +
-      '<p style="margin:8px 0 0;font-size:11.5px;color:var(--muted)">This is now built into the pricing steps below \u2014 review Step 4 (rates) and Step 5 (hours), then it exports to Excel and flows into Volume III as usual. <strong>You don\'t need to run Auto-build</strong> \u2014 it would rebuild the structure from scratch and discard the values pinned from your sheet. Fixed rates were carried verbatim; nothing was invented.</p>' +
       _detail +
       notes +
     '</div>';
@@ -19874,11 +20004,72 @@ function _constrainedPwsContext() {
   return bits.join('\n');
 }
 
+// The CURRENT priced model, serialized for the PWS-conflict check. This SUPERSEDES any uploaded
+// sheet: after reverse-solve/auto-build the model carries the roles, GSA mapping, rates, hours,
+// period totals and — when the solicitation states them — the CLINs, all internally consistent.
+// Reviewing THIS (not the stale upload) is why the check stops flagging already-fixed issues.
+// The one explicit build-join. The pricing model is assembled continuously (every input lives in
+// pricingModel; the master dataset is produced on demand), so "build" here means the single
+// deliberate step that isn't automatic: applying the solicitation's CLINs onto the finished model.
+// Fast + deterministic; a short beat keeps the build moment visible, as Paul asked.
+function pricingFinalizeBuild(btn) {
+  const st = document.getElementById('pricingFinalizeStatus');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> Building\u2026'; }
+  if (st) { st.style.display = 'block'; st.style.color = 'var(--muted)'; st.textContent = 'Joining CLIN structure to assembled pricing model\u2026'; }
+  setTimeout(function () {
+    let nStated = 0;
+    try { nStated = (typeof pricingStatedClins === 'function') ? pricingStatedClins().length : 0; } catch (e) {}
+    if (nStated && typeof pricingClinBuildFromStated === 'function') { try { pricingClinBuildFromStated(); } catch (e) {} }
+    if (typeof pricingModel !== 'undefined' && pricingModel) pricingModel._built = true;
+    if (typeof pricingSave === 'function') pricingSave();
+    if (typeof pricingRenderAll === 'function') pricingRenderAll();
+    const b2 = document.getElementById('pricingFinalizeBtn');
+    const st2 = document.getElementById('pricingFinalizeStatus');
+    if (b2) { b2.disabled = false; b2.innerHTML = '🔨 Re-finalize'; }
+    if (st2) { st2.style.display = 'block'; st2.innerHTML = '<span style="color:#166534;font-weight:700">\u2713 Built.</span> ' + (nStated ? ('CLIN structure joined \u2014 ' + nStated + ' CLIN(s) from the solicitation applied to your pricing.') : 'The solicitation states no CLINs, so none were applied (correct).') + ' Run the PWS check below, then export.'; }
+  }, 550);
+}
+function pricingModelReviewCsv() {
+  const M = pricingModel;
+  if (!M || !M.lcats || !M.lcats.length) return '';
+  const rows = (typeof pricingFlatRows === 'function') ? pricingFlatRows() : [];
+  if (!rows.length) return '';
+  const mny = n => '$' + Math.round(n).toLocaleString('en-US');
+  let out = "THE TOOL'S CURRENT PRICED MODEL (already built from the solicitation and the user's inputs; it SUPERSEDES any earlier uploaded sheet — review THIS).\n\n";
+  out += 'LABOR CATEGORIES (role | GSA Schedule LCAT | advertised FTE | base rate):\n';
+  M.lcats.forEach(l => {
+    out += '- ' + (l.name || '(unnamed)') + ' | GSA: ' + (l.gsaLcat || '(unmapped)') + ' | FTE: ' + (l.advertised != null && l.advertised !== '' ? l.advertised : '(blank)') + ' | rate: ' + (parseFloat(l.baseRate) ? ('$' + parseFloat(l.baseRate).toFixed(2) + '/hr') : '(no rate)') + '\n';
+  });
+  if (M.clins && M.clins.enabled && typeof pricingClinScheduleRows === 'function') {
+    out += '\nCLIN SCHEDULE (CLIN | description | period | type | extended) — populated from the solicitation:\n';
+    try {
+      pricingClinScheduleRows().forEach(r => {
+        if (r.grand) out += 'TOTAL CONTRACT VALUE (base + options): ' + mny(r.total) + '\n';
+        else if (r.clin !== undefined && !r.subtotal && !r.extHeader && !r.grandWithExt && !r.optHeader) out += '- ' + r.clin + ' | ' + (r.desc || '') + ' | ' + (r.period || '') + ' | ' + (r.type || '') + ' | ' + mny(r.total) + (r.opt ? '  (optional / separately priced)' : '') + '\n';
+      });
+    } catch (e) { out += '(CLIN schedule unavailable)\n'; }
+  } else {
+    const _nSt = (typeof pricingStatedClins === 'function') ? pricingStatedClins().length : 0;
+    out += _nSt > 0
+      ? '\nCLIN SCHEDULE: the solicitation defines ' + _nSt + ' CLIN(s), but they have NOT been applied to this pricing yet. CLINs are applied deliberately from the solicitation in the CLIN builder and reviewed before export \u2014 treat this as an action item to complete, NOT proof of an inherent pricing error.\n'
+      : '\nCLIN SCHEDULE: the solicitation does not state CLINs, so none are applied (correct, not a gap).\n';
+  }
+  out += '\nLINE-ITEM DETAIL (category | role | task | CLIN | period | hours | price):\n';
+  const cap = Math.min(rows.length, 350);
+  for (let i = 0; i < cap; i++) { const r = rows[i]; out += [r.category, r.lcat, r.task, (r.clin || '(none)'), r.period, Math.round(r.hours), mny(r.price)].join(' | ') + '\n'; }
+  if (rows.length > cap) out += '\u2026 (' + (rows.length - cap) + ' more line-item rows)\n';
+  const byP = {}; rows.forEach(r => { byP[r.period] = (byP[r.period] || 0) + r.price; });
+  out += '\nPERIOD TOTALS (single computed model — internally consistent):\n';
+  let grand = 0; Object.keys(byP).forEach(p => { out += '- ' + p + ': ' + mny(byP[p]) + '\n'; grand += byP[p]; });
+  out += 'GRAND TOTAL (all periods): ' + mny(grand) + '\n';
+  return out;
+}
 function _constrainedPwsContent(csv, pws) {
   return (
-    'You are a federal cost/price compliance reviewer. Compare an uploaded pricing spreadsheet against the PWS/solicitation requirements and flag CONFLICTS \u2014 places where the priced labor structure does NOT comply with what the PWS requires. For each, give: what the PWS requires, how the upload is non-compliant, and the recommended fix. Base every finding ONLY on the requirements and the spreadsheet below; never invent a requirement.\n\n' +
+    'You are a federal cost/price compliance reviewer. Compare the contractor\'s CURRENT priced model against the PWS/solicitation requirements and flag CONFLICTS \u2014 places where the priced labor structure does NOT comply with what the PWS requires. For each, give: what the PWS requires, how the pricing is non-compliant, and the recommended fix. Base every finding ONLY on the requirements and the pricing below; never invent a requirement.\n\n' +
+    'The pricing below is the tool\'s current model — it already reflects the solicitation\'s CLINs (when stated) and computes all totals from ONE consistent source, so do NOT flag missing CLIN codes or internal total mismatches unless they are genuinely absent from what is shown.\n\n' +
     'PWS / SOLICITATION REQUIREMENTS:\n' + pws + '\n\n' +
-    'THE UPLOADED PRICING SPREADSHEET:\n' + csv + '\n\n' +
+    'THE PRICING TO REVIEW:\n' + csv + '\n\n' +
     'Look for conflicts such as: a required labor category, skill, clearance, or certification the pricing does not staff; a required, recurring base-period PWS task with no labor priced against it; a staffing level (FTEs/hours) below what the scope requires; a period-of-performance or option-year mismatch; or scope priced that the PWS does not require (over-scope). Only flag genuine conflicts.\n\n' +
     'IMPORTANT - do NOT raise a task-coverage conflict merely because the base-period pricing does not staff a task. Many PWS tasks are CONDITIONAL (required only if an option period is exercised, or triggered by a specific event), OPTIONAL, surge, or ONE-TIME / single-use, and legitimately carry no base-period labor. Flag an unstaffed task ONLY when it is plainly a required, recurring base-period effort that the pricing omits; when a task is optional, option-year-only, event-triggered, or one-time / single-use, do NOT flag it. When in doubt, do not flag it.\n\n' +
     'Return ONLY JSON (no prose, no markdown fences):\n' +
@@ -19898,7 +20089,7 @@ async function runConstrainedPwsCheck() {
       if (!err) { status.style.display = 'none'; status.textContent = ''; return; }
       status.style.display = 'block'; status.style.color = 'var(--error)'; status.textContent = msg;
     };
-  if (!window._constrainedCsv) { show('Upload and detect a pricing spreadsheet first.', true); return; }
+  if (!window._constrainedCsv && !(typeof pricingModel !== 'undefined' && pricingModel.lcats && pricingModel.lcats.length)) { show('Build your pricing first \u2014 add labor categories, rates, and hours.', true); return; }
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
   if (!apiKey) { show('Enter your Anthropic API key (top of the page) first.', true); return; }
   const pws = _constrainedPwsContext();
@@ -19908,7 +20099,9 @@ async function runConstrainedPwsCheck() {
   if (results) { results.style.display = 'none'; results.innerHTML = ''; }
   show('Checking the sheet against the PWS requirements\u2026', false);
   try {
-    const data = await callClaudeForJson(apiKey, [{ type: 'text', text: _constrainedPwsContent(window._constrainedCsv, pws) }], 2600, 90000, 'PWS-conflict check');
+    const _review = (typeof pricingModelReviewCsv === 'function') ? pricingModelReviewCsv() : '';
+    const _pricingText = _review || window._constrainedCsv;
+    const data = await callClaudeForJson(apiKey, [{ type: 'text', text: _constrainedPwsContent(_pricingText, pws) }], 2600, 90000, 'PWS-conflict check');
     window._constrainedPwsData = data;
     if (status) status.style.display = 'none';
     renderConstrainedPws(data);
@@ -19916,7 +20109,7 @@ async function runConstrainedPwsCheck() {
     show('Check failed: ' + (e && e.message ? e.message : e), true);
   } finally {
     pxProgEnd('constrainedPwsProgress');
-    if (btn) { btn.disabled = false; btn.textContent = 'Check the sheet against the PWS'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Check pricing against the PWS'; }
   }
 }
 
