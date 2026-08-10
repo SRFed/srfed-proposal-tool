@@ -687,8 +687,8 @@
   .rec-stat .sn { font-size: 26px; font-weight: 800; color: var(--blue); line-height: 1.1; }
   .rec-stat .sl { font-size: 12px; color: var(--muted); font-weight: 600; margin-top: 2px; }
   .rec-scope .dz-intro { background: #fffbe9; border: 1px solid #f5e4a8; border-radius: 8px; padding: 11px 14px; font-size: 13px; color: #6b5900; line-height: 1.55; margin-bottom: 14px; }
-  .rec-scope .dz { border: 2px dashed var(--mid-blue); border-radius: 10px; padding: 26px 20px; text-align: center; cursor: pointer; transition: all 0.15s; background: #fbfdff; }
-  .rec-scope .dz:hover, .rec-scope .dz.over { background: var(--pale); border-color: var(--blue); }
+  .rec-scope .dz { border: 2px dashed var(--mid-blue); border-radius: 10px; padding: 26px 20px; text-align: center; cursor: pointer; transition: all 0.15s; background: var(--pale); }
+  .rec-scope .dz:hover, .rec-scope .dz.over { background: var(--light-blue); border-color: var(--blue); }
   .rec-scope .dz .dzi { font-size: 34px; line-height: 1; margin-bottom: 8px; }
   .rec-scope .dz .dzt { font-size: 15px; font-weight: 700; color: var(--text); }
   .rec-scope .dz .dzs { font-size: 12px; color: var(--muted); margin-top: 4px; }
@@ -1636,15 +1636,15 @@
     </div><!-- end Step 1 card-body -->
   </div><!-- end Step 1 card -->
 
-  <!-- Step 2: Drop Proposal Documents + Run -->
+  <!-- Step 2: Drop the company's own proposal documents + Run -->
   <div class="card" style="margin-bottom:24px">
-    <div class="card-header"><span class="icon">📝</span> Step 2 — Drop Proposal Documents</div>
+    <div class="card-header"><span class="icon">📝</span> Step 2 — Drop your company's proposal</div>
     <div class="card-body">
       <div class="drop-zone" id="dropZoneCmpDocs" style="margin-bottom:8px">
         <input type="file" id="fileInputCmpDocs" multiple accept=".pdf,.docx,.doc"/>
         <div class="dz-icon">📝</div>
-        <div class="dz-title">Drop Proposal Volumes Here</div>
-        <div class="dz-sub">Word or PDF — all volumes you want to check</div>
+        <div class="dz-title">Drop your written proposal here</div>
+        <div class="dz-sub">Word or PDF — your company's proposal, not the solicitation</div>
       </div>
       <div class="file-list" id="fileListCmpDocs" style="margin-bottom:16px"></div>
 
@@ -2117,7 +2117,7 @@
       <p style="font-size:14px;color:var(--text);line-height:1.65;margin-bottom:14px">Build a <strong>professional oral-presentation deck</strong> for the Government — in your brand colors, with speaker notes. Two ways to do it: use the proposal you generated on the <strong>Proposal</strong> tab, or drop a <strong>finished proposal</strong> below (handy when it was written outside this tool).</p>
 
       <label style="display:block;font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px">Build from an existing proposal <span style="font-weight:500;color:var(--muted)">(optional — overrides the generated proposal when used)</span></label>
-      <div onclick="document.getElementById('pptDocInput').click()" ondragover="event.preventDefault();this.style.background='#dbeafe'" ondragleave="this.style.background='#fff'" ondrop="pptDocsDrop(event)" style="border:2px dashed var(--mid-blue);border-radius:8px;padding:18px;text-align:center;cursor:pointer;background:#fff;font-size:13px;color:var(--blue);font-weight:600">⤓ Drop a finished proposal here (PDF or Word) — or click to browse</div>
+      <div class="drop-zone" onclick="document.getElementById('pptDocInput').click()" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="this.classList.remove('drag-over');pptDocsDrop(event)"><div class="dz-icon">⤓</div><div class="dz-title">Drop a finished proposal here</div><div class="dz-sub">PDF or Word — or click to browse</div></div>
       <input type="file" id="pptDocInput" accept=".pdf,.docx,.doc,.txt,.md,.rtf" multiple style="display:none" onchange="pptDocsChosen(event)"/>
       <div id="pptDocsList" style="margin-top:10px"></div>
 
@@ -2784,6 +2784,28 @@
 </div>
 <div class="tab-pane" id="pane-settings">
   <div class="card" style="margin-bottom:24px">
+    <div class="card-header"><span class="icon">💬</span> Ask the Tool About the Tool</div>
+    <div class="card-body">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px">A help assistant for the tool itself — how it works, what each tab does, how to set things up (API key, branding, integrations), and the logic behind the pricing, compliance, and proposal features. Ask anything about using the tool; this is general help, not analysis of any specific opportunity.</p>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <button type="button" onclick="askToolHelpPreset('How do I set up my Anthropic API key?')" style="font-size:11.5px;font-weight:600;background:var(--pale);color:var(--blue);border:1px solid var(--mid-blue);border-radius:14px;padding:4px 11px;cursor:pointer">API key setup</button>
+        <button type="button" onclick="askToolHelpPreset('What can this tool do? Give me an overview of the tabs.')" style="font-size:11.5px;font-weight:600;background:var(--pale);color:var(--blue);border:1px solid var(--mid-blue);border-radius:14px;padding:4px 11px;cursor:pointer">What can it do?</button>
+        <button type="button" onclick="askToolHelpPreset('How does the pricing and wrap-rate math work?')" style="font-size:11.5px;font-weight:600;background:var(--pale);color:var(--blue);border:1px solid var(--mid-blue);border-radius:14px;padding:4px 11px;cursor:pointer">Pricing logic</button>
+        <button type="button" onclick="askToolHelpPreset('How do CLINs work in the Pricing tab?')" style="font-size:11.5px;font-weight:600;background:var(--pale);color:var(--blue);border:1px solid var(--mid-blue);border-radius:14px;padding:4px 11px;cursor:pointer">CLINs</button>
+        <button type="button" onclick="askToolHelpPreset('How do I run a compliance check?')" style="font-size:11.5px;font-weight:600;background:var(--pale);color:var(--blue);border:1px solid var(--mid-blue);border-radius:14px;padding:4px 11px;cursor:pointer">Compliance</button>
+      </div>
+      <label style="display:block;font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:5px">Your question</label>
+      <textarea id="toolHelpInput" onkeydown="toolHelpKey(event)" placeholder="e.g. How do I load a solicitation? What's the difference between GSA Schedule mode and custom rates? How is the fully burdened rate calculated?" style="width:100%;min-height:66px;resize:vertical;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box"></textarea>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Enter to ask &middot; Shift+Enter for a new line</div>
+      <div class="btn-row" style="margin-top:10px">
+        <button id="toolHelpBtn" onclick="askToolHelp()" style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;font-size:14px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,0.12)">Ask</button>
+      </div>
+      <div id="toolHelpStatus" class="ldg" style="display:none;margin-top:12px"><div style="display:flex;align-items:center;gap:10px"><span class="spinner-dark" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></span><span id="toolHelpStatusText">Looking it up&hellip;</span></div><div class="indet-bar" style="margin-top:8px"></div></div>
+      <div id="toolHelpAnswer" style="display:none;margin-top:14px"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:24px">
     <div class="card-header"><span class="icon">⚙️</span> Company Settings</div>
     <div class="card-body">
       <p style="font-size:13px;color:var(--muted);margin-bottom:20px">These settings configure the tool for your company. Changes take effect immediately and are saved in your browser.</p>
@@ -3208,7 +3230,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '221';
+const APP_VERSION = '225';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -6880,7 +6902,7 @@ async function ensureBriefing(apiKey) {
     `"base_period_months":"the BASE period length in WHOLE MONTHS as a number. Compute it: if a date range is given (e.g. base period 01 Oct 2025 to 30 Jun 2026), count the months (=9); if a month count is stated, use it; if a full base year with no other length is indicated, use 12; use 0 only if you truly cannot tell",` +
     `"option_period_count":"number of option periods/years as a number; 0 if none",` +
     `"option_period_months":"length of EACH option period in WHOLE months as a number (12 for option years); 0 if none/unknown",` +
-    `"sca_coverage":"'yes' if the contract is covered by the Service Contract Act / SCLS - treat the PRESENCE of a Wage Determination (a WD document, SF-98/98a, a WD number, DOL wage tables) or FAR 52.222-41 as DECISIVE, answer 'yes'; 'no' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption), not merely because it sounds professional; '' if not addressed","travel_required":"'yes' if the solicitation includes a travel CLIN or requires reimbursable travel/trips, 'no' if it states no travel is required, else ''","travel_nte":"the travel not-to-exceed dollar ceiling if one is stated (e.g. '$50,000'), else ''",` +
+    `"sca_coverage":"'yes' if the contract is covered by the Service Contract Act / SCLS - treat the PRESENCE of a Wage Determination (a WD document, SF-98/98a, a WD number, DOL wage tables) or FAR 52.222-41 as DECISIVE, answer 'yes'; 'no' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption), not merely because it sounds professional; '' if not addressed","travel_required":"'yes' if the solicitation includes a travel CLIN or requires reimbursable travel/trips, 'no' if it states no travel is required, else ''","travel_nte":"the travel not-to-exceed dollar ceiling if one is stated (e.g. '$50,000'), else ''","escalation_rate":"the annual price escalation / COLA percentage the solicitation directs offerors to apply across option years if one is stated (e.g. '3' for 3%/yr), as a plain number; '' if not stated","gsa_discount":"the discount percentage off GSA Schedule rates the solicitation requests, or that the offeror is directed to give, if stated, as a plain number; '' if not stated","odc_nte":"the not-to-exceed dollar ceiling for Other Direct Costs (ODCs) or materials/supplies if one is stated SEPARATELY from travel (e.g. '$10,000'), else ''","materials_required":"'yes' if the solicitation includes a materials/supplies/equipment CLIN or requires priced materials, 'no' if it states none, else ''",` +
     `"wd_number":"if the solicitation states or references a DOL Wage Determination NUMBER, copy it exactly (e.g. '2015-4281'); '' if not stated","wd_revision":"the Wage Determination REVISION number if stated (e.g. '23'); '' if not stated","place_of_performance":"the primary place of performance (county and state, city/state, or installation) if stated; '' if not stated",` +
     `"pop_start_date":"period-of-performance START date as YYYY-MM-DD if the solicitation states or implies one; '' if not stated. If only a month and year are stated ('performance begins February 2027') return YYYY-MM, and if only a year, return YYYY - do NOT invent a day to fill the format, a fabricated date that looks precise is worse than a partial one",` +
     `"estimated_ftes":"the FTE / level-of-effort the solicitation REQUIRES. PRIORITY: (1) if the solicitation states an explicit FTE / level-of-effort figure, copy it EXACTLY including any decimal or fraction (e.g. 2.5, 0.5, 3.25); do NOT round. (2) ELSE if the solicitation gives an estimated-hours / workload / level-of-effort table by labor category, compute the FTEs as (sum of the BASE-YEAR hours column ONLY) divided by 1912, to two decimals; NEVER add the base-year and option-year columns together - option periods are SEPARATE performance periods, not additional concurrent staff. (3) ELSE '' or 'not specified'","workload_hours_base_year":"if the solicitation gives an estimated-hours / workload / level-of-effort table by labor category, the SUM of the BASE-YEAR hours column ONLY as an integer (e.g. 14685); sum ONLY the base-year column and do NOT add any option-year column; '' if no such table is given","workload_by_lcat":[{"lcat":"one row PER labor category from the estimated-hours / workload / level-of-effort table (base-year column ONLY); empty array if no such table is given","base_year_hours":0}],` +
@@ -9343,7 +9365,7 @@ async function runGeneration() {
       companyCtx + `\n\n` +
       `Read ALL documents above thoroughly — including the PWS, RFP, Section L (Instructions to Offerors), Section M (Evaluation Criteria), and all attachments.\n\n` +
       `Extract and return a comprehensive JSON briefing:\n` +
-      `{"solicitation_number":"","requirement_title":"","agency_name":"","agency_address":"","agency_poc":"","agency_poc_email":"","agency_poc_phone":"","submission_date":"the EXACT date (include the local time and time zone if stated) that offers/proposals are DUE to the Government. Copy the digits exactly as written; do NOT infer, shift, or round. Give the date part as YYYY-MM-DD. This is the proposal/offer due or closing date (e.g. SF-1449 Block 8, SF-33 Block 9, or the Section L due-no-later-than date) - NOT the questions/Q&A deadline, NOT the period-of-performance start, NOT the solicitation issue date. If several dates appear, choose only the one explicitly labeled as the offer/proposal due or closing date; empty string if genuinely not stated","contract_type":"","period_of_performance":"","naics":"","set_aside":"","place_of_performance":"","estimated_ftes":"the FTE / level-of-effort the solicitation REQUIRES if stated — copy the EXACT figure including any decimal or fraction (e.g. 2.5, 0.5); do NOT round. If instead a workload / level-of-effort hours table by labor category is given, derive the FTEs from the BASE-YEAR hours column ONLY divided by 1912 (never add base + option columns). '' or 'not specified' if none","estimated_value":"","base_period_months":"the BASE period length in WHOLE MONTHS as a number. Compute it: if a date range is given (e.g. base period 01 Oct 2025 to 30 Jun 2026) count the months (=9); if a month count is stated use it; if a full base year with no other length is indicated use 12; use 0 only if you truly cannot tell","option_period_count":"number of option periods/years as a number; 0 if none","option_period_months":"length of EACH option period in WHOLE months as a number (12 for option years); 0 if none/unknown","pop_start_date":"period-of-performance START date as YYYY-MM-DD if the solicitation states or implies one; '' if not stated. If only a month and year are stated ('performance begins February 2027') return YYYY-MM, and if only a year, return YYYY - do NOT invent a day to fill the format, a fabricated date that looks precise is worse than a partial one","sca_coverage":"'yes' if the contract is covered by the Service Contract Act / SCLS - treat the PRESENCE of a Wage Determination (a WD document, SF-98/98a, a WD number, DOL wage tables) or FAR 52.222-41 as DECISIVE, answer 'yes'; 'no' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption), not merely because it sounds professional; '' if not addressed","travel_required":"'yes' if the solicitation includes a travel CLIN or requires reimbursable travel/trips, 'no' if it states no travel is required, else ''","travel_nte":"the travel not-to-exceed dollar ceiling if one is stated (e.g. '$50,000'), else ''",` +
+      `{"solicitation_number":"","requirement_title":"","agency_name":"","agency_address":"","agency_poc":"","agency_poc_email":"","agency_poc_phone":"","submission_date":"the EXACT date (include the local time and time zone if stated) that offers/proposals are DUE to the Government. Copy the digits exactly as written; do NOT infer, shift, or round. Give the date part as YYYY-MM-DD. This is the proposal/offer due or closing date (e.g. SF-1449 Block 8, SF-33 Block 9, or the Section L due-no-later-than date) - NOT the questions/Q&A deadline, NOT the period-of-performance start, NOT the solicitation issue date. If several dates appear, choose only the one explicitly labeled as the offer/proposal due or closing date; empty string if genuinely not stated","contract_type":"","period_of_performance":"","naics":"","set_aside":"","place_of_performance":"","estimated_ftes":"the FTE / level-of-effort the solicitation REQUIRES if stated — copy the EXACT figure including any decimal or fraction (e.g. 2.5, 0.5); do NOT round. If instead a workload / level-of-effort hours table by labor category is given, derive the FTEs from the BASE-YEAR hours column ONLY divided by 1912 (never add base + option columns). '' or 'not specified' if none","estimated_value":"","base_period_months":"the BASE period length in WHOLE MONTHS as a number. Compute it: if a date range is given (e.g. base period 01 Oct 2025 to 30 Jun 2026) count the months (=9); if a month count is stated use it; if a full base year with no other length is indicated use 12; use 0 only if you truly cannot tell","option_period_count":"number of option periods/years as a number; 0 if none","option_period_months":"length of EACH option period in WHOLE months as a number (12 for option years); 0 if none/unknown","pop_start_date":"period-of-performance START date as YYYY-MM-DD if the solicitation states or implies one; '' if not stated. If only a month and year are stated ('performance begins February 2027') return YYYY-MM, and if only a year, return YYYY - do NOT invent a day to fill the format, a fabricated date that looks precise is worse than a partial one","sca_coverage":"'yes' if the contract is covered by the Service Contract Act / SCLS - treat the PRESENCE of a Wage Determination (a WD document, SF-98/98a, a WD number, DOL wage tables) or FAR 52.222-41 as DECISIVE, answer 'yes'; 'no' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption), not merely because it sounds professional; '' if not addressed","travel_required":"'yes' if the solicitation includes a travel CLIN or requires reimbursable travel/trips, 'no' if it states no travel is required, else ''","travel_nte":"the travel not-to-exceed dollar ceiling if one is stated (e.g. '$50,000'), else ''","escalation_rate":"the annual price escalation / COLA percentage the solicitation directs offerors to apply across option years if one is stated (e.g. '3' for 3%/yr), as a plain number; '' if not stated","gsa_discount":"the discount percentage off GSA Schedule rates the solicitation requests, or that the offeror is directed to give, if stated, as a plain number; '' if not stated","odc_nte":"the not-to-exceed dollar ceiling for Other Direct Costs (ODCs) or materials/supplies if one is stated SEPARATELY from travel (e.g. '$10,000'), else ''","materials_required":"'yes' if the solicitation includes a materials/supplies/equipment CLIN or requires priced materials, 'no' if it states none, else ''",` +
       `"pricing_methodology":"how the Government wants pricing STRUCTURED — exactly one of 'lcat' (fully burdened rates by labor category), 'pws_task' (price broken out per PWS task/section), 'product' (per product/deliverable/CLIN), or 'simple' (total labor + wrap). Pick the closest match from Section L/B; if unstated, ''",` +
       `"pricing_instructions":"verbatim or close paraphrase of any cost/price-volume format instructions from Section L/B/M — required rate tables, CLIN structure, escalation rules, format/page limits; '' if none",` +
       `"period_structure":"the base + option period breakdown, e.g. '1 base year + 4 option years'; '' if unstated",` +
@@ -11525,6 +11547,7 @@ function pricingDiscountActive() { const M = pricingModel; const m = M.discountM
 // ── setters ──
 function pricingSetEscMode(m) {
   pricingModel.escalationMode = m;
+  pricingModel._escUserSet = true;    // (#7) an explicit choice must not be overwritten by a re-analysis
   // #22: switching to "Same every year" must never silently drop escalation. If no flat rate is
   // set yet, carry over what the user already had — the first non-zero option-period %, else 3.
   if (m === 'flat' && (pricingModel.escalationFlat === '' || pricingModel.escalationFlat == null)) {
@@ -11533,7 +11556,7 @@ function pricingSetEscMode(m) {
   }
   pricingRenderAll();
 }
-function pricingSetEscFlat(v) { const n = parseFloat(v); pricingModel.escalationFlat = (v === '' || isNaN(n)) ? '' : n; pricingRenderAll(); }
+function pricingSetEscFlat(v) { const n = parseFloat(v); pricingModel.escalationFlat = (v === '' || isNaN(n)) ? '' : n; pricingModel._escUserSet = true; pricingRenderAll(); }
 function pricingSetCompMode(m) { pricingModel.discountMode = m; pricingRenderAll(); }
 function pricingSetCompPct(v) { pricingModel.discountPct = (v === '' ? '' : Math.max(0, Math.min(100, parseFloat(v) || 0))); pricingRenderAll(); }
 function pricingSetLcatDiscount(id, v) { const l = pricingModel.lcats.find(x => x.id === id); if (l) { l.discountPct = (v === '' ? '' : Math.max(0, Math.min(100, parseFloat(v) || 0))); pricingRenderAll(); } }
@@ -12974,6 +12997,53 @@ async function pricingMaybeAutoPull() {
   return true;
 }
 
+function _pxApplySolicitationPricing(M, src, isGsa, parseMoney) {
+  // (#7) Pre-fill the Step 6 controls from the solicitation analysis, on the SAME non-destructive
+  // contract pricingApplyBriefing already uses for travel/SCA/periods: fill only what the user has
+  // not explicitly set, record provenance, never override an explicit choice. Returns the list of
+  // what it set (for status). Travel NTE and monthly-FFP are handled elsewhere; this adds
+  // escalation, GSA discount, and a separate ODC/materials ceiling.
+  const applied = [];
+  const numOf = (v) => { const s = String(v == null ? '' : v).replace(/[^0-9.]/g, ''); return s === '' ? NaN : parseFloat(s); };
+
+  // Escalation / COLA percentage across option years.
+  const escN = numOf(src && src.escalation_rate);
+  if (!isNaN(escN) && escN >= 0 && !(M && M._escUserSet)) {
+    M.escalationMode = 'flat';
+    M.escalationFlat = escN;
+    (M.periods || []).forEach((p, i) => { if (i > 0) p.escalation = escN; });
+    M._escFromSolicitation = true;
+    applied.push('escalation ' + escN + '%');
+  }
+
+  // GSA Schedule discount — only meaningful in Schedule mode.
+  const gdN = numOf(src && src.gsa_discount);
+  if (!isNaN(gdN) && gdN >= 0 && isGsa && !(M && M._gsaDiscUserSet)) {
+    M.gsaDiscount = gdN;
+    M._gsaDiscFromSolicitation = true;
+    applied.push('GSA discount ' + gdN + '%');
+  }
+
+  // ODC / materials ceiling — shares the Travel & ODC reimbursable line. Travel NTE (set earlier)
+  // wins; an ODC/materials ceiling only fills the line when travel left it empty.
+  const odcN = parseMoney ? (parseMoney(String((src && src.odc_nte) || '')) || 0)
+                          : (parseFloat(String((src && src.odc_nte) || '').replace(/[^0-9.]/g, '')) || 0);
+  const mat = String((src && src.materials_required) || '').toLowerCase().trim();
+  if (odcN > 0 || mat === 'yes') {
+    if (!M.travel) M.travel = { mode: 'none', method: 'lump', lumpBasis: 'perPeriod', lumpAmount: '', odcCategory: 'Travel & ODC', nte: '' };
+    const t = M.travel;
+    if (!t.mode || t.mode === 'none') { t.mode = odcN > 0 ? 'nte' : 'open'; t.method = 'lump'; }
+    if (odcN > 0 && (!t.nte || t.nte === '')) {
+      t.nte = String(odcN);
+      if (!t.lumpAmount) t.lumpAmount = odcN;
+      t.odcCategory = 'Travel, ODC & Materials';
+      t._odcFrom = 'solicitation ODC/materials ceiling';
+      applied.push('ODC/materials NTE $' + odcN);
+    }
+  }
+  return applied;
+}
+
 function pricingApplyBriefing(b) {
   if (!b) return;
   // Methodology
@@ -13128,6 +13198,10 @@ function pricingApplyBriefing(b) {
   } else if (_trav === 'no') {
     pricingModel.travel.mode = 'none';
   }
+  // (#7) Escalation, GSA discount, and a separate ODC/materials ceiling from the solicitation —
+  // non-destructive (see _pxApplySolicitationPricing); travel NTE (above) and monthly-FFP (CLIN
+  // basis) are handled separately.
+  try { _pxApplySolicitationPricing(pricingModel, Object.assign({}, _intel, b), (typeof pricingIsGsa === 'function' && pricingIsGsa()), (typeof _parseMoney === 'function' ? _parseMoney : null)); } catch (e) {}
   window._pricingBriefingMeta = {
     title: b.requirement_title || '', sol: b.solicitation_number || '',
     contractType: b.contract_type || '', period: b.period_of_performance || '',
@@ -13149,7 +13223,7 @@ function pricingGsaAddFiles(files) {
   pricingRenderAll();
 }
 function pricingRemoveGsaFile(name) { pricingGsaFiles = pricingGsaFiles.filter(f => f.name !== name); pricingRenderAll(); }
-function pricingSetDiscount(v) { pricingModel.gsaDiscount = (v === '' ? '' : Math.max(0, parseFloat(v) || 0)); pricingRenderAll(); }
+function pricingSetDiscount(v) { pricingModel.gsaDiscount = (v === '' ? '' : Math.max(0, parseFloat(v) || 0)); pricingModel._gsaDiscUserSet = true; pricingRenderAll(); }
 function pricingSetPopStart(v) { pricingModel.gsaPopStart = v || ''; pricingRenderAll(); }
 
 // ── SCA / Wage Determination handlers + UI ──────────────────────────────────
@@ -13178,10 +13252,10 @@ function pricingWdSamLink() {
 // <label> with no drop handling whatsoever, so a dropped file was silently discarded.
 function pricingWdDzOver(e) {
   e.preventDefault();
-  const el = e.currentTarget; if (el) { el.style.background = '#dbeafe'; el.style.borderColor = 'var(--blue)'; }
+  const el = e.currentTarget; if (el) { el.style.background = 'var(--light-blue)'; el.style.borderColor = 'var(--blue)'; }
 }
 function pricingWdDzLeave(e) {
-  const el = e.currentTarget; if (el) { el.style.background = '#fff'; el.style.borderColor = 'var(--mid-blue)'; }
+  const el = e.currentTarget; if (el) { el.style.background = 'var(--pale)'; el.style.borderColor = 'var(--mid-blue)'; }
 }
 function pricingWdDzDrop(e) {
   e.preventDefault();
@@ -13268,7 +13342,7 @@ function pricingRenderSca() {
     h += `<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">`;
     h += `${_wdStep(1)}<a href="${_sam.url}" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:600;text-decoration:none;background:#fff;border:1px solid var(--blue);color:var(--blue);border-radius:6px;padding:5px 11px;white-space:nowrap">${_samLabel}</a>`;
     h += `${_wdArrow}${_wdStep(2)}<span style="font-size:11.5px;color:var(--text)">Download the PDF</span>`;
-    h += `${_wdArrow}${_wdStep(3)}<div id="pricingWdDz" onclick="document.getElementById('pricingWdFileInput').click()" ondragover="pricingWdDzOver(event)" ondragleave="pricingWdDzLeave(event)" ondrop="pricingWdDzDrop(event)" style="font-size:11.5px;font-weight:700;background:#fff;border:2px dashed var(--mid-blue);border-radius:8px;padding:7px 14px;cursor:pointer;color:var(--blue);white-space:nowrap;text-align:center;transition:background .15s">\u2913 Drop the WD file here \u2014 or click to browse<input id="pricingWdFileInput" type="file" multiple accept=".pdf,.txt,.docx,.xlsx,.csv" onchange="pricingAddWdFiles(this.files);this.value=''" style="display:none"/></div>`;
+    h += `${_wdArrow}${_wdStep(3)}<div id="pricingWdDz" onclick="document.getElementById('pricingWdFileInput').click()" ondragover="pricingWdDzOver(event)" ondragleave="pricingWdDzLeave(event)" ondrop="pricingWdDzDrop(event)" style="font-size:11.5px;font-weight:700;background:var(--pale);border:2px dashed var(--mid-blue);border-radius:8px;padding:7px 14px;cursor:pointer;color:var(--blue);white-space:nowrap;text-align:center;transition:background .15s">\u2913 Drop the WD file here \u2014 or click to browse<input id="pricingWdFileInput" type="file" multiple accept=".pdf,.txt,.docx,.xlsx,.csv" onchange="pricingAddWdFiles(this.files);this.value=''" style="display:none"/></div>`;
     h += `</div>`;
     h += pricingWdFiles.length ? `<div style="margin-top:9px">${wdFiles}</div><button id="pricingWdParseBtn" onclick="pricingParseWd()" style="margin-top:8px;padding:6px 13px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">\uD83D\uDCC4 Read WD &amp; extract rates</button><div id="pricingWdProgress" style="display:none;margin-top:9px"></div>` : '';
     h += `<div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.4">${_samHint} DOL Wage Determinations are public; you can also enter the rates by hand above.</div>`;
@@ -13374,7 +13448,7 @@ function pricingRenderGate() {
     return `<div class="file-item" style="background:#fff"><span class="file-icon">📑</span><span class="file-name">${escHtml(f.name)}</span><span class="file-meta"><span class="file-size">${size}</span></span><span class="file-remove" onclick="pricingRemoveGsaFile('${sn}')" title="Remove">✕</span></div>`;
   }).join('');
   const dropZone =
-    `<div onclick="document.getElementById('pricingGsaFileInput').click()" ondragover="event.preventDefault();this.style.background='#dbeafe'" ondragleave="this.style.background=''" ondrop="pricingGsaDrop(event)" style="border:2px dashed var(--mid-blue);border-radius:8px;padding:16px;text-align:center;cursor:pointer;background:#fff;font-size:12.5px;color:var(--blue);font-weight:600">⤓ Drop your GSA MAS Schedule here (PDF, Word, or Excel) — or click to browse</div>` +
+    `<div onclick="document.getElementById('pricingGsaFileInput').click()" ondragover="event.preventDefault();this.style.background='var(--light-blue)'" ondragleave="this.style.background='var(--pale)'" ondrop="pricingGsaDrop(event)" style="border:2px dashed var(--mid-blue);border-radius:8px;padding:16px;text-align:center;cursor:pointer;background:var(--pale);font-size:12.5px;color:var(--blue);font-weight:600">⤓ Drop your GSA MAS Schedule here (PDF, Word, or Excel) — or click to browse</div>` +
     `<input type="file" id="pricingGsaFileInput" accept=".pdf,.docx,.doc,.xlsx,.xls" style="display:none" onchange="pricingGsaFilesChosen(event)"/>`;
 
   if (d == null) {
@@ -14268,7 +14342,7 @@ function pricingRateMatrixHtml(l) {
     + '<thead><tr><th></th>' + colLbl('Hourly') + colLbl('Annual') + '</tr></thead>'
     + '<tbody>'
     + '<tr>' + rowLbl(_gsaMode ? 'Implied' : 'Company', _gsaMode ? 'Company-paid rate implied by the Schedule rate and your wrap' : 'What you pay the employee') + cell(paid, false, _gsaMode ? 'Implied company paid hourly rate (loaded \u00f7 wrap)' : 'Company paid hourly rate') + cell(salary, false, 'Paid hourly \u00d7 2,080 payroll hours \u2014 the employee\u2019s salary') + '</tr>'
-    + '<tr>' + rowLbl(_gsaMode ? '\uD83D\uDD12 Burdened' : 'Burdened', _gsaMode ? 'Locked to your GSA Schedule \u2014 the Schedule sets this rate; company/manual rates do not apply in Schedule mode' : 'What you bill the Government') + cell(loaded, true, 'Fully burdened hourly rate (paid \u00d7 ' + W.toFixed(3) + ' wrap)') + cell(annual, false, 'Loaded hourly \u00d7 ' + Math.round(H).toLocaleString() + ' billable Hrs/FTE \u2014 revenue per FTE-year') + '</tr>'
+    + '<tr>' + rowLbl('Burdened', _gsaMode ? 'Locked to your GSA Schedule \u2014 the Schedule sets this rate; company/manual rates do not apply in Schedule mode' : 'What you bill the Government') + cell(loaded, true, 'Fully burdened hourly rate (paid \u00d7 ' + W.toFixed(3) + ' wrap)') + cell(annual, false, 'Loaded hourly \u00d7 ' + Math.round(H).toLocaleString() + ' billable Hrs/FTE \u2014 revenue per FTE-year') + '</tr>'
     + '</tbody></table></div>';
 }
 
@@ -14306,11 +14380,11 @@ function pricingRenderLcats() {
       // The four derived figures moved into the 2x2 above; this line now carries only what the
       // 2x2 cannot -- where the rate CAME FROM, which is the whole point in Schedule mode.
       const rateNote = l.gsaLcat
-        ? `Schedule rate: Yr ${applYear} ${pricingFmtC(gsaRate)}${disc ? ` − ${disc}%` : ''} = <strong>${pricingFmtC(_gld)}/hr loaded</strong> · billed at ${Math.round(_gH).toLocaleString()} hrs/FTE`
+        ? `<strong>${pricingEsc(l.gsaLcat)}</strong> · Schedule rate: Yr ${applYear} ${pricingFmtC(gsaRate)}${disc ? ` − ${disc}%` : ''} = ${pricingFmtC(_gld)}/hr loaded · billed at ${Math.round(_gH).toLocaleString()} hrs/FTE`
         : '<span style="color:var(--warn)">map to a GSA LCAT →</span>';
       return `<div id="pxLcat_${l.id}" style="display:grid;grid-template-columns:${PX_GSA_TRACKS};gap:6px 8px;align-items:center;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
         <input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (as named in your proposal)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
-        <select onchange="pricingSetGsaLcat('${l.id}',this.value)" style="min-width:0;width:100%;padding:6px 26px 6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:white;text-overflow:ellipsis;box-sizing:border-box">${opts}</select>
+        <select title="${l.gsaLcat ? pricingEsc(l.gsaLcat) : 'Map this role to a GSA Schedule labor category'}" onchange="pricingSetGsaLcat('${l.id}',this.value)" style="min-width:0;width:100%;padding:6px 26px 6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:white;text-overflow:ellipsis;box-sizing:border-box">${opts}</select>
         <input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" title="Full-time-equivalent staffing you propose for this role (base year)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
         ${pricingRateMatrixHtml(l)}
         <button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px;padding:0;line-height:1">✕</button>
@@ -14720,6 +14794,25 @@ function pricingClinGenerateFromTasks() {
 }
 
 // ── CLIN layer UI ─────────────────────────────────────────────────────────────
+function _pxClinLaborCheck(lines, pds, lineAmt, periodCost) {
+  // Task-partition coverage warning. It is only meaningful when labor is split across TASK-based
+  // CLINs (every PWS task must be covered exactly once). It is meaningless for all-labor CLIN
+  // schemes — INCLUDING period-based ones (00010 = base-year all labor, 00020 = OY1 all labor,
+  // ...), where each period is its own all-labor CLIN. The old check summed every labor line over
+  // every period, which multi-counts the labor once per period-CLIN and produced a spurious
+  // "~5x overage" warning. So run it only when there is at least one task-scoped line and NO
+  // all-labor line to muddy coverage; respect any periodBind so a period-bound line counts only
+  // in its own period.
+  const taskLines = (lines || []).filter(l => l.scope === 'tasks');
+  const hasAllLabor = (lines || []).some(l => l.scope === 'labor');
+  if (!taskLines.length || hasAllLabor) return { show: false, sum: 0, model: 0 };
+  const inP = (line, pd) => (line.periodBind == null) || (line.periodBind === pd.srcIdx);
+  let sum = 0;
+  taskLines.forEach(line => (pds || []).forEach(pd => { if (inP(line, pd)) sum += lineAmt(line, pd); }));
+  const model = (pds || []).reduce((s, pd) => s + (pd.isExt ? periodCost(pd.srcIdx) * (pd.extFactor || 1) : periodCost(pd.srcIdx)), 0);
+  return { show: Math.abs(sum - model) > 1, sum, model };
+}
+
 function pricingRenderClin() {
   const el = document.getElementById('pricingClin');
   if (!el) return;
@@ -14785,9 +14878,8 @@ function pricingRenderClin() {
     });
     h += '</tbody></table>';
     const pds = pricingClinPeriods();
-    let clinLaborSum = 0; c.lines.forEach(line => { if (line.scope === 'labor' || line.scope === 'tasks') pds.forEach(pd => { clinLaborSum += pricingClinLineAmount(line, pd); }); });
-    const modelLabor = pds.reduce((s, pd) => s + (pd.isExt ? pricingPeriodCost(pd.srcIdx) * (pd.extFactor || 1) : pricingPeriodCost(pd.srcIdx)), 0);
-    if (Math.abs(clinLaborSum - modelLabor) > 1) h += '<div style="margin-top:8px;font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde047;border-radius:6px;padding:7px 10px">&#9888; Your CLIN labor scopes total ' + pricingFmt(clinLaborSum) + ', but the priced labor is ' + pricingFmt(modelLabor) + ' (off by ' + pricingFmt(Math.abs(clinLaborSum - modelLabor)) + '). If you split labor across task-based CLINs, make sure every PWS task is covered exactly once.</div>';
+    const _lc = _pxClinLaborCheck(c.lines, pds, pricingClinLineAmount, pricingPeriodCost);
+    if (_lc.show) h += '<div style="margin-top:8px;font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde047;border-radius:6px;padding:7px 10px">&#9888; Your task-based CLIN labor scopes total ' + pricingFmt(_lc.sum) + ', but the priced labor is ' + pricingFmt(_lc.model) + ' (off by ' + pricingFmt(Math.abs(_lc.sum - _lc.model)) + '). Make sure every PWS task is covered by exactly one CLIN.</div>';
     h += '</div>';
   }
   h += '</div>';
@@ -16044,6 +16136,7 @@ function pricingValueTieOut() {
 const _PX_THIN_FTE_PER_TASK = 0.25;   // a role under a quarter-FTE per task it covers (and covering 3+ tasks)
 const _PX_THIN_TASK_MIN_TASKS = 3;    // below 3 tasks, a small per-task figure is normal part-time work
 const _PX_THIN_TASK_FTE = 0.5;        // a PWS task carrying under half an FTE in total
+const _PX_THIN_REL_RATIO = 0.5;       // and only when also below half the model's own mean — kills small-task-order false positives
 
 // Billed rate this role WOULD carry at a hypothetical paid hourly, through the real rate chain
 // (locality differential, SCA H&W substitution, wrap, competitive discount). Swapping baseRate and
@@ -16130,6 +16223,39 @@ function _pxRoleBand(l) {
 
 // ── the deterministic pre-pass ────────────────────────────────────────────────
 // Every figure the model is shown comes from here. No estimation, no judgement — arithmetic only.
+function _pxThinCoverage(tasks, roles, colHours, hpf, totalHours) {
+  // Flags "thin" roles/tasks for the gap brief. Absolute floors alone fire on every small task
+  // order (a 3-FTE contract spread over 8 PWS tasks is ~0.3 FTE/task by construction — normal,
+  // deliberate, not a defect), turning the tool's OWN confident allocation into a wall of flags.
+  // So a role/task is flagged only when it is BELOW its absolute floor AND a genuine low outlier
+  // for THIS model (under _PX_THIN_REL_RATIO x the model's own mean). Uniform thinness is left
+  // alone; a task with literally no hours is still always a coverage gap; and genuine under-sizing
+  // against the Government's stated value is caught separately by the tie-out, not here.
+  const coveredTf = (tasks || []).map(tk => { const h = colHours(tk.id); return h > 0 ? h / hpf : null; }).filter(v => v != null);
+  const meanTaskFte = coveredTf.length ? coveredTf.reduce((s, v) => s + v, 0) / coveredTf.length : 0;
+  const roleFtePer = (roles || []).filter(r => r.ftePerTask != null && r.tasksCovered >= 1).map(r => r.ftePerTask);
+  const meanRoleFtePer = roleFtePer.length ? roleFtePer.reduce((s, v) => s + v, 0) / roleFtePer.length : 0;
+
+  const thinRoles = (roles || [])
+    .filter(r => r.tasksCovered >= _PX_THIN_TASK_MIN_TASKS && r.ftePerTask != null
+              && r.ftePerTask < _PX_THIN_FTE_PER_TASK
+              && r.ftePerTask < _PX_THIN_REL_RATIO * meanRoleFtePer)
+    .sort((a, b) => a.ftePerTask - b.ftePerTask)
+    .map(r => ({ name: r.name, fte: r.fte, tasksCovered: r.tasksCovered, ftePerTask: r.ftePerTask }));
+
+  const thinTasks = [], uncoveredTasks = [];
+  (tasks || []).forEach(tk => {
+    const h = colHours(tk.id);
+    const label = String(tk.code ? (tk.code + ' ' + (tk.name || '')) : (tk.name || '')).trim() || '(unnamed task)';
+    if (!(h > 0)) { uncoveredTasks.push(label); return; }
+    const tf = h / hpf;
+    if (tf < _PX_THIN_TASK_FTE && tf < _PX_THIN_REL_RATIO * meanTaskFte)
+      thinTasks.push({ name: label, hours: Math.round(h), fte: r2(tf), pctOfEffort: totalHours > 0 ? r1(100 * h / totalHours) : 0 });
+  });
+  thinTasks.sort((a, b) => a.fte - b.fte);
+  return { thinRoles, thinTasks, uncoveredTasks, meanTaskFte, meanRoleFtePer };
+}
+
 function pricingGapFacts() {
   const f = { ok: false, reason: '', at: Date.now() };
   const M = (typeof pricingModel !== 'undefined' && pricingModel) ? pricingModel : null;
@@ -16244,21 +16370,12 @@ function pricingGapFacts() {
   f.aboveBand = f.roles.filter(r => r.bandPos === 'above');
   f.noBand = f.roles.filter(r => !r.band).map(r => r.name);
 
-  // ── thin coverage ──
-  f.thinRoles = f.roles
-    .filter(r => r.tasksCovered >= _PX_THIN_TASK_MIN_TASKS && r.ftePerTask != null && r.ftePerTask < _PX_THIN_FTE_PER_TASK)
-    .sort((a, b) => a.ftePerTask - b.ftePerTask)
-    .map(r => ({ name: r.name, fte: r.fte, tasksCovered: r.tasksCovered, ftePerTask: r.ftePerTask }));
-  f.thinTasks = []; f.uncoveredTasks = [];
-  M.tasks.forEach(tk => {
-    const h = pricingColHours(tk.id);
-    const label = String(tk.code ? (tk.code + ' ' + (tk.name || '')) : (tk.name || '')).trim() || '(unnamed task)';
-    if (!(h > 0)) { f.uncoveredTasks.push(label); return; }
-    const tf = h / hpf;
-    if (tf < _PX_THIN_TASK_FTE) f.thinTasks.push({ name: label, hours: Math.round(h), fte: r2(tf), pctOfEffort: hours > 0 ? r1(100 * h / hours) : 0 });
-  });
-  f.thinTasks.sort((a, b) => a.fte - b.fte);
-  f.thresholds = { ftePerTask: _PX_THIN_FTE_PER_TASK, minTasks: _PX_THIN_TASK_MIN_TASKS, taskFte: _PX_THIN_TASK_FTE };
+  // ── thin coverage — calibrated to THIS model's own scale (see _pxThinCoverage) ──
+  const _tc = _pxThinCoverage(M.tasks, f.roles, pricingColHours, hpf, hours);
+  f.thinRoles = _tc.thinRoles;
+  f.thinTasks = _tc.thinTasks;
+  f.uncoveredTasks = _tc.uncoveredTasks;
+  f.thresholds = { ftePerTask: _PX_THIN_FTE_PER_TASK, minTasks: _PX_THIN_TASK_MIN_TASKS, taskFte: _PX_THIN_TASK_FTE, relRatio: _PX_THIN_REL_RATIO };
   return f;
 }
 
@@ -16714,7 +16831,7 @@ function pricingRenderGapPanel() {
     + (g.caution ? '<div style="font-size:12px;color:#92400e;line-height:1.5;margin-top:6px;background:#fffbeb;border:1px solid #fde68a;border-radius:7px;padding:8px 11px"><strong>Caution:</strong> ' + esc(g.caution) + '</div>' : '')
     + '<details style="margin-top:10px"><summary style="font-size:11px;color:var(--muted);cursor:pointer">Show the exact figures this analysis was given</summary>'
     + '<pre style="font-size:10.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid var(--border);border-radius:7px;padding:10px 12px;margin-top:6px;color:var(--text)">' + esc(g.brief) + '</pre></details>'
-    + '<div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.5">Nothing is applied until you click Apply \u2014 and every value is re-checked against the live model before it is written, so a figure the analysis got wrong cannot reach your price build unchallenged. The figures above are computed by the tool; the ranking and wording are the model\u2019s. Thin-coverage flags use a threshold of ' + _PX_THIN_FTE_PER_TASK + ' FTE per task (roles covering ' + _PX_THIN_TASK_MIN_TASKS + '+ tasks) and ' + _PX_THIN_TASK_FTE + ' FTE per task overall.</div>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.5">Nothing is applied until you click Apply \u2014 and every value is re-checked against the live model before it is written, so a figure the analysis got wrong cannot reach your price build unchallenged. The figures above are computed by the tool; the ranking and wording are the model\u2019s. Thin-coverage flags use a threshold of ' + _PX_THIN_FTE_PER_TASK + ' FTE per task (roles covering ' + _PX_THIN_TASK_MIN_TASKS + '+ tasks) and ' + _PX_THIN_TASK_FTE + ' FTE per task overall, and only when a role or task also runs well below this model\u2019s own average \u2014 so a uniformly small task order is not flagged.</div>'
     + '</div>';
 }
 function pricingTieOutHtml() {
@@ -18923,9 +19040,28 @@ function _bnaQaMd(raw) {
     .replace(/(^|[\s(])\*([^\s*][^*\n]*[^\s*]|[^\s*])\*(?=[\s.,;:)!?]|$)/g, '$1<em>$2</em>')
     .replace(/`([^`\n]+)`/g, '<code style="background:#eef2f7;border-radius:3px;padding:0 3px;font-size:12px">$1</code>');
 
-  lines.forEach(function (ln) {
-    const t = ln.trim();
-    if (!t) { closeList(); return; }
+  // Classify a trimmed line into the block kind it starts — used both to render it and,
+  // for the look-ahead below, to decide whether a blank line really ends a list.
+  const olRe = /^(\d{1,3})[.)]\s+(.*)$/;
+  const ulRe = /^[-*\u2022]\s+(.*)$/;
+  const kindOf = (t) => (!t ? 'blank' : (olRe.test(t) ? 'ol' : (ulRe.test(t) ? 'ul' : 'other')));
+
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+
+    if (!t) {
+      // A blank line ends the current block UNLESS it merely separates two items of the
+      // SAME list (a "loose" list — very common in model output). Peek past any run of
+      // blank lines: if the next content continues this same list, keep the list open so
+      // the ordinal doesn't restart at 1 on every item (the bug this fixes).
+      if (list) {
+        let j = i + 1;
+        while (j < lines.length && !lines[j].trim()) j++;
+        const nextKind = j < lines.length ? kindOf(lines[j].trim()) : 'blank';
+        if (nextKind !== list) closeList();
+      }
+      continue;
+    }
 
     // Headings: rendered as a bold lead-in rather than an <h*>, which would be louder than
     // anything else on the page for what is a scratchpad answer.
@@ -18934,26 +19070,29 @@ function _bnaQaMd(raw) {
       closeList();
       out.push('<div style="font-weight:800;font-size:' + (hd[1].length <= 2 ? '13.5' : '12.5')
              + 'px;color:var(--text);margin:12px 0 2px">' + inline(hd[2].replace(/\s*#+\s*$/, '')) + '</div>');
-      return;
+      continue;
     }
-    if (/^([-*_])\1{2,}$/.test(t)) { closeList(); out.push('<hr style="border:none;border-top:1px solid var(--border);margin:10px 0">'); return; }
+    if (/^([-*_])\1{2,}$/.test(t)) { closeList(); out.push('<hr style="border:none;border-top:1px solid var(--border);margin:10px 0">'); continue; }
 
-    const ol = t.match(/^(\d{1,3})[.)]\s+(.*)$/);
-    if (ol) { openList('ol'); out.push('<li style="margin:3px 0">' + inline(ol[2]) + '</li>'); return; }
+    const ol = t.match(olRe);
+    // Carry the model's own ordinal through with value="N" so numbering is correct even if
+    // the items ended up in separate <ol> blocks (e.g. odd spacing the look-ahead can't merge).
+    if (ol) { openList('ol'); out.push('<li value="' + parseInt(ol[1], 10) + '" style="margin:3px 0">' + inline(ol[2]) + '</li>'); continue; }
 
-    const ul = t.match(/^[-*\u2022]\s+(.*)$/);
-    if (ul) { openList('ul'); out.push('<li style="margin:3px 0">' + inline(ul[1]) + '</li>'); return; }
+    const ul = t.match(ulRe);
+    if (ul) { openList('ul'); out.push('<li style="margin:3px 0">' + inline(ul[1]) + '</li>'); continue; }
 
     // A plain line continues the current list item rather than breaking out of the list.
-    if (list) { out.push('<div style="margin:2px 0 2px 0">' + inline(t) + '</div>'); return; }
+    if (list) { out.push('<div style="margin:2px 0 2px 0">' + inline(t) + '</div>'); continue; }
     out.push('<p style="margin:7px 0 0">' + inline(t) + '</p>');
-  });
+  }
   closeList();
 
   let html = out.join('');
   html = html.replace(/^<p style="margin:7px 0 0">/, '<p style="margin:0">');
   return html || '<p style="margin:0">' + esc(String(raw || '').trim()) + '</p>';
 }
+
 
 async function runBnaQa() {
   const input = document.getElementById('bnaQaInput');
@@ -18985,6 +19124,112 @@ async function runBnaQa() {
     const rfp = Array.isArray(window._bnaRfpContent) ? window._bnaRfpContent : [];
     const content = rfp.length ? rfp.concat([{ type: 'text', text: promptText }]) : promptText;
     const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 1200, messages: [{ role: 'user', content: content }] };
+    const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', mode: 'cors', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(payload) });
+    if (!resp.ok) { const et = await resp.text(); showErr('Request failed (' + resp.status + '): ' + et.slice(0, 140)); if (status) status.style.display = 'none'; return; }
+    const data = await resp.json();
+    if (data.error) { showErr('Error: ' + data.error.message); if (status) status.style.display = 'none'; return; }
+    const text = (data.content || []).map(b => b.text || '').join('').trim();
+    if (status) status.style.display = 'none';
+    if (answer) {
+      answer.style.display = 'block';
+      answer.innerHTML = '<div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--text);line-height:1.6">' + _bnaQaMd(text) + '</div>';
+    }
+  } catch (e) {
+    if (status) status.style.display = 'none';
+    showErr('Something went wrong: ' + (e && e.message ? e.message : e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
+
+/* ═══════════════════ Phase H — "Ask the Tool About the Tool" help assistant ═══════════════════
+   A general helpbot about the tool ITSELF: what it does, where things are, how to set it up, and
+   the logic behind its features. NOT tied to any specific opportunity. Mirrors the BNA Q&A call
+   path (same API key, model, and _bnaQaMd renderer) but is grounded in a static tool reference. */
+const TOOL_HELP_NOKEY_MD = `To use this assistant, connect your Anthropic API key first — it answers by calling the Anthropic API, so a key has to be in place before it can respond to anything else.
+
+Setting it up takes a minute:
+1. Find the API key box at the top of the page (it is also on the Proposal tab).
+2. Get a key from the Anthropic Console at console.anthropic.com — sign in, open API Keys, and create one. It starts with "sk-ant-".
+3. Paste the key into the box and save it. It is kept only for this browser session, on your device.
+
+Once the key is connected, come back and ask anything about the tool — how it works, what each tab does, how the pricing and CLIN logic works, and so on.`;
+const TOOL_HELP_KB = `WHAT THIS IS
+A single-page, browser-based assistant for U.S. Government contracting. It helps a company evaluate opportunities, price them, write and check proposals, build oral-presentation decks, and manage recruiting — all in one page. Everything runs in your browser; your data and your API key stay on your machine (the tool itself stores nothing on a server).
+
+GETTING STARTED / API KEY
+Most of the AI-powered features — opportunity analysis, proposal drafting, compliance checks, the pricing gap analysis, and this help assistant — call the Anthropic API and need your own Anthropic API key. Set it in the API-key box at the top of the page (it also appears on the Proposal tab). It is kept only for your current browser session. To get a key: sign in at the Anthropic Console (console.anthropic.com), create a key under API Keys, and paste it in. Without a key the non-AI features still work, but anything that "thinks" will ask you to add a key first.
+
+THE TABS
+- Bid/No-Bid: paste or drop a solicitation to get a structured read of the opportunity and a bid/no-bid view. You can ask free-text questions about THAT specific opportunity here.
+- Partners: manage teaming partners and subcontractors.
+- Proposal: the core proposal workflow — load the solicitation (drop the RFP/PWS/SOW), let the tool extract requirements, then generate proposal volumes.
+- Section Editor: rewrite, strengthen, or re-focus a single proposal section without regenerating the whole volume.
+- Pricing: build your price — add labor categories and rates, set the wrap (indirect) rates, choose FTE and hours per role and task, optionally organize the price into CLINs, preview the pricing schedule, run a gap analysis of the model, and export a formatted pricing workbook (.xlsx).
+- Market Rates: research and compare labor rates against market bands.
+- Compliance: drop the solicitation and your written proposal to get a requirement-by-requirement compliance check — does the proposal address every "shall" and "must".
+- Presentation: turn a finished proposal into an oral-presentation slide deck (.pptx) in your brand colors, with speaker notes.
+- Candidate Search / Tracker / Match / Resume Builder / Outreach Writer: the recruiting suite for finding and tracking candidates, matching them to roles, building resumes, and writing outreach.
+- Settings: configure the tool — company identity, branding (colors and logo), your API key, and any integrations. Changes save in your browser and take effect immediately.
+
+HOW THE PRICING LOGIC WORKS
+- Wrap rate: you enter what you PAY a person (paid hourly rate or salary) and the tool multiplies by a wrap factor to get the fully burdened rate you BILL the Government. The wrap factor is built from fringe, overhead, G&A, and fee, and can be compounded (each layer on the prior) or additive. You set these percentages in Settings; a banner on the Pricing tab shows the factor in use.
+- Two hour bases, both correct on purpose: the Government is typically billed at about 1,912 productive hours per FTE-year, while salary is figured on 2,080 payroll hours per year.
+- GSA Schedule mode: if you price off a GSA Schedule, the awarded Schedule rate is the ceiling. Map each role to a Schedule labor category and the rate fills in; the tool then shows the company-paid rate implied behind that awarded rate (Schedule rate divided by your wrap). You do not set a paid rate in Schedule mode — the Schedule governs.
+- CLINs: turning on CLINs organizes the price into numbered contract line items and builds a submittable schedule. A CLIN line can cover all labor, specific PWS tasks, travel/ODC, materials, or a custom fixed amount, and each line repeats per period (base year plus option years). The contract total is the annual value times the real number of contract years from the period-of-performance dates — not the number of periods.
+- Gap analysis: on the Pricing tab, "Analyze the price model" does a deterministic read of your model and then asks the AI for a few ranked, quantified moves to improve it. It is advisory only — nothing is written to your price until you click to apply it, and every value is re-checked against the live model first.
+
+HOW THE TOOL TREATS FACTS (PROVENANCE)
+The solicitation is authoritative. Your own entries come next and are trusted unless they conflict with the solicitation. The AI's interpretation is last and is never presented as a Government-stated fact. Structural things like CLIN identity come from the solicitation and are never invented, and nothing the AI proposes is applied to your model silently — it is always a reviewable step.
+
+FIRST-RUN TIPS
+- Set your API key, fill in Company Identity and Branding in Settings, then go to the Proposal tab and load a solicitation.
+- If an AI feature says it needs a key, add it in the box at the top of the page.
+- This assistant answers questions about the tool itself. For questions about a specific opportunity you are evaluating, use the Bid/No-Bid tab (which can read that solicitation) instead.`;
+
+function toolHelpKey(e) {
+  // Enter asks; Shift+Enter (or a modifier) inserts a newline — same as every other ask box.
+  if (!e || e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+  const btn = document.getElementById('toolHelpBtn');
+  if (btn && btn.disabled) return;    // a question is already in flight
+  askToolHelp();
+}
+function askToolHelpPreset(q) {
+  const i = document.getElementById('toolHelpInput'); if (i) i.value = q; askToolHelp();
+}
+async function askToolHelp() {
+  const input = document.getElementById('toolHelpInput');
+  const status = document.getElementById('toolHelpStatus');
+  const answer = document.getElementById('toolHelpAnswer');
+  const q = (input && input.value || '').trim();
+  const showErr = (msg) => { if (answer) { answer.style.display = 'block'; answer.innerHTML = '<div style="font-size:12.5px;color:var(--error)">' + escHtml(msg) + '</div>'; } };
+  if (!q) { if (input) input.focus(); return; }
+  const apiKey = (typeof getApiKey === 'function') && getApiKey();
+  // Works before a key is connected: with no key the assistant cannot call the model, so it returns
+  // the one pre-programmed answer it can \u2014 how to connect a key \u2014 rendered like any other answer.
+  if (!apiKey) {
+    if (status) status.style.display = 'none';
+    if (answer) { answer.style.display = 'block'; answer.innerHTML = '<div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--text);line-height:1.6">' + _bnaQaMd(TOOL_HELP_NOKEY_MD) + '</div>'; }
+    if (input) input.focus();
+    return;
+  }
+  const btn = document.getElementById('toolHelpBtn');
+  const orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Thinking\u2026'; }
+  if (answer) answer.style.display = 'none';
+  if (status) { status.style.display = 'block'; const t = document.getElementById('toolHelpStatusText'); if (t) t.textContent = 'Looking it up\u2026'; }
+  try {
+    const promptText =
+      'You are the built-in help assistant for a single-page, browser-based U.S. Government contracting proposal-and-pricing tool. ' +
+      'Answer the user\'s question about HOW THE TOOL ITSELF works \u2014 its features, where to find things, how to set it up, and the logic behind its pricing, compliance, and proposal features \u2014 using the REFERENCE below. ' +
+      'This is general help about the tool, NOT analysis of any specific solicitation or opportunity. If the user asks about a specific opportunity they are evaluating, briefly point them to the Bid/No-Bid tab (which can read that solicitation) or the Proposal tab instead. ' +
+      'Be concise and practical \u2014 a few sentences or a short list, not an essay. Write in plain prose. Do NOT use markdown headings (#) or bold/italic markers (** or *), as they would display literally. A simple numbered or dashed list is fine where the answer really is a list. ' +
+      'If the reference does not cover something, say what you do know and suggest where in the tool to look, rather than inventing specifics.\n\n' +
+      'REFERENCE \u2014 WHAT THIS TOOL IS AND HOW IT WORKS:\n' + TOOL_HELP_KB + '\n\n' +
+      'QUESTION: ' + q;
+    const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 1200, messages: [{ role: 'user', content: promptText }] };
     const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', mode: 'cors', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(payload) });
     if (!resp.ok) { const et = await resp.text(); showErr('Request failed (' + resp.status + '): ' + et.slice(0, 140)); if (status) status.style.display = 'none'; return; }
     const data = await resp.json();
