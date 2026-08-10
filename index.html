@@ -2194,7 +2194,7 @@
 
   <!-- ── Constrained / reverse pricing (Phase 8) — pin populated stages, solve the rest ── -->
   <div class="card" id="constrainedCard" style="margin-bottom:20px">
-    <div class="card-header"><span class="icon">🧩</span> Start from an existing pricing sheet <span style="font-size:11px;font-weight:700;color:#3730a3;background:#e0e7ff;border:1px solid #c7d2fe;border-radius:20px;padding:2px 10px;margin-left:8px;vertical-align:middle">Optional · reverse-solve</span></div>
+    <div class="card-header"><span class="icon">🧩</span> Step 0 — Start from an existing pricing sheet <span style="font-size:11px;font-weight:700;color:#3730a3;background:#e0e7ff;border:1px solid #c7d2fe;border-radius:20px;padding:2px 10px;margin-left:8px;vertical-align:middle">Optional · reverse-solve</span></div>
     <div class="card-body">
       <p style="font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.6">Already have a partly-built pricing spreadsheet? Upload it and the tool detects which stages are already populated — PWS-task mapping, labor categories, GSA-schedule mapping, FTEs, and rates — treats those as fixed, and solves only what's blank. <strong>Optional</strong> — skip this and build forward from the steps below if you're starting fresh.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -2368,14 +2368,17 @@
         <div id="pricingFinalizeStatus" style="display:none;font-size:12.5px;margin-top:12px"></div>
       </div>
 
-      <!-- Pivot: slice & dice the FINALIZED model (CLINs applied above). -->
+      <!-- Pivot: its own section (#9/#16) — an obvious divide ends Finalize and sets the pivot apart; the card carries its own heading. -->
+      <div style="border-top:2px solid #e2e8f0;margin:28px 0 16px"></div>
       <div id="pricingPivot" style="margin-bottom:16px"></div>
 
-      <!-- End-of-flow PWS check: moved here from the reverse-solve card so it runs AFTER the pricing
-           is built (labor, rates, hours, discount, travel, CLINs), not before. Reads the current model. -->
-      <div style="margin-bottom:16px;border-top:1px solid var(--border);padding-top:16px">
+      <!-- End-of-flow PWS check (#13): its own clearly-separated section, runs AFTER the pricing is
+           built. This is a COMPLIANCE / coverage check against PWS requirements — distinct from the
+           "Analyze the price model" pricing-improvement suggestions further down. -->
+      <div style="border-top:2px solid #e2e8f0;margin:28px 0 16px"></div>
+      <div style="margin-bottom:16px">
         <div style="font-weight:700;font-size:13px;margin-bottom:2px">🧭 Check pricing against the PWS</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Run this once your pricing is built \u2014 labor, rates, hours, discount, travel, and (if the solicitation states them) the CLINs applied above. It compares your current priced model against the PWS / solicitation requirements.</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Run this once your pricing is built — labor, rates, hours, discount, travel, and (if the solicitation states them) the CLINs applied above. This is a <strong>compliance / coverage check</strong>: it compares your current priced model against the PWS / solicitation requirements (coverage, required roles, stated CLINs). For suggestions on improving the price itself, use <strong>🔎 Analyze the price model</strong> below instead.</div>
         <button id="constrainedPwsBtn" onclick="runConstrainedPwsCheck()" style="padding:9px 18px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1.5px solid var(--mid-blue);border-radius:8px;cursor:pointer;box-shadow:0 1px 3px rgba(0,68,153,0.12)">Check pricing against the PWS</button>
         <div id="constrainedPwsProgress" style="display:none;margin-top:12px"></div>
         <div id="constrainedPwsStatus" style="display:none;font-size:13px;color:var(--muted);margin-top:12px"></div>
@@ -3230,7 +3233,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '225';
+const APP_VERSION = '227';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -13628,15 +13631,16 @@ async function pricingAutoBuildStructure() {
   if (pricingModel.gsaDecision == null) { alert('Answer the GSA Schedule step (Step 1) first.'); return; }
   const gsa = pricingIsGsa();
   if (gsa && !(pricingModel.gsaRateCard || []).length) { alert('Read or add your GSA Schedule rates in Step 1 first, so roles can be mapped to Schedule LCATs.'); return; }
-  // No confirmation and no warning: a reverse-solved sheet is a PARTIAL constraint set, and
-  // auto-build's job is to build the rest of the matrix around it. The pinned values are
-  // snapshotted here and re-asserted after the build, so they are never at risk.
+  // (#4) A reverse-solved sheet is the user's own model. Draft re-runs the AI to propose the labor
+  // mix from the PWS, which can reshape roles/hours; the pinned FIXED stages are snapshotted here and
+  // re-asserted after the build, but re-drafting is a deliberate choice \u2014 so confirm first.
+  if (pricingModel._reverseSolved && !confirm('You started from an uploaded pricing sheet. Drafting a staffing plan re-runs the AI to propose the labor mix from the PWS \u2014 this can change the roles and hours your sheet established. Your fixed rates and FTEs are re-applied wherever a role name still matches. Continue and re-draft?')) return;
   const _existing = (pricingModel.lcats || []).filter(l => String(l.name || '').trim());
   const _exFte = _existing.reduce((s, l) => s + (parseFloat(l.advertised) || 0), 0);
   const _fixed = _pxFixedStages();
   const _snap = _pxSnapshotConstraints();
   const btn = document.getElementById('pricingAutoBuildBtn');
-  const setBusy = (busy, msg) => { if (btn) { btn.disabled = busy; btn.innerHTML = busy ? ('<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> ' + (msg || 'Working…')) : '\u2728 Draft the staffing plan'; } };
+  const setBusy = (busy, msg) => { if (btn) { btn.disabled = busy; btn.innerHTML = busy ? ('<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> ' + (msg || 'Working…')) : ((typeof pricingModel !== 'undefined' && pricingModel && pricingModel._reverseSolved) ? '\u21ba Re-draft from scratch' : '\u2728 Draft the staffing plan'); } };
   setBusy(true, 'Thinking\u2026');
   try {
     let briefing = cachedBriefing;
@@ -14190,6 +14194,7 @@ function pricingRenderAutoBuildPanel() {
 }
 
 function pricingRenderAll() {
+  { const _db = document.getElementById('pricingAutoBuildBtn'); if (_db && !_db.disabled) _db.innerHTML = (typeof pricingModel !== 'undefined' && pricingModel && pricingModel._reverseSolved) ? '\u21ba Re-draft from scratch' : '\u2728 Draft the staffing plan'; }   // (#4) label reflects whether a sheet has been applied
   // Phase 5: seed the GSA rate card from the company default (Settings) the first time this
   // pricing session touches an empty rate card, and keep the shared default in sync with
   // whatever's on this tab afterward — last-edit-wins between Settings and Pricing.
@@ -14864,7 +14869,8 @@ function pricingRenderClin() {
       ((typeof pricingStatedClins === 'function' && pricingStatedClins().length) ? '<span style="font-size:11.5px;color:var(--muted)">The solicitation states ' + pricingStatedClins().length + ' CLIN(s) \u2014 they\'re applied when you <strong>Finalize &amp; build</strong> at the end of the flow.</span>' : '') +
       '</div></div>';
     const rows = pricingClinScheduleRows();
-    h += '<div style="margin-top:14px;overflow-x:auto"><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Schedule preview</div>' +
+    const _nClin = rows.filter(function (r) { return (r.clin !== undefined) && !r.grand && !r.subtotal && !r.extHeader && !r.grandWithExt && !r.optHeader; }).length;
+    h += '<div style="margin-top:14px"><details><summary style="cursor:pointer;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;padding:4px 0">Show CLIN schedule (' + _nClin + ')</summary><div style="overflow-x:auto;margin-top:8px">' +
       '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#f1f5f9;text-align:left">' +
       '<th style="padding:5px 8px">CLIN</th><th style="padding:5px 8px">Description</th><th style="padding:5px 8px">Period</th><th style="padding:5px 8px">Type</th><th style="padding:5px 8px;text-align:right">Qty</th><th style="padding:5px 8px">Unit</th><th style="padding:5px 8px;text-align:right">Unit Price</th><th style="padding:5px 8px;text-align:right">Extended</th></tr></thead><tbody>';
     rows.forEach(r => {
@@ -14876,7 +14882,7 @@ function pricingRenderClin() {
       else if (r.opt) h += '<tr style="border-top:1px solid var(--border);background:#fffbf5;color:#7c2d12"><td style="padding:5px 8px;font-variant-numeric:tabular-nums">' + escHtml(r.clin) + '</td><td style="padding:5px 8px">' + escHtml(r.desc) + '</td><td style="padding:5px 8px">' + escHtml(r.period) + '</td><td style="padding:5px 8px">' + escHtml(r.type) + '</td><td style="padding:5px 8px;text-align:right">' + r.qty + '</td><td style="padding:5px 8px">' + escHtml(r.unit) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.unitPrice) + '</td><td style="padding:5px 8px;text-align:right">' + (r.nte ? 'NTE ' : '') + pricingFmtC(r.total) + '</td></tr>';
       else h += '<tr style="border-top:1px solid var(--border)"><td style="padding:5px 8px;font-variant-numeric:tabular-nums">' + r.clin + '</td><td style="padding:5px 8px">' + escHtml(r.desc) + '</td><td style="padding:5px 8px">' + escHtml(r.period) + '</td><td style="padding:5px 8px">' + escHtml(r.type) + '</td><td style="padding:5px 8px;text-align:right">' + r.qty + '</td><td style="padding:5px 8px">' + escHtml(r.unit) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.unitPrice) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.total) + '</td></tr>';
     });
-    h += '</tbody></table>';
+    h += '</tbody></table></div></details>';
     const pds = pricingClinPeriods();
     const _lc = _pxClinLaborCheck(c.lines, pds, pricingClinLineAmount, pricingPeriodCost);
     if (_lc.show) h += '<div style="margin-top:8px;font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde047;border-radius:6px;padding:7px 10px">&#9888; Your task-based CLIN labor scopes total ' + pricingFmt(_lc.sum) + ', but the priced labor is ' + pricingFmt(_lc.model) + ' (off by ' + pricingFmt(Math.abs(_lc.sum - _lc.model)) + '). Make sure every PWS task is covered by exactly one CLIN.</div>';
@@ -20026,7 +20032,7 @@ function renderConstrainedDetect(data) {
   const solveBtn = '<button id="constrainedSolveBtn" onclick="runConstrainedSolve()" style="padding:9px 18px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">'
     + (nSolve > 0 ? ('Solve the blank stage' + (nSolve === 1 ? '' : 's') + ' and apply') : 'Apply this sheet to pricing')
     + '</button>';
-  const noSolveNote = (nSolve === 0) ? '<p style="margin:10px 0 0;font-size:11.5px;color:var(--muted)">Every stage is already populated, so there is nothing to derive \u2014 but you still need to <strong>apply</strong> it, which loads your labor categories, FTEs, rates and hours into the pricing model and pins them for auto-build.</p>' : '';
+  const noSolveNote = (nSolve === 0) ? '<div style="margin:12px 0 0;font-size:12px;line-height:1.55;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:9px 12px"><strong>\u26a0 Detected, not yet applied.</strong> Every stage is already populated, so there is nothing to derive \u2014 but you still need to <strong>Apply this sheet to pricing</strong>, which loads your labor categories, FTEs, rates, and hours into the pricing model and pins them for auto-build.</div>' : '';
   const nextHtml = oos ? '' :
     '<div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">' + solveBtn + '</div>' + noSolveNote
     + '<div id="constrainedSolveProgress" style="display:none;margin-top:12px"></div>'
@@ -20097,6 +20103,7 @@ function _constrainedApply(a) {
   // against them, never as Government-stated.
   const _uT = pricingModel.lcats.reduce(function (s, l) { return s + (parseFloat(l.advertised) || 0); }, 0);
   pricingModel.fteSource = 'user'; pricingModel.statedFteTotal = _uT > 0 ? Math.round(_uT * 100) / 100 : null;
+  pricingModel._reverseSolved = true;   // (#4) a sheet has been applied \u2014 Draft confirms before re-drafting
   if (typeof pricingRenderAll === 'function') pricingRenderAll();
 }
 
@@ -20171,7 +20178,7 @@ function renderConstrainedSolve(a) {
   // still available on demand, but the default is the one line a user needs.
   const _lc = (typeof pricingModel !== 'undefined' && pricingModel.lcats) ? pricingModel.lcats : [];
   const _nLc = _lc.length;
-  const _totFte = _lc.reduce(function (s, l) { const f = parseFloat(l && l.fte); return s + (isFinite(f) ? f : 0); }, 0);
+  const _totFte = _lc.reduce(function (s, l) { let f = parseFloat(l && l.advertised); if (!isFinite(f) || f <= 0) { f = (typeof pricingRowFte === 'function') ? pricingRowFte(l) : 0; } return s + (isFinite(f) ? f : 0); }, 0);
   const _nRated = _lc.filter(function (l) { return parseFloat(l && l.baseRate) > 0; }).length;
   const _nTasks = (typeof pricingModel !== 'undefined' && pricingModel.tasks) ? pricingModel.tasks.length : 0;
   const _fteTxt = _totFte.toFixed(_totFte % 1 ? 1 : 0);
@@ -20259,15 +20266,24 @@ function _constrainedPwsContext() {
 // Fast + deterministic; a short beat keeps the build moment visible, as Paul asked.
 function pricingFinalizeBuild(btn) {
   const st = document.getElementById('pricingFinalizeStatus');
+  // (#4) soft-gate: Finalize needs at least one role. A soft guard here (not a hard lock on every
+  // step) is enough \u2014 the model is assembled continuously and hard-locking would fight that.
+  const _roles = (typeof pricingModel !== 'undefined' && pricingModel && Array.isArray(pricingModel.lcats)) ? pricingModel.lcats.filter(function (l) { return String((l && l.name) || '').trim(); }).length : 0;
+  if (!_roles) { if (st) { st.style.display = 'block'; st.style.color = 'var(--error)'; st.innerHTML = '\u26a0 No labor categories yet \u2014 add roles (or run \u2728 <strong>Draft the staffing plan</strong> in Step 3, or start from an uploaded sheet in Step 0) before finalizing.'; } return; }
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> Building\u2026'; }
   if (st) { st.style.display = 'block'; st.style.color = 'var(--muted)'; st.textContent = 'Joining CLIN structure to assembled pricing model\u2026'; }
   setTimeout(function () {
     let nStated = 0;
     try { nStated = (typeof pricingStatedClins === 'function') ? pricingStatedClins().length : 0; } catch (e) {}
-    if (nStated && typeof pricingClinBuildFromStated === 'function') { try { pricingClinBuildFromStated(); } catch (e) {} }
+    if (nStated && typeof pricingClinBuildFromStated === 'function') { try { pricingClinBuildFromStated({ silent: true }); } catch (e) {} }
     if (typeof pricingModel !== 'undefined' && pricingModel) pricingModel._built = true;
     if (typeof pricingSave === 'function') pricingSave();
     if (typeof pricingRenderAll === 'function') pricingRenderAll();
+    // (#10) The pivot's CLIN column could miss the freshly-built CLIN lines on the first paint — a
+    // render/state-timing quirk that used to need a second "Re-finalize" click to clear. CLIN state is
+    // now committed above (built silently, then ONE clean render); force one more pivot rebuild on the
+    // next frame so the CLIN column always fills in on the very first Finalize.
+    if (typeof pricingPivotRender === 'function') { const _rp = function () { try { pricingPivotRender(); } catch (e) {} }; if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_rp); else setTimeout(_rp, 0); }
     const b2 = document.getElementById('pricingFinalizeBtn');
     const st2 = document.getElementById('pricingFinalizeStatus');
     if (b2) { b2.disabled = false; b2.innerHTML = '🔨 Re-finalize'; }
