@@ -953,6 +953,7 @@
   <!-- Proposal suite -->
   <div class="suite-panel" id="suite-proposal">
     <nav class="tab-nav">
+      <button class="tab-btn" data-fam="decide" onclick="switchTab('triage')" id="tab-triage">🗂️ Triage</button>
       <button class="tab-btn" data-fam="decide" onclick="switchTab('bidnobid')" id="tab-bidnobid">🎯 Bid/No-Bid</button>
       <button class="tab-btn" data-fam="decide" onclick="switchTab('partners')" id="tab-partners">🤝 Partners</button>
       <button class="tab-btn" data-fam="decide-build-present" onclick="switchTab('proposal')" id="tab-proposal">📄 Proposal</button>
@@ -964,6 +965,7 @@
     </nav>
     <div class="sidebar-legend">
       <div class="sl-title">🔗 How tabs connect</div>
+      <div class="sl-row"><span class="sl-dot" style="background:var(--fam-decide,#2aa79b)"></span><div class="sl-txt"><b>Triage → Bid/No-Bid</b><span>screen many opportunities; send a promising one into a full analysis</span></div></div>
       <div class="sl-row"><span class="sl-dot" style="background:var(--fam-decide,#2aa79b)"></span><div class="sl-txt"><b>Bid/No-Bid ↔ Partners</b><span>teaming — your CRM feeds the partner finder</span></div></div>
       <div class="sl-row"><span class="sl-dot" style="background:linear-gradient(135deg,var(--fam-decide,#2aa79b) 0 50%,var(--fam-build,#8a93e8) 50%)"></span><div class="sl-txt"><b>Bid/No-Bid ↔ Proposal</b><span>the RFP you analyze carries into the proposal</span></div></div>
       <div class="sl-row"><span class="sl-dot" style="background:var(--fam-build,#8a93e8)"></span><div class="sl-txt"><b>Proposal ↔ Pricing ↔ Compliance</b><span>shared RFP; pricing flows into Volume III</span></div></div>
@@ -1826,6 +1828,42 @@
 
 </div><!-- end tab-pane partners -->
 <!-- ══════════════════════════ BID/NO-BID TAB ════════════════════════════ -->
+<div class="tab-pane" id="pane-triage">
+  <div class="card" style="margin-bottom:24px">
+    <h2 style="margin:0 0 6px;font-size:20px">🗂️ Opportunity Triage</h2>
+    <p style="color:var(--muted);font-size:13.5px;line-height:1.55;margin:0 0 16px">Screen a batch of opportunities fast. Drop each opportunity’s files into its own zone, hit <strong>Screen this</strong> (or <strong>Screen all</strong>) for a quick <strong>Pursue / Maybe / Pass</strong> read, then send the promising ones into a full analysis with <strong>Deep-dive in Bid/No-Bid</strong>. This is a quick screen — verify against the full solicitation before bidding.</p>
+    <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:18px">
+      <button id="triageModeFiles" onclick="triageSetMode('files')" style="padding:8px 15px;font-size:12.5px;font-weight:700;border:none;cursor:pointer;background:var(--blue);color:#fff">🗂️ From files</button>
+      <button id="triageModeList" onclick="triageSetMode('list')" style="padding:8px 15px;font-size:12.5px;font-weight:700;border:none;border-left:1px solid var(--border);cursor:pointer;background:#fff;color:var(--muted)">📋 From a list</button>
+    </div>
+    <div id="triageFilesView">
+    <div class="drop-zone" id="triageMassDz" style="min-height:76px;margin-bottom:16px;padding:16px;border-style:dashed">
+      <input type="file" id="triageMassFi" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.txt" style="display:none" />
+      <div class="dz-title" style="font-size:13.5px;font-weight:700">⤓ Drop a whole pile here — I’ll sort it into opportunities</div>
+      <div class="dz-sub" style="font-size:11.5px;color:var(--muted)">Groups files by the solicitation number in each (from the filename, then the first page). Anything it can’t read goes to an Unsorted zone for you to place. Or click to browse.</div>
+      <div id="triageMassStatus" style="font-size:11.5px;color:var(--muted);margin-top:8px"></div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:18px">
+      <button onclick="triageScreenAll()" style="padding:9px 16px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">Screen all</button>
+      <button onclick="triageAddZone()" style="padding:9px 16px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:8px;cursor:pointer">+ Add opportunity</button>
+      <span id="triageAllStatus" style="font-size:12px;color:var(--muted)"></span>
+    </div>
+    <div id="triageZones"></div>
+    </div>
+
+    <div id="triageListView" style="display:none">
+      <p style="color:var(--muted);font-size:12.5px;line-height:1.5;margin:0 0 10px">Paste a shortlist from a feed — your SAM.gov daily email, an eBuy or SeaPort results list, whatever format it comes in. The tool pulls out each opportunity and gives a quick <strong>Pursue / Maybe / Pass</strong> read from the listing alone. This is a lighter, <strong>metadata-only</strong> screen — it judges fit from the title, agency, NAICS, and set-aside, so send the promising ones to a file screen (or Bid/No-Bid) for the real read.</p>
+      <textarea id="triageListInput" placeholder="Paste your opportunity list here — a table, an email, or a plain list…" style="width:100%;min-height:130px;resize:vertical;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;font-family:inherit;box-sizing:border-box"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+        <button id="triageListBtn" onclick="triageScreenList()" style="padding:9px 16px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">Screen the list</button>
+        <button onclick="triageClearList()" style="padding:9px 16px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:8px;cursor:pointer">Clear</button>
+        <span id="triageListStatus" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <div id="triageListResults" style="margin-top:18px"></div>
+    </div>
+  </div>
+</div>
+
 <div class="tab-pane active" id="pane-bidnobid">
 
   <!-- Step 1: Document Input -->
@@ -2368,25 +2406,25 @@
         <div id="pricingFinalizeStatus" style="display:none;font-size:12.5px;margin-top:12px"></div>
       </div>
 
+      <!-- Live summary: the bottom-line total, right after the build so it is the first thing you see (moved up from below the PWS check). -->
+      <div id="pricingSummary" style="margin-bottom:16px"></div>
+
       <!-- Pivot: its own section (#9/#16) — an obvious divide ends Finalize and sets the pivot apart; the card carries its own heading. -->
       <div style="border-top:2px solid #e2e8f0;margin:28px 0 16px"></div>
       <div id="pricingPivot" style="margin-bottom:16px"></div>
 
       <!-- End-of-flow PWS check (#13): its own clearly-separated section, runs AFTER the pricing is
            built. This is a COMPLIANCE / coverage check against PWS requirements — distinct from the
-           "Analyze the price model" pricing-improvement suggestions further down. -->
+           "Analyze Pricing & Suggest Improvements" pricing-improvement suggestions further down. -->
       <div style="border-top:2px solid #e2e8f0;margin:28px 0 16px"></div>
       <div style="margin-bottom:16px">
         <div style="font-weight:700;font-size:13px;margin-bottom:2px">🧭 Check pricing against the PWS</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Run this once your pricing is built — labor, rates, hours, discount, travel, and (if the solicitation states them) the CLINs applied above. This is a <strong>compliance / coverage check</strong>: it compares your current priced model against the PWS / solicitation requirements (coverage, required roles, stated CLINs). For suggestions on improving the price itself, use <strong>🔎 Analyze the price model</strong> below instead.</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Run this once your pricing is built — labor, rates, hours, discount, travel, and (if the solicitation states them) the CLINs applied above. This is a <strong>compliance / coverage check</strong>: it compares your current priced model against the PWS / solicitation requirements (coverage, required roles, stated CLINs). For suggestions on improving the price itself, use <strong>🔎 Analyze Pricing &amp; Suggest Improvements</strong> below instead.</div>
         <button id="constrainedPwsBtn" onclick="runConstrainedPwsCheck()" style="padding:9px 18px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1.5px solid var(--mid-blue);border-radius:8px;cursor:pointer;box-shadow:0 1px 3px rgba(0,68,153,0.12)">Check pricing against the PWS</button>
         <div id="constrainedPwsProgress" style="display:none;margin-top:12px"></div>
         <div id="constrainedPwsStatus" style="display:none;font-size:13px;color:var(--muted);margin-top:12px"></div>
         <div id="constrainedPwsResults" style="display:none;margin-top:14px"></div>
       </div>
-
-      <!-- Live summary -->
-      <div id="pricingSummary" style="margin-bottom:16px"></div>
 
       <!-- #5 Wave 4: gap analysis. Its own container, NOT part of pricingRenderSummary(), so a
            routine re-render never wipes a result the user is still reading. -->
@@ -3233,7 +3271,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '227';
+const APP_VERSION = '232';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -11921,7 +11959,7 @@ var _PX_MEAS = { price: 'Price ($)', hours: 'Hours', fte: 'FTE', baseRate: 'Base
 // zero rows (e.g. travel/ODC/materials carry no rate), so they reflect only the priced labor.
 var _PX_MEAS_AGG = { price: 'sum', hours: 'sum', fte: 'sum', baseRate: 'avg', burdenedRate: 'avg', listRate: 'avg', salary: 'avg', discount: 'avg', escalation: 'avg' };
 var _pxPivot = { r1: 'clin', r2: '', r3: '', col: 'period', meas: 'price' };
-var _pxAskQ = '', _pxAskNote = '';
+var _pxAskQ = '', _pxAskNote = '', _pxAskMode = 'answer', _pxAskAns = '';
 // Aggregate the flat rows into a 2-D table (array-of-arrays). Up to two row dimensions, one optional
 // column dimension, one measure; sum. Returns the AOA plus metadata for rendering/copy/download.
 function pricingPivotBuild() {
@@ -11983,18 +12021,25 @@ function pricingPivotRender() {
   let h = '<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:#fff">' +
     '<div style="font-weight:700;font-size:14px;margin-bottom:2px">\uD83D\uDCCA Pricing pivot \u2014 slice &amp; dice</div>' +
     '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Lay the priced model out any way \u2014 by CLIN, PWS task, labor category, period, or a combination. Copy it straight into Excel (each value lands in its own cell) or download an .xlsx.</div>' +
-    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">' +
-      '<input id="pxAskInput" type="text" value="' + pricingEsc(_pxAskQ) + '" oninput="_pxAskQ=this.value" onkeydown="if(event.key===\'Enter\')pricingPivotAsk()" placeholder="Ask or describe what you want to see \u2014 e.g. \'burdened rate by CLIN per year\', \'show me hours by labor category and task\'" style="flex:1;min-width:280px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12.5px" />' +
-      '<button id="pxAskBtn" onclick="pricingPivotAsk()" style="padding:8px 14px;font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">Ask</button>' +
+    '<div style="margin-bottom:8px;display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden">' +
+      '<button onclick="pricingSetAskMode(\'answer\')" style="padding:6px 13px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:' + (_pxAskMode === 'view' ? '#fff' : 'var(--blue)') + ';color:' + (_pxAskMode === 'view' ? 'var(--muted)' : '#fff') + '">\uD83D\uDCAC Answer a question</button>' +
+      '<button onclick="pricingSetAskMode(\'view\')" style="padding:6px 13px;font-size:12px;font-weight:700;border:none;border-left:1px solid var(--border);cursor:pointer;background:' + (_pxAskMode === 'view' ? 'var(--blue)' : '#fff') + ';color:' + (_pxAskMode === 'view' ? '#fff' : 'var(--muted)') + '">\uD83D\uDCCA Build a view</button>' +
     '</div>' +
-    (_pxAskNote ? ('<div style="font-size:11px;margin:-4px 0 10px;color:' + (_pxAskNote.charAt(0) === '\u2713' ? '#166534' : 'var(--warn)') + '">' + escHtml(_pxAskNote) + '</div>') : '') +
+    '<div style="display:flex;gap:8px;align-items:stretch;flex-wrap:wrap">' +
+      '<textarea id="pxAskInput" oninput="_pxAskQ=this.value" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();pricingAskSubmit();}" placeholder="' + (_pxAskMode === 'view' ? 'Describe the view \u2014 e.g. \'burdened rate by CLIN per year\', \'hours by labor category and task\'' : 'Ask about this priced model \u2014 e.g. \'which role drives the most cost?\', \'why is the blended rate so high?\'') + '" style="flex:1;min-width:280px;min-height:' + (_pxAskMode === 'view' ? '46px' : '62px') + ';resize:vertical;padding:10px 12px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;font-family:inherit;box-sizing:border-box">' + pricingEsc(_pxAskQ) + '</textarea>' +
+      '<button id="pxAskBtn" onclick="pricingAskSubmit()" style="padding:8px 16px;font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer;white-space:nowrap;align-self:flex-start">' + (_pxAskMode === 'view' ? 'Build' : 'Ask') + '</button>' +
+    '</div>' +
+    '<div style="font-size:11px;color:var(--muted);margin-top:5px">' + (_pxAskMode === 'view' ? 'Reshapes the pivot below from your words (Enter to run).' : 'Answers in prose from the current priced model \u2014 nothing is changed (Enter to ask, Shift+Enter for a new line).') + '</div>' +
+    ((_pxAskMode !== 'view') ? ('<div id="pxAskAnswer" style="display:' + (_pxAskAns ? 'block' : 'none') + ';margin-top:10px">' + (_pxAskAns ? ('<div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--text);line-height:1.6">' + _bnaQaMd(_pxAskAns) + '</div>') : '') + '</div>') : '') +
+    ((_pxAskMode === 'view' && _pxAskNote) ? ('<div style="font-size:11px;margin:6px 0 0;color:' + (_pxAskNote.charAt(0) === '\u2713' ? '#166534' : 'var(--warn)') + '">' + escHtml(_pxAskNote) + '</div>') : '') +
+    '<div style="border-top:2px solid #e2e8f0;margin:14px 0"></div>' +
     '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Rows</label>' + sel('r1', _pxPivot.r1, _PX_DIMS, false) + '</div>' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">then</label>' + sel('r2', _pxPivot.r2, _PX_DIMS, true) + '</div>' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">then</label>' + sel('r3', _pxPivot.r3, _PX_DIMS, true) + '</div>' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Columns (optional)</label>' + sel('col', _pxPivot.col, _PX_DIMS, true) + '</div>' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--muted)">Value</label>' + sel('meas', _pxPivot.meas, _PX_MEAS, false) + '</div>' +
-    '<div style="display:flex;gap:8px">' + btn('pricingPivotCopy()', 'Copy for Excel', true) + btn('pricingPivotDownload()', 'Download .xlsx', false) + '</div>' +
+    '<div style="display:flex;gap:8px">' + btn('pricingPivotCopy()', 'Copy for Excel', true) + _pxExcelBtn('pricingPivotDownload()', 'Download .xlsx') + '</div>' +
     '</div>';
   if (built.empty) { h += '<div style="font-size:12px;color:var(--muted)">No priced rows yet \u2014 add labor hours (and any travel/materials) above, then build your view here.</div>'; }
   else {
@@ -12019,6 +12064,49 @@ function pricingPivotRender() {
 // Copy so Excel drops each value into its OWN cell: text/html <table> (Excel prefers it, keeps
 // numbers numeric + bold headers) with a text/plain TSV fallback (tab => new cell). Raw numbers,
 // no currency symbols, so nothing is parsed as text or split across cells.
+function pricingSetAskMode(m) { _pxAskMode = (m === 'view') ? 'view' : 'answer'; _pxAskNote = ''; if (typeof pricingPivotRender === 'function') pricingPivotRender(); const _i = document.getElementById('pxAskInput'); if (_i) { try { _i.focus(); } catch (e) {} } }
+function pricingAskSubmit() { if (_pxAskMode === 'view') { pricingPivotAsk(); } else { pricingAskAnswer(); } }
+async function pricingAskAnswer() {
+  const inp = document.getElementById('pxAskInput');
+  const q = inp ? String(inp.value || '').trim() : String(_pxAskQ || '').trim();
+  _pxAskQ = q;
+  const ansEl = document.getElementById('pxAskAnswer');
+  const wrap = (html, color) => '<div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:13px;color:' + (color || 'var(--text)') + ';line-height:1.6">' + html + '</div>';
+  // Surgical: write straight into the answer box (no pricingPivotRender, so the pivot table below is
+  // untouched). _pxAskAns holds the raw answer so a later full re-render re-injects it; errors are
+  // transient (not stored), so a re-render clears them.
+  const show = (rawText, isErr) => { _pxAskAns = isErr ? '' : rawText; if (ansEl) { ansEl.style.display = 'block'; ansEl.innerHTML = isErr ? wrap(escHtml(rawText), 'var(--error)') : wrap(_bnaQaMd(rawText)); } };
+  if (!q) { show('Type a pricing question first \u2014 e.g. "which role drives the most cost?"', true); return; }
+  const apiKey = (typeof getApiKey === 'function') ? getApiKey() : '';
+  if (!apiKey) { show('Add your Anthropic API key at the top to ask a question. (The dropdowns below reshape the view without a key.)', true); return; }
+  const model = (typeof pricingModelReviewCsv === 'function') ? pricingModelReviewCsv() : '';
+  if (!model) { show('Build the pricing model first \u2014 add roles, rates, and hours above \u2014 then ask about it.', true); return; }
+  const btn = document.getElementById('pxAskBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Asking\u2026'; }
+  if (ansEl) { ansEl.style.display = 'block'; ansEl.innerHTML = wrap('<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:7px"></span>Reading your model\u2026', 'var(--muted)'); }
+  try {
+    const promptText =
+      'You are a federal pricing analyst helping a contractor understand the price model they have built in this tool. ' +
+      'Answer their question about THIS priced model succinctly and accurately, using ONLY the model summary below. ' +
+      'Keep it tight and directly responsive \u2014 a few sentences or a short list, not an essay. ' +
+      'Write in plain prose. Do NOT use markdown headings (#), bold or italic markers (** or *), or code fences \u2014 this is displayed as formatted text, so those characters would show up literally. ' +
+      'A simple numbered or dashed list is fine where the answer really is a list. ' +
+      'Quote dollar figures and rates from the model where relevant. If the summary does not contain the answer, say so plainly rather than guessing; never invent figures.\n\n' +
+      'CURRENT PRICED MODEL:\n' + model + '\n\n' +
+      'QUESTION: ' + q;
+    const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 1000, messages: [{ role: 'user', content: promptText }] };
+    const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', mode: 'cors', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(payload) });
+    if (!resp.ok) { const et = await resp.text(); show('Request failed (' + resp.status + '): ' + et.slice(0, 140), true); return; }
+    const data = await resp.json();
+    if (data.error) { show('Error: ' + data.error.message, true); return; }
+    const text = (data.content || []).map(b => b.text || '').join('').trim();
+    show(text || 'No answer came back \u2014 try rephrasing.', !text);
+  } catch (e) {
+    show('Something went wrong: ' + (e && e.message ? e.message : e), true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Ask'; }
+  }
+}
 async function pricingPivotAsk() {
   const inp = document.getElementById('pxAskInput');
   const q = inp ? String(inp.value || '').trim() : String(_pxAskQ || '').trim();
@@ -15945,10 +16033,16 @@ async function injectTablesAndColors(zip, tableSpecs, tabColors) {
 }
 
 
+function _pxExcelBtn(onclick, label, big) {
+  const pad = big ? '9px 16px' : '6px 12px', fs = big ? '13px' : '12px', ic = big ? 16 : 14, br = big ? '8px' : '6px';
+  return '<button onclick="' + onclick + '" style="display:inline-flex;align-items:center;gap:7px;padding:' + pad + ';font-size:' + fs + ';font-weight:700;border:1px solid #1a5c37;background:#217346;color:#fff;border-radius:' + br + ';cursor:pointer">'
+    + '<svg width="' + ic + '" height="' + ic + '" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex:none"><rect x="3" y="4" width="18" height="16" rx="2" fill="#ffffff" fill-opacity="0.16" stroke="#ffffff" stroke-width="1.6"/><path d="M3 9.5h18M3 14.5h18M9.5 4v16M15 4v16" stroke="#ffffff" stroke-width="1.1" stroke-opacity="0.85"/></svg>'
+    + escHtml(label) + '</button>';
+}
 function pricingRenderExport() {
   const el = document.getElementById('pricingExportRow'); if (!el) return;
   if (!pricingModel.lcats.length || !pricingModel.tasks.length || pricingBaseTotal() <= 0) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;padding:12px 16px;background:#fff;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><button onclick="pricingExportWorkbook()" style="padding:9px 16px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">⬇ Export pricing workbook (.xlsx)</button><span style="font-size:11.5px;color:var(--muted)">Opens to an <strong>Instructions</strong> tab, then a <strong>Price Summary</strong> (total evaluated price by period). The green <strong>Line-Item Detail</strong> tab is a native Excel Table &mdash; sort, filter, or <em>Insert &#9656; PivotTable</em> to slice it any way the Government asks (by CLIN/task, LCAT, period, or cost type; the Instructions tab lists ready-made pivot recipes). Pre-built views &mdash; Price Summary, a per-period fully burdened <strong>rate table</strong>, by-labor-category and by-task rollups, hours/FTE matrices, and the labor + wrap build-up &mdash; are all included; dollar cells are currency-formatted.</span></div>`;
+  el.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;padding:12px 16px;background:#fff;display:flex;align-items:center;gap:12px;flex-wrap:wrap">${_pxExcelBtn('pricingExportWorkbook()', 'Export pricing workbook (.xlsx)', true)}<span style="font-size:11.5px;color:var(--muted)">Opens to an <strong>Instructions</strong> tab, then a <strong>Price Summary</strong> (total evaluated price by period). The green <strong>Line-Item Detail</strong> tab is a native Excel Table &mdash; sort, filter, or <em>Insert &#9656; PivotTable</em> to slice it any way the Government asks (by CLIN/task, LCAT, period, or cost type; the Instructions tab lists ready-made pivot recipes). Pre-built views &mdash; Price Summary, a per-period fully burdened <strong>rate table</strong>, by-labor-category and by-task rollups, hours/FTE matrices, and the labor + wrap build-up &mdash; are all included; dollar cells are currency-formatted.</span></div>`;
 }
 
 // ═══ #32 OPPORTUNITY STAMP ════════════════════════════════════════════════════
@@ -16789,7 +16883,7 @@ function pricingRenderGapPanel() {
     if (f.ok && !f.gap.hasStated) {
       el.innerHTML = '<div style="border:1px dashed var(--border);border-radius:10px;padding:11px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
         + '<div style="flex:1;min-width:240px;font-size:12px;color:var(--muted);line-height:1.5">The solicitation states no dollar value to anchor against, so there is no tie-out to show. The model can still be checked on its own terms \u2014 rates against their researched bands, unrated roles, thin task coverage, and the blended rate.</div>'
-        + '<button onclick="pricingAnalyzeGap(this)" style="font-size:12px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:7px;padding:8px 14px;cursor:pointer;white-space:nowrap">\uD83D\uDD0E Analyze the price model</button></div>';
+        + '<button onclick="pricingAnalyzeGap(this)" style="font-size:12px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:7px;padding:8px 14px;cursor:pointer;white-space:nowrap">\uD83D\uDD0E Analyze Pricing &amp; Suggest Improvements</button></div>';
     } else { el.innerHTML = ''; }
     return;
   }
@@ -17746,6 +17840,382 @@ function onboardFocusKey() {
   }
 }
 
+/* ── Opportunity Triage (Phase T1): mass bid/no-bid screening ─────────────────────────────
+   A separate lane. Drop each opportunity's files into its own zone, get a quick
+   Pursue/Maybe/Pass read (a REDUCED-input call grounded in the company capability statement),
+   then send a promising one into the full Bid/No-Bid analysis. A screen, not a decision. */
+let triageZones = [];
+let _triageSeq = 0;
+
+function triageInit() {
+  _triageWireMass();
+  if (triageZones.length) { triageRenderZones(); return; }
+  for (let k = 0; k < 3; k++) triageAddZone(true);
+  triageRenderZones();
+}
+function triageAddZone(silent) {
+  _triageSeq++;
+  triageZones.push({ id: _triageSeq, label: 'Opportunity ' + _triageSeq, files: [], verdict: null, screening: false });
+  if (!silent) triageRenderZones();
+}
+function triageRemoveZone(id) { triageZones = triageZones.filter(z => z.id !== id); triageRenderZones(); }
+function triageSetLabel(id, val) { const z = triageZones.find(x => x.id === id); if (z) z.label = String(val || '').trim() || ('Opportunity ' + id); }
+
+function _triageZoneHtml(z) {
+  return '<div class="card" style="margin-bottom:16px;border-left:4px solid var(--fam-decide,#2aa79b);padding:16px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
+    +   '<input type="text" value="' + escHtml(z.label) + '" onchange="triageSetLabel(' + z.id + ',this.value)" title="Rename this opportunity" style="font-weight:700;font-size:14px;color:var(--blue);border:1px solid var(--border);border-radius:6px;padding:5px 9px;flex:1;min-width:140px;font-family:inherit" />'
+    +   '<button onclick="triageScreenZone(' + z.id + ')" style="padding:7px 14px;font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer;white-space:nowrap">Screen this</button>'
+    +   '<button onclick="triageRemoveZone(' + z.id + ')" title="Remove this opportunity" style="padding:6px 10px;font-size:13px;font-weight:700;background:#fff;color:var(--muted);border:1px solid var(--border);border-radius:6px;cursor:pointer">\u2715</button>'
+    + '</div>'
+    + '<div class="drop-zone" id="triageDz-' + z.id + '" style="min-height:84px;margin-bottom:8px;padding:14px">'
+    +   '<input type="file" id="triageFi-' + z.id + '" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.txt" style="display:none" />'
+    +   '<div class="dz-title" style="font-size:13px">Drop this opportunity\u2019s files</div>'
+    +   '<div class="dz-sub" style="font-size:11.5px;color:var(--muted)">PDF, Word, Excel, or text \u2014 or click to browse</div>'
+    + '</div>'
+    + '<div class="file-list" id="triageFl-' + z.id + '"></div>'
+    + '<div id="triageVerdict-' + z.id + '" style="margin-top:10px"></div>'
+    + '</div>';
+}
+function triageRenderZones() {
+  const host = document.getElementById('triageZones');
+  if (!host) return;
+  if (!triageZones.length) { host.innerHTML = '<div style="padding:18px;text-align:center;color:var(--muted);font-size:13px;border:1px dashed var(--border);border-radius:10px">No opportunities yet. Click <strong>+ Add opportunity</strong> to start.</div>'; return; }
+  host.innerHTML = triageZones.map(_triageZoneHtml).join('');
+  triageZones.forEach(z => { _triageWireZone(z); _triageRenderFiles(z); _triageRenderVerdict(z); });
+}
+function _triageWireZone(z) {
+  const dz = document.getElementById('triageDz-' + z.id);
+  const fi = document.getElementById('triageFi-' + z.id);
+  if (!dz || !fi) return;
+  dz.addEventListener('click', e => { if (e.target.closest('.file-item') || e.target.closest('.file-remove')) { e.preventDefault(); e.stopPropagation(); return; } fi.click(); });
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag-over'); if (_triageDrag) { const d = _triageDrag; _triageDrag = null; _triageMoveFile(d.zoneId, d.idx, z.id); return; } _triageAddFiles(z, [].slice.call(e.dataTransfer.files)); });
+  fi.addEventListener('change', () => { _triageAddFiles(z, [].slice.call(fi.files)); fi.value = ''; });
+}
+function _triageAddFiles(z, files) {
+  files.forEach(f => { if (!z.files.find(x => x.name === f.name && x.size === f.size)) z.files.push(f); });
+  z.verdict = null; _triageRenderFiles(z); _triageRenderVerdict(z);
+}
+function triageRemoveFile(id, idx) { const z = triageZones.find(x => x.id === id); if (!z) return; z.files.splice(idx, 1); z.verdict = null; _triageRenderFiles(z); _triageRenderVerdict(z); }
+function _triageRenderFiles(z) {
+  const el = document.getElementById('triageFl-' + z.id);
+  if (!el) return;
+  el.innerHTML = z.files.map((f, i) => {
+    const size = f.size < 1048576 ? ((f.size / 1024).toFixed(0) + ' KB') : ((f.size / 1048576).toFixed(1) + ' MB');
+    return '<div class="file-item" draggable="true" ondragstart="_triageDragStart(event,' + z.id + ',' + i + ')" ondragend="_triageDrag=null" title="Drag to move to another opportunity" style="cursor:grab"><span class="file-name">' + escHtml(f.name) + '</span><span class="file-meta"><span class="file-size">' + size + '</span></span><span class="file-remove" title="Remove file" onclick="triageRemoveFile(' + z.id + ',' + i + ')">\u2715</span></div>';
+  }).join('');
+}
+function _triageBadge(v) {
+  const map = { Pursue: ['#dcfce7', '#166534'], Maybe: ['#fef3c7', '#92400e'], Pass: ['#fee2e2', '#991b1b'] };
+  const c = map[v] || ['#e2e8f0', '#334155'];
+  return '<span style="display:inline-block;padding:3px 12px;border-radius:999px;font-size:12px;font-weight:800;background:' + c[0] + ';color:' + c[1] + ';letter-spacing:0.3px">' + escHtml(v || '\u2014') + '</span>';
+}
+function _triageField(label, val, extra) {
+  if (val == null || val === '') return '';
+  return '<div style="font-size:12px;line-height:1.5"><span style="color:var(--muted)">' + label + ':</span> <strong>' + escHtml(String(val)) + '</strong>' + (extra || '') + '</div>';
+}
+function _triageVerdictHtml(z) {
+  const v = z.verdict;
+  if (!v) return '';
+  if (v.error) return '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--error)">' + escHtml(v.error) + '</div>';
+  const elig = (v.eligible === true) ? ' <span style="color:#166534;font-weight:700">\u2713 eligible</span>' : (v.eligible === false) ? ' <span style="color:#991b1b;font-weight:700">\u2717 not eligible</span>' : '';
+  const fit = v.naics_fit ? (' <span style="color:var(--muted)">(' + escHtml(v.naics_fit) + ' fit)</span>') : '';
+  const days = (v.days_remaining != null && v.days_remaining !== '') ? (' <span style="color:var(--muted)">(' + escHtml(String(v.days_remaining)) + ' days left)</span>') : '';
+  return '<div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:12px 14px">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">' + _triageBadge(v.verdict) + '<span style="font-weight:700;font-size:13px">' + escHtml(v.title || 'Untitled opportunity') + '</span></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;margin-bottom:8px">'
+    +   _triageField('Agency', v.agency) + _triageField('Solicitation', v.solicitation_number) + _triageField('Type', v.notice_type)
+    +   _triageField('Set-aside', v.set_aside, elig) + _triageField('NAICS', v.naics, fit) + _triageField('Response due', v.response_date, days)
+    +   _triageField('Value', v.value) + _triageField('Place of perf.', v.place_of_performance)
+    + '</div>'
+    + (v.rationale ? ('<div style="font-size:12.5px;line-height:1.5;color:var(--text);margin-bottom:10px"><span style="color:var(--muted)">Why:</span> ' + escHtml(v.rationale) + '</div>') : '')
+    + '<button onclick="triageDeepDive(' + z.id + ')" style="padding:7px 14px;font-size:12.5px;font-weight:700;background:var(--fam-decide,#2aa79b);color:#fff;border:none;border-radius:6px;cursor:pointer">Deep-dive in Bid/No-Bid \u2192</button>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:8px">Quick screen \u2014 verify against the full solicitation before bidding.</div>'
+    + '</div>';
+}
+function _triageRenderVerdict(z) {
+  const el = document.getElementById('triageVerdict-' + z.id);
+  if (!el) return;
+  if (z.screening) { el.innerHTML = '<div style="font-size:12.5px;color:var(--muted)"><span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:7px"></span>Screening\u2026</div>'; return; }
+  el.innerHTML = z.verdict ? _triageVerdictHtml(z) : '';
+}
+async function _triageExtract(files) {
+  let text = '';
+  const docBlocks = [];
+  for (const f of files) {
+    let block = null;
+    try { block = await _fileToContentBlock(f); } catch (e) { block = null; }
+    if (!block) continue;
+    if (block.type === 'text' && block.text) { text += block.text + '\n\n'; }
+    else if (block.type === 'document' && docBlocks.length < 1) { docBlocks.push(block); }
+    if (text.length > 9000) break;
+  }
+  return { text: text.slice(0, 9000), docBlocks: (text.length > 300 ? [] : docBlocks) };
+}
+async function triageScreenZone(id) {
+  const z = triageZones.find(x => x.id === id);
+  if (!z) return;
+  if (!z.files.length) { z.verdict = { error: 'Drop this opportunity\u2019s files first.' }; _triageRenderVerdict(z); return; }
+  const apiKey = (typeof getApiKey === 'function') && getApiKey();
+  if (!apiKey) { z.verdict = { error: 'Connect your Anthropic API key (in Settings) to screen opportunities.' }; _triageRenderVerdict(z); return; }
+  z.screening = true; z.verdict = null; _triageRenderVerdict(z);
+  try {
+    const ex = await _triageExtract(z.files);
+    if (!ex.text && !ex.docBlocks.length) { z.verdict = { error: 'Could not read text from these files (they may be scanned images). Deep-dive to analyze them directly.' }; return; }
+    const capText = (typeof CLIENT_CONFIG !== 'undefined' && CLIENT_CONFIG.capabilityStatementText) ? CLIENT_CONFIG.capabilityStatementText : 'No company capability profile is configured; assess general merits and note that company fit could not be personalized.';
+    const today = new Date().toDateString();
+    const promptText =
+      'You are a federal capture analyst screening a U.S. Government opportunity for a specific company, to decide FAST whether it is worth a full bid/no-bid analysis. '
+      + 'Use ONLY the solicitation excerpt and the company profile below. Do NOT invent facts; if a field is not present use "not stated" (or null for days_remaining). Today is ' + today + '. '
+      + 'Respond with ONLY a JSON object \u2014 no prose, no markdown, no code fences \u2014 with EXACTLY these keys: '
+      + 'verdict (one of "Pursue","Maybe","Pass"), title, solicitation_number, agency, notice_type (e.g. "Sources Sought","RFP","RFQ","Presolicitation","RFI"), set_aside, '
+      + 'eligible (boolean: does the company\u2019s socioeconomic status qualify it to compete? true if full-and-open, or if the company holds the required set-aside status; false if it clearly does not), '
+      + 'naics, naics_fit (one of "strong","partial","weak","unknown"), response_date, days_remaining (integer days from today to the response date, or null), '
+      + 'value (rough dollar value or "not stated"), place_of_performance, rationale (ONE short sentence: the single biggest reason for the verdict). '
+      + 'Decision guidance: Pursue when the company is eligible AND the work fits its capabilities AND the timeline is workable; Pass when it is ineligible, clearly outside its capabilities, or the deadline is past/impossible; Maybe when mixed or uncertain.\n\n'
+      + 'COMPANY PROFILE:\n' + capText + '\n\n'
+      + 'SOLICITATION EXCERPT:\n' + ex.text;
+    const content = [{ type: 'text', text: promptText }].concat(ex.docBlocks);
+    const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 700, messages: [{ role: 'user', content: content }] };
+    const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', mode: 'cors', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(payload) });
+    if (!resp.ok) { const et = await resp.text(); z.verdict = { error: 'Request failed (' + resp.status + '): ' + et.slice(0, 140) }; return; }
+    const data = await resp.json();
+    if (data.error) { z.verdict = { error: 'Error: ' + data.error.message }; return; }
+    let rawTxt = (data.content || []).map(b => b.text || '').join('').trim();
+    rawTxt = rawTxt.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+    const a = rawTxt.indexOf('{'), b2 = rawTxt.lastIndexOf('}');
+    try { z.verdict = JSON.parse(a >= 0 && b2 >= 0 ? rawTxt.slice(a, b2 + 1) : rawTxt); }
+    catch (err) { z.verdict = { error: 'Could not parse the screen result. Try again, or deep-dive.' }; }
+  } catch (e) {
+    z.verdict = { error: 'Something went wrong: ' + (e && e.message ? e.message : e) };
+  } finally {
+    z.screening = false; _triageRenderVerdict(z);
+  }
+}
+async function triageScreenAll() {
+  const pending = triageZones.filter(z => z.files.length && !z.screening);
+  const st = document.getElementById('triageAllStatus');
+  if (!pending.length) { if (st) st.textContent = 'Add files to an opportunity first.'; return; }
+  const total = pending.length; let done = 0; let i = 0;
+  if (st) st.textContent = 'Screening ' + total + '\u2026';
+  async function worker() { while (i < pending.length) { const z = pending[i++]; await triageScreenZone(z.id); done++; if (st) st.textContent = 'Screened ' + done + ' of ' + total + '\u2026'; } }
+  await Promise.all([worker(), worker()]);
+  if (st) st.textContent = 'Screened ' + total + '. Review the verdicts, then deep-dive the ones worth pursuing.';
+}
+function triageDeepDive(id) {
+  const z = triageZones.find(x => x.id === id);
+  if (!z || !z.files.length) return;
+  if (typeof bnaFiles !== 'undefined' && bnaFiles.length && !confirm('This replaces the files currently on the Bid/No-Bid tab with \u201c' + z.label + '\u201d. Continue?')) return;
+  if (typeof bnaFiles !== 'undefined') bnaFiles.length = 0;
+  if (typeof addFilesToArray === 'function' && typeof bnaFiles !== 'undefined') addFilesToArray(z.files.slice(), bnaFiles, 'fileListBNA');
+  if (typeof updateBnaBtn === 'function') updateBnaBtn();
+  if (typeof switchTab === 'function') switchTab('bidnobid');
+}
+
+/* ── Triage T2: auto-sort a mass drop into opportunities by solicitation number, + drag-to-move ── */
+let _triageDrag = null;
+
+function _triageWireMass() {
+  const dz = document.getElementById('triageMassDz');
+  const fi = document.getElementById('triageMassFi');
+  if (!dz || !fi || dz._wired) return;
+  dz._wired = true;
+  dz.addEventListener('click', e => { if (e.target.closest('.file-item')) return; fi.click(); });
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag-over'); if (_triageDrag) { _triageDrag = null; return; } triageAutoSort([].slice.call(e.dataTransfer.files)); });
+  fi.addEventListener('change', () => { triageAutoSort([].slice.call(fi.files)); fi.value = ''; });
+}
+
+// A solicitation/RFP number pulled from a raw string (filename or a slice of page-1 text).
+function _triageSolFromString(s) {
+  if (!s) return null;
+  const L = '(?:^|[^A-Za-z0-9])', T = '(?![A-Za-z0-9])';
+  const pats = [
+    new RegExp(L + '([A-Z0-9]{2,7}-\\d{2}-[A-Z]-\\d{3,5})' + T),   // N00189-25-R-0001 (Navy/Army/AF dashed)
+    new RegExp(L + '(\\d{2}[A-Z]{2,5}\\d{2}[A-Z]\\d{3,5})' + T),   // 47QRAA25R0001 (GSA, no dashes)
+    new RegExp(L + '(36C[A-Z0-9]{2,5}\\d{2}[A-Z]\\d{3,5})' + T),   // 36C10B25R0001 (VA)
+    new RegExp(L + '([A-Z]{2,4}-\\d{2}-\\d{5,8})' + T)             // VA-26-00041469 (VA legacy)
+  ];
+  for (let i = 0; i < pats.length; i++) { const m = s.match(pats[i]); if (m) return m[1].toUpperCase(); }
+  return null;
+}
+// A number that follows an explicit label ("Solicitation No: X", "RFP # X") in the text.
+function _triageSolFromLabel(text) {
+  if (!text) return null;
+  const m = text.match(/(?:solicitation|rf[pqi]|reference)\s*(?:no\.?|number|#|id)?\s*[:#]?\s*([A-Z0-9][A-Z0-9\-]{5,24})/i);
+  return m ? m[1].toUpperCase().replace(/[.,;:]+$/, '') : null;
+}
+async function _triageDetectSolNum(file) {
+  let n = _triageSolFromString(file.name);
+  if (n) return n;
+  try {
+    const block = await _fileToContentBlock(file);
+    if (block && block.type === 'text' && block.text) {
+      const head = block.text.slice(0, 3000);
+      n = _triageSolFromLabel(head) || _triageSolFromString(head);
+      if (n) return n;
+    }
+  } catch (e) {}
+  return null;
+}
+function _triageZoneForNumber(num) {
+  let z = triageZones.find(x => x.label === num);
+  if (z) return z;
+  _triageSeq++;
+  z = { id: _triageSeq, label: num, files: [], verdict: null, screening: false };
+  triageZones.push(z);
+  return z;
+}
+async function triageAutoSort(files) {
+  const st = document.getElementById('triageMassStatus');
+  if (!files || !files.length) { if (st) st.textContent = ''; return; }
+  if (st) st.textContent = 'Sorting ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '\u2026';
+  let sorted = 0, unsorted = 0;
+  const touched = {};
+  for (const f of files) {
+    const num = await _triageDetectSolNum(f);
+    let z;
+    if (num) { z = _triageZoneForNumber(num); sorted++; }
+    else { z = triageZones.find(x => x.label === 'Unsorted') || _triageZoneForNumber('Unsorted'); unsorted++; }
+    if (!z.files.find(x => x.name === f.name && x.size === f.size)) z.files.push(f);
+    z.verdict = null;
+    touched[z.id] = true;
+  }
+  triageZones = triageZones.filter(z => z.files.length || z.screening);   // drop empty placeholders
+  triageRenderZones();
+  const groups = Object.keys(touched).length;
+  if (st) st.textContent = 'Sorted ' + sorted + ' file' + (sorted === 1 ? '' : 's') + ' into ' + groups + ' opportunit' + (groups === 1 ? 'y' : 'ies') + (unsorted ? (' \u2014 ' + unsorted + ' couldn\u2019t be matched (see the "Unsorted" zone)') : '') + '. Rename or drag files between zones to fix any grouping, then Screen all.';
+}
+function _triageDragStart(e, zoneId, idx) {
+  _triageDrag = { zoneId: zoneId, idx: idx };
+  try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'triage-move'); } catch (err) {}
+}
+function _triageMoveFile(fromId, idx, toId) {
+  if (fromId === toId) return;
+  const from = triageZones.find(z => z.id === fromId);
+  const to = triageZones.find(z => z.id === toId);
+  if (!from || !to || idx < 0 || idx >= from.files.length) return;
+  const f = from.files[idx];
+  if (!to.files.find(x => x.name === f.name && x.size === f.size)) to.files.push(f);
+  from.files.splice(idx, 1);
+  from.verdict = null; to.verdict = null;
+  triageRenderZones();
+}
+
+/* ── Triage T3: screen a pasted shortlist (metadata-only), rows flow into the file zones ── */
+let _triageMode = 'files';
+let _triageListRows = [];
+
+function triageSetMode(m) {
+  _triageMode = (m === 'list') ? 'list' : 'files';
+  const fv = document.getElementById('triageFilesView'), lv = document.getElementById('triageListView');
+  if (fv) fv.style.display = (_triageMode === 'files') ? '' : 'none';
+  if (lv) lv.style.display = (_triageMode === 'list') ? '' : 'none';
+  const bf = document.getElementById('triageModeFiles'), bl = document.getElementById('triageModeList');
+  if (bf) { bf.style.background = (_triageMode === 'files') ? 'var(--blue)' : '#fff'; bf.style.color = (_triageMode === 'files') ? '#fff' : 'var(--muted)'; }
+  if (bl) { bl.style.background = (_triageMode === 'list') ? 'var(--blue)' : '#fff'; bl.style.color = (_triageMode === 'list') ? '#fff' : 'var(--muted)'; }
+}
+function triageClearList() {
+  const inp = document.getElementById('triageListInput'); if (inp) inp.value = '';
+  _triageListRows = [];
+  const res = document.getElementById('triageListResults'); if (res) res.innerHTML = '';
+  const st = document.getElementById('triageListStatus'); if (st) st.textContent = '';
+}
+function _triageListRowHtml(r, i) {
+  const parts = [];
+  if (r.agency && r.agency !== 'not stated') parts.push(escHtml(r.agency));
+  if (r.naics && r.naics !== 'not stated') parts.push('NAICS ' + escHtml(r.naics) + (r.naics_fit ? ' (' + escHtml(r.naics_fit) + ' fit)' : ''));
+  if (r.set_aside && r.set_aside !== 'not stated') parts.push(escHtml(r.set_aside) + (r.eligible === false ? ' \u2717' : ''));
+  if (r.response_date && r.response_date !== 'not stated') parts.push('due ' + escHtml(r.response_date) + ((r.days_remaining != null && r.days_remaining !== '') ? ' (' + escHtml(String(r.days_remaining)) + 'd)' : ''));
+  if (r.value && r.value !== 'not stated') parts.push(escHtml(r.value));
+  if (r.solicitation_number && r.solicitation_number !== 'not stated') parts.push(escHtml(r.solicitation_number));
+  const meta = parts.join(' \u00b7 ');
+  const hasUrl = r.url && /^https?:\/\//i.test(r.url);
+  return '<div style="display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:#fff">'
+    + '<div style="flex:none;padding-top:2px">' + _triageBadge(r.verdict) + '</div>'
+    + '<div style="flex:1;min-width:0">'
+    +   '<div style="font-weight:700;font-size:13px;margin-bottom:2px">' + escHtml(r.title || 'Untitled opportunity') + '</div>'
+    +   (meta ? ('<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">' + meta + '</div>') : '')
+    +   (r.rationale ? ('<div style="font-size:12px;line-height:1.45;margin-bottom:8px"><span style="color:var(--muted)">Why:</span> ' + escHtml(r.rationale) + '</div>') : '')
+    +   '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +     (hasUrl ? ('<a href="' + escHtml(r.url) + '" target="_blank" rel="noopener" style="padding:5px 11px;font-size:11.5px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:6px;text-decoration:none">Open \u2197</a>') : '')
+    +     '<button onclick="triageListToZone(' + i + ')" style="padding:5px 11px;font-size:11.5px;font-weight:700;background:var(--fam-decide,#2aa79b);color:#fff;border:none;border-radius:6px;cursor:pointer">Send to file triage \u2192</button>'
+    +   '</div>'
+    + '</div>'
+    + '</div>';
+}
+function _triageRenderList() {
+  const res = document.getElementById('triageListResults');
+  if (!res) return;
+  if (!_triageListRows.length) { res.innerHTML = ''; return; }
+  const rank = { Pursue: 0, Maybe: 1, Pass: 2 };
+  const ordered = _triageListRows.map((r, i) => ({ r: r, i: i })).sort((x, y) => (rank[x.r.verdict] == null ? 3 : rank[x.r.verdict]) - (rank[y.r.verdict] == null ? 3 : rank[y.r.verdict]));
+  res.innerHTML = ordered.map(o => _triageListRowHtml(o.r, o.i)).join('');
+}
+function triageListToZone(i) {
+  const r = _triageListRows[i];
+  if (!r) return;
+  let label = (r.solicitation_number && r.solicitation_number !== 'not stated') ? r.solicitation_number : (r.title || 'Opportunity');
+  label = String(label).slice(0, 80);
+  let z = triageZones.find(x => !x.files.length && /^Opportunity \d+$/.test(x.label));
+  if (z) { z.label = label; }
+  else { _triageSeq++; z = { id: _triageSeq, label: label, files: [], verdict: null, screening: false }; triageZones.push(z); }
+  triageRenderZones();
+  triageSetMode('files');
+  const el = document.getElementById('triageDz-' + z.id);
+  if (el) { try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {} }
+}
+async function triageScreenList() {
+  const inp = document.getElementById('triageListInput');
+  const raw = inp ? String(inp.value || '').trim() : '';
+  const st = document.getElementById('triageListStatus');
+  const res = document.getElementById('triageListResults');
+  const setStatus = (t) => { if (st) st.textContent = t; };
+  if (!raw) { setStatus('Paste a list first.'); if (inp) inp.focus(); return; }
+  const apiKey = (typeof getApiKey === 'function') && getApiKey();
+  if (!apiKey) { setStatus('Connect your Anthropic API key (in Settings) to screen a list.'); return; }
+  const btn = document.getElementById('triageListBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Screening\u2026'; }
+  setStatus('Reading the list\u2026'); if (res) res.innerHTML = '';
+  try {
+    const capText = (typeof CLIENT_CONFIG !== 'undefined' && CLIENT_CONFIG.capabilityStatementText) ? CLIENT_CONFIG.capabilityStatementText : 'No company capability profile is configured; assess general merits and note that company fit could not be personalized.';
+    const today = new Date().toDateString();
+    const promptText =
+      'You are a federal capture analyst. The text below is a PASTED SHORTLIST of government opportunities from a feed (e.g. a SAM.gov daily email table, an eBuy or SeaPort results list). '
+      + 'Extract EVERY distinct opportunity and screen each one for the company profiled below, judging fit from the LISTING METADATA ONLY (there are no solicitation documents here). Today is ' + today + '. '
+      + 'IMPORTANT on fit: the feed may already be filtered by NAICS/set-aside, so do NOT treat a matching NAICS as sufficient \u2014 judge the ACTUAL work domain from the TITLE (and any description) against the company\u2019s real capabilities; a matching NAICS on work outside the company\u2019s domain is a WEAK fit, and say so plainly. '
+      + 'Respond with ONLY a JSON array (no prose, no markdown, no code fences). Each element has EXACTLY these keys: '
+      + 'title, agency, solicitation_number, naics, set_aside, notice_type, response_date, days_remaining (integer days from today, or null), value, url (the opportunity link if one is present in the text, else null), '
+      + 'verdict (one of "Pursue","Maybe","Pass"), naics_fit (one of "strong","partial","weak","unknown"), eligible (boolean \u2014 could the company compete given any set-aside? true if full-and-open or the company plausibly holds the status; false only if clearly barred), '
+      + 'rationale (ONE short sentence: the single biggest reason for the verdict, focused on domain fit). '
+      + 'If a field is not present in the listing, use "not stated" (or null where a null is specified). Lean "Maybe" when the title is ambiguous rather than guessing. Do NOT invent opportunities that are not in the text. '
+      + 'COMPANY PROFILE:\n' + capText + '\n\n'
+      + 'PASTED SHORTLIST:\n' + raw.slice(0, 30000);
+    const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 8000, messages: [{ role: 'user', content: promptText }] };
+    const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', mode: 'cors', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(payload) });
+    if (!resp.ok) { const et = await resp.text(); setStatus('Request failed (' + resp.status + '): ' + et.slice(0, 140)); return; }
+    const data = await resp.json();
+    if (data.error) { setStatus('Error: ' + data.error.message); return; }
+    let txt = (data.content || []).map(b => b.text || '').join('').trim();
+    txt = txt.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+    const a = txt.indexOf('['), b = txt.lastIndexOf(']');
+    let rows = null;
+    try { rows = JSON.parse(a >= 0 && b >= 0 ? txt.slice(a, b + 1) : txt); } catch (e) { rows = null; }
+    if (!Array.isArray(rows) || !rows.length) { setStatus('Couldn\u2019t find any opportunities in that text \u2014 paste the list rows themselves, not just a subject line.'); return; }
+    _triageListRows = rows;
+    _triageRenderList();
+    const pu = rows.filter(r => r.verdict === 'Pursue').length, mb = rows.filter(r => r.verdict === 'Maybe').length, pa = rows.filter(r => r.verdict === 'Pass').length;
+    setStatus('Found ' + rows.length + ' \u2014 ' + pu + ' Pursue, ' + mb + ' Maybe, ' + pa + ' Pass. Sorted best-first; verify before bidding.');
+  } catch (e) {
+    setStatus('Something went wrong: ' + (e && e.message ? e.message : e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Screen the list'; }
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   if (window.__MSAL_POPUP_REDIRECT__) return;   // sign-in popup: don't init the app, let the opener finish auth
   initDropZone('dropZoneRFP',        'fileInputRFP',        rfpFiles,        'fileListRFP');
@@ -17753,6 +18223,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initDropZone('dropZoneCompliance', 'fileInputCompliance', complianceFiles, 'fileListCompliance');
   initDropZone('dropZoneBNA',        'fileInputBNA',        bnaFiles,        'fileListBNA');
   initDropZone('dropZoneBNADocs',    'fileInputBNADocs',    bnaCompanyFiles, 'fileListBNADocs');
+  if (typeof triageInit === 'function') triageInit();
   initBnaWeights();
   renderWeightEditor(); // editor starts expanded — render immediately
   setupTabConnections();
@@ -19184,7 +19655,7 @@ HOW THE PRICING LOGIC WORKS
 - Two hour bases, both correct on purpose: the Government is typically billed at about 1,912 productive hours per FTE-year, while salary is figured on 2,080 payroll hours per year.
 - GSA Schedule mode: if you price off a GSA Schedule, the awarded Schedule rate is the ceiling. Map each role to a Schedule labor category and the rate fills in; the tool then shows the company-paid rate implied behind that awarded rate (Schedule rate divided by your wrap). You do not set a paid rate in Schedule mode — the Schedule governs.
 - CLINs: turning on CLINs organizes the price into numbered contract line items and builds a submittable schedule. A CLIN line can cover all labor, specific PWS tasks, travel/ODC, materials, or a custom fixed amount, and each line repeats per period (base year plus option years). The contract total is the annual value times the real number of contract years from the period-of-performance dates — not the number of periods.
-- Gap analysis: on the Pricing tab, "Analyze the price model" does a deterministic read of your model and then asks the AI for a few ranked, quantified moves to improve it. It is advisory only — nothing is written to your price until you click to apply it, and every value is re-checked against the live model first.
+- Gap analysis: on the Pricing tab, "Analyze Pricing & Suggest Improvements" does a deterministic read of your model and then asks the AI for a few ranked, quantified moves to improve it. It is advisory only — nothing is written to your price until you click to apply it, and every value is re-checked against the live model first.
 
 HOW THE TOOL TREATS FACTS (PROVENANCE)
 The solicitation is authoritative. Your own entries come next and are trusted unless they conflict with the solicitation. The AI's interpretation is last and is never presented as a Government-stated fact. Structural things like CLIN identity come from the solicitation and are never invented, and nothing the AI proposes is applied to your model silently — it is always a reviewable step.
