@@ -1830,36 +1830,36 @@
 <!-- ══════════════════════════ BID/NO-BID TAB ════════════════════════════ -->
 <div class="tab-pane" id="pane-triage">
   <div class="card" style="margin-bottom:24px">
-    <h2 style="margin:0 0 6px;font-size:20px">🗂️ Opportunity Triage</h2>
-    <p style="color:var(--muted);font-size:13.5px;line-height:1.55;margin:0 0 16px">Screen a batch of opportunities fast. Drop each opportunity’s files into its own zone, hit <strong>Screen this</strong> (or <strong>Screen all</strong>) for a quick <strong>Pursue / Maybe / Pass</strong> read, then send the promising ones into a full analysis with <strong>Deep-dive in Bid/No-Bid</strong>. This is a quick screen — verify against the full solicitation before bidding.</p>
-    <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:18px">
-      <button id="triageModeFiles" onclick="triageSetMode('files')" style="padding:8px 15px;font-size:12.5px;font-weight:700;border:none;cursor:pointer;background:var(--blue);color:#fff">🗂️ From files</button>
-      <button id="triageModeList" onclick="triageSetMode('list')" style="padding:8px 15px;font-size:12.5px;font-weight:700;border:none;border-left:1px solid var(--border);cursor:pointer;background:#fff;color:var(--muted)">📋 From a list</button>
-    </div>
-    <div id="triageFilesView">
-    <div class="drop-zone" id="triageMassDz" style="min-height:76px;margin-bottom:16px;padding:16px;border-style:dashed">
-      <input type="file" id="triageMassFi" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.txt" style="display:none" />
-      <div class="dz-title" style="font-size:13.5px;font-weight:700">⤓ Drop a whole pile here — I’ll sort it into opportunities</div>
-      <div class="dz-sub" style="font-size:11.5px;color:var(--muted)">Groups files by the solicitation number in each (from the filename, then the first page). Anything it can’t read goes to an Unsorted zone for you to place. Or click to browse.</div>
-      <div id="triageMassStatus" style="font-size:11.5px;color:var(--muted);margin-top:8px"></div>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:18px">
-      <button onclick="triageScreenAll()" style="padding:9px 16px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">Screen all</button>
-      <button onclick="triageAddZone()" style="padding:9px 16px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:8px;cursor:pointer">+ Add opportunity</button>
-      <span id="triageAllStatus" style="font-size:12px;color:var(--muted)"></span>
-    </div>
-    <div id="triageZones"></div>
-    </div>
-
-    <div id="triageListView" style="display:none">
-      <p style="color:var(--muted);font-size:12.5px;line-height:1.5;margin:0 0 10px">Paste a shortlist from a feed — your SAM.gov daily email, an eBuy or SeaPort results list, whatever format it comes in. The tool pulls out each opportunity and gives a quick <strong>Pursue / Maybe / Pass</strong> read from the listing alone. This is a lighter, <strong>metadata-only</strong> screen — it judges fit from the title, agency, NAICS, and set-aside, so send the promising ones to a file screen (or Bid/No-Bid) for the real read.</p>
-      <textarea id="triageListInput" placeholder="Paste your opportunity list here — a table, an email, or a plain list…" style="width:100%;min-height:130px;resize:vertical;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;font-family:inherit;box-sizing:border-box"></textarea>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
-        <button id="triageListBtn" onclick="triageScreenList()" style="padding:9px 16px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">Screen the list</button>
-        <button onclick="triageClearList()" style="padding:9px 16px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:8px;cursor:pointer">Clear</button>
-        <span id="triageListStatus" style="font-size:12px;color:var(--muted)"></span>
+    <div class="card-header"><span class="icon">🗂️</span> Opportunity Triage</div>
+    <div class="card-body">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Screen a whole batch of opportunities fast. Drop a pile of downloaded solicitation files to sort them into opportunities by solicitation number, then run <strong>Screen all opportunities</strong> for a quick <strong>Pursue / Maybe / Pass</strong> read on each and send the promising ones into a full analysis with <strong>Deep-dive in Bid/No-Bid</strong>. A quick screen — verify against the full solicitation before bidding.</p>
+      <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:18px">
+        <button id="triageModeFiles" onclick="triageSetMode('files')" style="padding:8px 15px;font-size:12.5px;font-weight:700;border:none;cursor:pointer;background:var(--blue);color:#fff">🗂️ From files</button>
+        <button id="triageModeList" onclick="triageSetMode('list')" style="padding:8px 15px;font-size:12.5px;font-weight:700;border:none;border-left:1px solid var(--border);cursor:pointer;background:#fff;color:var(--muted)">📋 From a list</button>
       </div>
-      <div id="triageListResults" style="margin-top:18px"></div>
+      <div id="triageFilesView">
+        <div class="drop-zone" id="triageMassDz" style="min-height:88px;margin-bottom:16px;padding:20px;border-style:dashed;text-align:center">
+          <input type="file" id="triageMassFi" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.txt" style="display:none" />
+          <div class="dz-title" style="font-size:14px;font-weight:700;color:var(--blue)">⤓ Drop a pile of solicitations here to sort into opportunities for triage</div>
+          <div class="dz-sub" style="font-size:12px;color:var(--muted)">Files are grouped by the solicitation number in each. Anything that can’t be matched lands in an Unsorted zone to sort manually. Or click to browse.</div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px">
+          <button onclick="triageScreenAll()" style="padding:10px 20px;font-size:13.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">▶ Screen all opportunities</button>
+          <button onclick="triageAddZone()" style="padding:10px 16px;font-size:13px;font-weight:600;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:8px;cursor:pointer">+ Add opportunity</button>
+        </div>
+        <div id="triageZones"></div>
+      </div>
+
+      <div id="triageListView" style="display:none">
+        <p style="color:var(--muted);font-size:12.5px;line-height:1.5;margin:0 0 10px">Paste a shortlist from a feed — your SAM.gov daily email, an eBuy or SeaPort results list, whatever format it comes in. The tool pulls out each opportunity and gives a quick <strong>Pursue / Maybe / Pass</strong> read from the listing alone. This is a lighter, <strong>metadata-only</strong> screen — it judges fit from the title, agency, NAICS, and set-aside, so send the promising ones to a file screen (or Bid/No-Bid) for the real read.</p>
+        <textarea id="triageListInput" placeholder="Paste your opportunity list here — a table, an email, or a plain list…" style="width:100%;min-height:130px;resize:vertical;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;font-family:inherit;box-sizing:border-box"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+          <button id="triageListBtn" onclick="triageScreenList()" style="padding:9px 16px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">Screen the list</button>
+          <button onclick="triageClearList()" style="padding:9px 16px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:8px;cursor:pointer">Clear</button>
+          <span id="triageListStatus" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div id="triageListResults" style="margin-top:18px"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -3271,7 +3271,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '232';
+const APP_VERSION = '234';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -17862,16 +17862,25 @@ function triageRemoveZone(id) { triageZones = triageZones.filter(z => z.id !== i
 function triageSetLabel(id, val) { const z = triageZones.find(x => x.id === id); if (z) z.label = String(val || '').trim() || ('Opportunity ' + id); }
 
 function _triageZoneHtml(z) {
-  return '<div class="card" style="margin-bottom:16px;border-left:4px solid var(--fam-decide,#2aa79b);padding:16px">'
-    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
-    +   '<input type="text" value="' + escHtml(z.label) + '" onchange="triageSetLabel(' + z.id + ',this.value)" title="Rename this opportunity" style="font-weight:700;font-size:14px;color:var(--blue);border:1px solid var(--border);border-radius:6px;padding:5px 9px;flex:1;min-width:140px;font-family:inherit" />'
-    +   '<button onclick="triageScreenZone(' + z.id + ')" style="padding:7px 14px;font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer;white-space:nowrap">Screen this</button>'
-    +   '<button onclick="triageRemoveZone(' + z.id + ')" title="Remove this opportunity" style="padding:6px 10px;font-size:13px;font-weight:700;background:#fff;color:var(--muted);border:1px solid var(--border);border-radius:6px;cursor:pointer">\u2715</button>'
-    + '</div>'
-    + '<div class="drop-zone" id="triageDz-' + z.id + '" style="min-height:84px;margin-bottom:8px;padding:14px">'
+  const isUn = (z.label === 'Unsorted');
+  const bar = isUn ? '#d97706' : 'var(--fam-decide,#2aa79b)';
+  const screenBtn = '<button onclick="triageScreenZone(' + z.id + ')" title="Screen just this opportunity" style="padding:6px 12px;font-size:12px;font-weight:600;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:6px;cursor:pointer;white-space:nowrap">Screen</button>';
+  const xBtn = '<button onclick="triageRemoveZone(' + z.id + ')" title="Remove this opportunity" style="padding:6px 10px;font-size:13px;font-weight:700;background:#fff;color:var(--muted);border:1px solid var(--border);border-radius:6px;cursor:pointer">\u2715</button>';
+  let head;
+  if (isUn) {
+    head = '<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:9px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+      + '<span style="flex:1;min-width:180px;font-size:12.5px;font-weight:700;color:#92400e">\u26A0 Unsorted \u2014 these couldn\u2019t be matched to a solicitation. Drag each file into the right opportunity below.</span>'
+      + xBtn + '</div>';
+  } else {
+    head = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
+      + '<input type="text" value="' + escHtml(z.label) + '" onchange="triageSetLabel(' + z.id + ',this.value)" title="Rename this opportunity" style="font-weight:700;font-size:14px;color:var(--blue);border:1px solid var(--border);border-radius:6px;padding:5px 9px;flex:1;min-width:140px;font-family:inherit" />'
+      + screenBtn + xBtn + '</div>';
+  }
+  return '<div class="card" id="triageCard-' + z.id + '" style="margin-bottom:16px;border-left:4px solid ' + bar + ';padding:16px">'
+    + head
+    + '<div class="drop-zone" id="triageDz-' + z.id + '" style="min-height:70px;margin-bottom:8px;padding:12px;text-align:center">'
     +   '<input type="file" id="triageFi-' + z.id + '" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.txt" style="display:none" />'
-    +   '<div class="dz-title" style="font-size:13px">Drop this opportunity\u2019s files</div>'
-    +   '<div class="dz-sub" style="font-size:11.5px;color:var(--muted)">PDF, Word, Excel, or text \u2014 or click to browse</div>'
+    +   '<div class="dz-sub" style="font-size:11.5px;color:var(--muted)">Drop this opportunity\u2019s files, or click to browse</div>'
     + '</div>'
     + '<div class="file-list" id="triageFl-' + z.id + '"></div>'
     + '<div id="triageVerdict-' + z.id + '" style="margin-top:10px"></div>'
@@ -17885,14 +17894,20 @@ function triageRenderZones() {
   triageZones.forEach(z => { _triageWireZone(z); _triageRenderFiles(z); _triageRenderVerdict(z); });
 }
 function _triageWireZone(z) {
+  const card = document.getElementById('triageCard-' + z.id);
   const dz = document.getElementById('triageDz-' + z.id);
   const fi = document.getElementById('triageFi-' + z.id);
-  if (!dz || !fi) return;
-  dz.addEventListener('click', e => { if (e.target.closest('.file-item') || e.target.closest('.file-remove')) { e.preventDefault(); e.stopPropagation(); return; } fi.click(); });
-  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
-  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
-  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag-over'); if (_triageDrag) { const d = _triageDrag; _triageDrag = null; _triageMoveFile(d.zoneId, d.idx, z.id); return; } _triageAddFiles(z, [].slice.call(e.dataTransfer.files)); });
+  if (!card || !fi) return;
+  if (dz) dz.addEventListener('click', e => { if (e.target.closest('.file-item') || e.target.closest('.file-remove')) return; fi.click(); });
   fi.addEventListener('change', () => { _triageAddFiles(z, [].slice.call(fi.files)); fi.value = ''; });
+  // The ENTIRE opportunity card is a drop target: drop OS files onto it, or drag a file here from another opportunity.
+  card.addEventListener('dragover', e => { e.preventDefault(); if (e.dataTransfer) { try { e.dataTransfer.dropEffect = _triageDrag ? 'move' : 'copy'; } catch (err) {} } card.style.outline = '2px dashed var(--fam-decide,#2aa79b)'; card.style.outlineOffset = '2px'; });
+  card.addEventListener('dragleave', e => { if (!card.contains(e.relatedTarget)) card.style.outline = ''; });
+  card.addEventListener('drop', e => {
+    e.preventDefault(); card.style.outline = '';
+    if (_triageDrag) { const d = _triageDrag; _triageDrag = null; if (d.zoneId !== z.id) _triageMoveFile(d.zoneId, d.idx, z.id); return; }
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) _triageAddFiles(z, [].slice.call(e.dataTransfer.files));
+  });
 }
 function _triageAddFiles(z, files) {
   files.forEach(f => { if (!z.files.find(x => x.name === f.name && x.size === f.size)) z.files.push(f); });
@@ -17944,15 +17959,18 @@ function _triageRenderVerdict(z) {
 async function _triageExtract(files) {
   let text = '';
   const docBlocks = [];
+  let readable = 0, failed = 0;
   for (const f of files) {
     let block = null;
     try { block = await _fileToContentBlock(f); } catch (e) { block = null; }
-    if (!block) continue;
-    if (block.type === 'text' && block.text) { text += block.text + '\n\n'; }
-    else if (block.type === 'document' && docBlocks.length < 1) { docBlocks.push(block); }
-    if (text.length > 9000) break;
+    if (!block) { failed++; continue; }
+    if (block.type === 'text' && block.text) { text += block.text + '\n\n'; if (block._unreadable) failed++; else readable++; }
+    else if (block.type === 'document') { if (docBlocks.length < 2) docBlocks.push(block); readable++; }
+    else failed++;
+    if (text.length > 14000) break;
   }
-  return { text: text.slice(0, 9000), docBlocks: (text.length > 300 ? [] : docBlocks) };
+  const realText = text.replace(/\[File:[^\]]*\]/g, '').trim();
+  return { text: text.slice(0, 14000), docBlocks: (realText.length > 200 ? [] : docBlocks), readable: readable, failed: failed };
 }
 async function triageScreenZone(id) {
   const z = triageZones.find(x => x.id === id);
@@ -17996,13 +18014,24 @@ async function triageScreenZone(id) {
 }
 async function triageScreenAll() {
   const pending = triageZones.filter(z => z.files.length && !z.screening);
-  const st = document.getElementById('triageAllStatus');
-  if (!pending.length) { if (st) st.textContent = 'Add files to an opportunity first.'; return; }
+  if (!pending.length) { if (typeof showStatus === 'function') showStatus('warn', 'Nothing to screen yet', 'Drop a pile above, or add files to an opportunity.', false); return; }
   const total = pending.length; let done = 0; let i = 0;
-  if (st) st.textContent = 'Screening ' + total + '\u2026';
-  async function worker() { while (i < pending.length) { const z = pending[i++]; await triageScreenZone(z.id); done++; if (st) st.textContent = 'Screened ' + done + ' of ' + total + '\u2026'; } }
+  if (typeof showStatus === 'function') showStatus('info', 'Screening opportunities', 'Screening ' + total + '\u2026', true);
+  if (typeof setProgress === 'function') setProgress(5);
+  async function worker() {
+    while (i < pending.length) {
+      const z = pending[i++];
+      await triageScreenZone(z.id);
+      done++;
+      if (typeof setProgress === 'function') setProgress(Math.round(5 + (done / total) * 90));
+      if (typeof showStatus === 'function') showStatus('info', 'Screening opportunities', 'Screened ' + done + ' of ' + total + '\u2026', true);
+    }
+  }
   await Promise.all([worker(), worker()]);
-  if (st) st.textContent = 'Screened ' + total + '. Review the verdicts, then deep-dive the ones worth pursuing.';
+  if (typeof setProgress === 'function') setProgress(100);
+  const done2 = triageZones.filter(z => z.verdict && !z.verdict.error);
+  const pu = done2.filter(z => z.verdict.verdict === 'Pursue').length, mb = done2.filter(z => z.verdict.verdict === 'Maybe').length, pa = done2.filter(z => z.verdict.verdict === 'Pass').length;
+  if (typeof showStatus === 'function') showStatus('success', 'Screening complete', total + ' screened \u2014 ' + pu + ' Pursue, ' + mb + ' Maybe, ' + pa + ' Pass. Deep-dive the ones worth pursuing.', false);
 }
 function triageDeepDive(id) {
   const z = triageZones.find(x => x.id === id);
@@ -18070,24 +18099,28 @@ function _triageZoneForNumber(num) {
   return z;
 }
 async function triageAutoSort(files) {
-  const st = document.getElementById('triageMassStatus');
-  if (!files || !files.length) { if (st) st.textContent = ''; return; }
-  if (st) st.textContent = 'Sorting ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '\u2026';
-  let sorted = 0, unsorted = 0;
+  if (!files || !files.length) return;
+  const apiKey = (typeof getApiKey === 'function') && getApiKey();
+  if (typeof showStatus === 'function') showStatus('info', 'Sorting opportunities', 'Grouping ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' by solicitation\u2026', true);
+  if (typeof setProgress === 'function') setProgress(15);
+  let groups = null;
+  if (apiKey) { try { groups = await _triageGroupByAI(files, apiKey); } catch (e) { groups = null; } }
+  if (!groups) groups = await _triageGroupByRegex(files);
+  if (typeof setProgress === 'function') setProgress(90);
+  let unsorted = 0;
   const touched = {};
-  for (const f of files) {
-    const num = await _triageDetectSolNum(f);
-    let z;
-    if (num) { z = _triageZoneForNumber(num); sorted++; }
-    else { z = triageZones.find(x => x.label === 'Unsorted') || _triageZoneForNumber('Unsorted'); unsorted++; }
-    if (!z.files.find(x => x.name === f.name && x.size === f.size)) z.files.push(f);
-    z.verdict = null;
-    touched[z.id] = true;
-  }
-  triageZones = triageZones.filter(z => z.files.length || z.screening);   // drop empty placeholders
+  groups.forEach(g => {
+    const isUn = (!g.label || g.label === 'Unsorted');
+    const z = isUn ? (triageZones.find(x => x.label === 'Unsorted') || _triageZoneForNumber('Unsorted')) : _triageZoneForNumber(String(g.label).slice(0, 80));
+    (g.files || []).forEach(f => { if (!z.files.find(x => x.name === f.name && x.size === f.size)) { z.files.push(f); if (isUn) unsorted++; } });
+    z.verdict = null; touched[z.id] = true;
+  });
+  triageZones = triageZones.filter(z => z.files.length || z.screening);
   triageRenderZones();
-  const groups = Object.keys(touched).length;
-  if (st) st.textContent = 'Sorted ' + sorted + ' file' + (sorted === 1 ? '' : 's') + ' into ' + groups + ' opportunit' + (groups === 1 ? 'y' : 'ies') + (unsorted ? (' \u2014 ' + unsorted + ' couldn\u2019t be matched (see the "Unsorted" zone)') : '') + '. Rename or drag files between zones to fix any grouping, then Screen all.';
+  if (typeof setProgress === 'function') setProgress(100);
+  const nOpps = triageZones.filter(z => touched[z.id] && z.label !== 'Unsorted').length;
+  const msg = 'Grouped ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' into ' + nOpps + ' opportunit' + (nOpps === 1 ? 'y' : 'ies') + (unsorted ? (' \u00b7 ' + unsorted + ' unsorted') : '') + '. Check the grouping and drag files to fix it, then Screen all.';
+  if (typeof showStatus === 'function') showStatus((nOpps === 0) ? 'warn' : 'success', 'Sorted', msg, false);
 }
 function _triageDragStart(e, zoneId, idx) {
   _triageDrag = { zoneId: zoneId, idx: idx };
@@ -18214,6 +18247,48 @@ async function triageScreenList() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Screen the list'; }
   }
+}
+
+async function _triageGroupByAI(files, apiKey) {
+  const names = files.map((f, i) => (i + 1) + '. ' + f.name);
+  const promptText =
+    'These are filenames from a bulk download of U.S. Government solicitation documents. Group them by OPPORTUNITY \u2014 files that belong to the same solicitation (they share a solicitation / RFQ / RFP / notice number, or are clearly the same procurement). '
+    + 'Ignore trailing timestamps in the names (e.g. ".1785967638237") and copy markers like "(1)". Solicitation numbers vary widely by agency (e.g. N00189-25-R-0001, 47QRAA25R0001, 36C10X26Q0225, 140D0426Q0645, 70Z02326QDCO00001, NB204000-26-01138) \u2014 use your judgment. '
+    + 'Respond with ONLY a JSON array (no prose, no markdown, no code fences). Each element: {"label": "<the solicitation/RFQ number if you can identify one, otherwise a short 2-4 word name for the opportunity>", "files": ["<exact filename>", ...]}. '
+    + 'Put files you cannot confidently assign to any opportunity in ONE group with "label":"Unsorted". Every filename must appear in exactly ONE group. Use the EXACT filename strings as given.\n\n'
+    + 'FILENAMES:\n' + names.join('\n');
+  const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 4000, messages: [{ role: 'user', content: promptText }] };
+  const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', mode: 'cors', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(payload) });
+  if (!resp.ok) throw new Error('group ' + resp.status);
+  const data = await resp.json();
+  if (data.error) throw new Error(data.error.message);
+  let txt = (data.content || []).map(b => b.text || '').join('').trim();
+  txt = txt.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+  const a = txt.indexOf('['), b = txt.lastIndexOf(']');
+  const arr = JSON.parse(a >= 0 && b >= 0 ? txt.slice(a, b + 1) : txt);
+  if (!Array.isArray(arr)) throw new Error('not array');
+  const byName = {}; files.forEach(f => { byName[f.name] = f; });
+  const used = {};
+  const out = [];
+  arr.forEach(g => {
+    const gf = [];
+    (g.files || []).forEach(n => { const f = byName[n]; if (f && !used[f.name]) { used[f.name] = true; gf.push(f); } });
+    if (gf.length) out.push({ label: g.label || 'Unsorted', files: gf });
+  });
+  const missed = files.filter(f => !used[f.name]);
+  if (missed.length) { let un = out.find(g => g.label === 'Unsorted'); if (!un) { un = { label: 'Unsorted', files: [] }; out.push(un); } missed.forEach(f => un.files.push(f)); }
+  return out;
+}
+async function _triageGroupByRegex(files) {
+  const groups = {}; const order = [];
+  for (const f of files) {
+    let num = null;
+    try { num = await _triageDetectSolNum(f); } catch (e) {}
+    const key = num || 'Unsorted';
+    if (!groups[key]) { groups[key] = []; order.push(key); }
+    groups[key].push(f);
+  }
+  return order.map(k => ({ label: k, files: groups[k] }));
 }
 
 window.addEventListener('DOMContentLoaded', () => {
