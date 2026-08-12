@@ -3271,7 +3271,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '235';
+const APP_VERSION = '236';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -17962,7 +17962,7 @@ async function _triageExtract(files) {
   let readable = 0, failed = 0;
   for (const f of files) {
     let block = null;
-    try { block = await _fileToContentBlock(f); } catch (e) { block = null; }
+    try { block = await fileToContentBlockLocal(f); } catch (e) { block = null; }
     if (!block) { failed++; continue; }
     if (block.type === 'text' && block.text) { text += block.text + '\n\n'; if (block._unreadable) failed++; else readable++; }
     else if (block.type === 'document') { if (docBlocks.length < 2) docBlocks.push(block); readable++; }
@@ -18081,7 +18081,7 @@ async function _triageDetectSolNum(file) {
   let n = _triageSolFromString(file.name);
   if (n) return n;
   try {
-    const block = await _fileToContentBlock(file);
+    const block = await fileToContentBlockLocal(file);
     if (block && block.type === 'text' && block.text) {
       const head = block.text.slice(0, 3000);
       n = _triageSolFromLabel(head) || _triageSolFromString(head);
@@ -18101,7 +18101,7 @@ function _triageZoneForNumber(num) {
 async function triageAutoSort(files) {
   if (!files || !files.length) return;
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
-  if (typeof showStatus === 'function') showStatus('info', 'Sorting opportunities', 'Grouping ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' by solicitation\u2026', true);
+  if (typeof showStatus === 'function') showStatus('info', 'Sorting opportunities', 'Reading ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' and grouping by solicitation\u2026 (large batches take a moment)', true);
   if (typeof setProgress === 'function') setProgress(15);
   let groups = null;
   if (apiKey) { try { groups = await _triageGroupByAI(files, apiKey); } catch (e) { groups = null; } }
@@ -18250,14 +18250,31 @@ async function triageScreenList() {
 }
 
 async function _triageGroupByAI(files, apiKey) {
-  const names = files.map((f, i) => (i + 1) + '. ' + f.name);
+  // Read a snippet of each file first so grouping can use the solicitation number INSIDE the
+  // document, not just the filename. fileToContentBlockLocal caches on the File object, so the
+  // Screen step reuses this work instead of re-reading everything.
+  const entries = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    let snip = '';
+    try {
+      const block = await fileToContentBlockLocal(f);
+      if (block && block.type === 'text' && block.text && !block._unreadable) {
+        snip = block.text.replace(/^\[File:[^\]]*\]/, '').replace(/\s+/g, ' ').trim().slice(0, 600);
+      }
+    } catch (e) {}
+    if (typeof setProgress === 'function') setProgress(15 + Math.round((i / Math.max(1, files.length)) * 60));
+    entries.push((i + 1) + '. FILENAME: ' + f.name + (snip ? ('\n   FIRST-PAGE TEXT: ' + snip) : '  (no readable text)'));
+  }
   const promptText =
-    'These are filenames from a bulk download of U.S. Government solicitation documents. Group them by OPPORTUNITY \u2014 files that belong to the same solicitation (they share a solicitation / RFQ / RFP / notice number, or are clearly the same procurement). '
-    + 'Ignore trailing timestamps in the names (e.g. ".1785967638237") and copy markers like "(1)". Solicitation numbers vary widely by agency (e.g. N00189-25-R-0001, 47QRAA25R0001, 36C10X26Q0225, 140D0426Q0645, 70Z02326QDCO00001, NB204000-26-01138) \u2014 use your judgment. '
-    + 'Respond with ONLY a JSON array (no prose, no markdown, no code fences). Each element: {"label": "<the solicitation/RFQ number if you can identify one, otherwise a short 2-4 word name for the opportunity>", "files": ["<exact filename>", ...]}. '
-    + 'Put files you cannot confidently assign to any opportunity in ONE group with "label":"Unsorted". Every filename must appear in exactly ONE group. Use the EXACT filename strings as given.\n\n'
-    + 'FILENAMES:\n' + names.join('\n');
-  const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 4000, messages: [{ role: 'user', content: promptText }] };
+    'These are files from a bulk download of U.S. Government solicitations, to be grouped by OPPORTUNITY so each opportunity can be screened. '
+    + 'Each file below has a FILENAME and, when readable, a FIRST-PAGE TEXT snippet. Two files belong to the SAME opportunity when they share a solicitation / RFQ / RFP / notice number (check BOTH the filename AND the text \u2014 the number is often ONLY inside the document), or are unmistakably the same procurement (same agency, program, and title). '
+    + 'Ignore trailing timestamps in filenames like ".1785767112632" and copy markers like "(1)". '
+    + 'Create a labeled group for EVERY distinct opportunity, INCLUDING single-file ones \u2014 do NOT lump unrelated files together, and do NOT drop a file just because it has no number in its name. Label each group with the solicitation number when you can find one (in the text or the filename); otherwise a short 3-6 word name taken from the document title or agency. '
+    + 'Use the label "Unsorted" ONLY for a file you genuinely cannot tie to any opportunity \u2014 aim to leave Unsorted empty. '
+    + 'Respond with ONLY a JSON array, no prose or markdown or code fences: [{"label":"...","files":["<exact filename>", ...]}, ...]. Every filename must appear in exactly ONE group, using the EXACT filename strings given.\n\n'
+    + 'FILES:\n' + entries.join('\n');
+  const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 6000, messages: [{ role: 'user', content: promptText }] };
   const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', mode: 'cors', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(payload) });
   if (!resp.ok) throw new Error('group ' + resp.status);
   const data = await resp.json();
