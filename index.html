@@ -3271,7 +3271,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '241';
+const APP_VERSION = '242';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -4377,7 +4377,7 @@ function renderMsState() {
           .filter(function (v) { return v; });
         if (_bnaVals.length > 0 && typeof loadBnaSPFiles === 'function') {
           window._bnaSpAutoLoadDone = true;
-          setTimeout(function () { try { loadBnaSPFiles(); } catch (e) {} }, 900);
+          setTimeout(function () { try { loadBnaSPFiles(true); } catch (e) {} }, 900);
         }
       } catch (e) {}
     }
@@ -7019,16 +7019,24 @@ function spUrlToGraphPath(spUrl) {
 // Graph / SharePoint tokens through this one function. Pass scopes to request incremental
 // consent (e.g. write scopes for list provisioning in a later phase); defaults to the shared
 // SharePoint scopes.
-async function getGraphToken(scopes) {
+async function getGraphToken(scopes, interactive) {
   if (!msalClient || !msAccount) throw new Error('Not signed in to Microsoft.');
   const sc = scopes || SP_SCOPES;
-  const resp = await msalClient.acquireTokenSilent({ scopes: sc, account: msAccount })
-    .catch(() => msalClient.acquireTokenPopup({ scopes: sc, account: msAccount }));
-  return resp.accessToken;
+  try {
+    const resp = await msalClient.acquireTokenSilent({ scopes: sc, account: msAccount });
+    return resp.accessToken;
+  } catch (e) {
+    // Only open an interactive popup from a real user gesture (a click). Browsers block popups that
+    // aren't gesture-triggered, so auto-reconnect on page load must stay silent  otherwise a lapsed
+    // token throws "popup_window_error" on refresh. Callers pass interactive:false for the auto path.
+    if (interactive === false) throw e;
+    const resp = await msalClient.acquireTokenPopup({ scopes: sc, account: msAccount });
+    return resp.accessToken;
+  }
 }
 
-async function getSpAccessToken() {
-  return getGraphToken(SP_SCOPES);
+async function getSpAccessToken(interactive) {
+  return getGraphToken(SP_SCOPES, interactive);
 }
 
 // ─── Unified auth surface ───────────────────────────────────────────────────
@@ -7236,7 +7244,7 @@ async function loadSharePointFiles(auto) {
   showStatus('info', 'Loading SharePoint files...', `Connecting to folder(s)...`, true);
 
   try {
-    const token = await getSpAccessToken();
+    const token = await getSpAccessToken(!auto);
     const loadedContent   = [];  // company content files — count toward tokens
     const loadedTemplates = [];  // proposal templates — zero tokens
     const errors = [];
@@ -7417,8 +7425,8 @@ async function loadSharePointFiles(auto) {
     showStatus('success', 'SharePoint loaded', parts.join(' · ') + ' ready.');
 
   } catch(e) {
-    showStatus('error', 'SharePoint load failed', e.message);
-    console.error(e);
+    if (auto) { console.warn('SharePoint auto-load skipped (session needs interactive sign-in):', e && e.message); }
+    else { showStatus('error', 'SharePoint load failed', e.message); console.error(e); }
   } finally {
     btn.disabled = false;
     document.getElementById('spLoadIcon').textContent = '🔗';
@@ -18471,7 +18479,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // BNA button update — defined below after weight system is initialized
 
-async function loadBnaSPFiles() {
+async function loadBnaSPFiles(auto) {
   const ppUrl      = document.getElementById('bnaSPPastPerf')?.value.trim();
   const resumeUrl  = document.getElementById('bnaSPResumes')?.value.trim();
   const status     = document.getElementById('bnaSPStatus');
@@ -18492,7 +18500,7 @@ async function loadBnaSPFiles() {
   if (status) { status.style.display = 'block'; status.style.color = 'var(--muted)'; status.textContent = 'Connecting to SharePoint…'; }
 
   try {
-    const token = await getSpAccessToken();
+    const token = await getSpAccessToken(!auto);
     let loaded = 0;
     for (const url of [ppUrl, resumeUrl].filter(Boolean)) {
       if (status) status.textContent = `Loading: ${url.substring(0, 55)}…`;
@@ -18514,7 +18522,8 @@ async function loadBnaSPFiles() {
     }
     updateBnaBtn();
   } catch(e) {
-    if (status) { status.style.color = 'var(--error)'; status.textContent = `Failed: ${e.message}`; }
+    if (auto) { console.warn('BNA SharePoint auto-load skipped (session needs interactive sign-in):', e && e.message); }
+    else if (status) { status.style.color = 'var(--error)'; status.textContent = `Failed: ${e.message}`; }
   } finally {
     btn.disabled = false;
     btn.textContent = '🔗 Load from SharePoint';
