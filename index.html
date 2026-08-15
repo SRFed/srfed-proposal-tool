@@ -3271,7 +3271,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '243';
+const APP_VERSION = '244';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -18284,7 +18284,7 @@ function _triageListRowHtml(r, i) {
     +   (r.rationale ? ('<div style="font-size:12px;line-height:1.45;margin-bottom:8px"><span style="color:var(--muted)">Why:</span> ' + escHtml(r.rationale) + '</div>') : '')
     +   '<div style="display:flex;gap:8px;flex-wrap:wrap">'
     +     (hasUrl ? ('<a href="' + escHtml(r.url) + '" target="_blank" rel="noopener" style="padding:5px 11px;font-size:11.5px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:6px;text-decoration:none">Open \u2197</a>') : '')
-    +     '<button onclick="triageListToZone(' + i + ')" style="padding:5px 11px;font-size:11.5px;font-weight:700;background:var(--fam-decide,#2aa79b);color:#fff;border:none;border-radius:6px;cursor:pointer">Send to file triage \u2192</button>'
+    +     '<button onclick="triageListToZone(' + i + ')" style="padding:5px 11px;font-size:11.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">Send to file triage \u2192</button>'
     +   '</div>'
     + '</div>'
     + '</div>';
