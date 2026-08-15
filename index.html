@@ -3271,7 +3271,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '242';
+const APP_VERSION = '243';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -7022,15 +7022,20 @@ function spUrlToGraphPath(spUrl) {
 async function getGraphToken(scopes, interactive) {
   if (!msalClient || !msAccount) throw new Error('Not signed in to Microsoft.');
   const sc = scopes || SP_SCOPES;
+  const silent = function () { return msalClient.acquireTokenSilent({ scopes: sc, account: msAccount }); };
   try {
-    const resp = await msalClient.acquireTokenSilent({ scopes: sc, account: msAccount });
+    let resp;
+    if (interactive === false) {
+      // Silent-only (auto-reconnect on page load): never open a popup without a user gesture, and don't let
+      // a stuck hidden-iframe token renewal hang  time it out so the caller can prompt the user to click Load.
+      resp = await Promise.race([ silent(), new Promise(function (_, rej) { setTimeout(function () { rej(new Error('Silent SharePoint sign-in timed out')); }, 12000); }) ]);
+    } else {
+      resp = await silent();
+    }
     return resp.accessToken;
   } catch (e) {
-    // Only open an interactive popup from a real user gesture (a click). Browsers block popups that
-    // aren't gesture-triggered, so auto-reconnect on page load must stay silent  otherwise a lapsed
-    // token throws "popup_window_error" on refresh. Callers pass interactive:false for the auto path.
-    if (interactive === false) throw e;
-    const resp = await msalClient.acquireTokenPopup({ scopes: sc, account: msAccount });
+    if (interactive === false) throw e;           // auto path: caller shows a "click Load" prompt
+    const resp = await msalClient.acquireTokenPopup({ scopes: sc, account: msAccount });   // real click: interactive popup is allowed
     return resp.accessToken;
   }
 }
@@ -7425,7 +7430,7 @@ async function loadSharePointFiles(auto) {
     showStatus('success', 'SharePoint loaded', parts.join(' · ') + ' ready.');
 
   } catch(e) {
-    if (auto) { console.warn('SharePoint auto-load skipped (session needs interactive sign-in):', e && e.message); }
+    if (auto) { showStatus('warn', 'SharePoint not loaded', 'Could not load your SharePoint folders automatically. Click "Reload Files from SharePoint" to load them.', false); console.warn('SharePoint auto-load needs interactive sign-in:', e && e.message); }
     else { showStatus('error', 'SharePoint load failed', e.message); console.error(e); }
   } finally {
     btn.disabled = false;
@@ -18522,7 +18527,7 @@ async function loadBnaSPFiles(auto) {
     }
     updateBnaBtn();
   } catch(e) {
-    if (auto) { console.warn('BNA SharePoint auto-load skipped (session needs interactive sign-in):', e && e.message); }
+    if (auto) { if (status) { status.style.display = 'block'; status.style.color = 'var(--muted)'; status.textContent = 'Not loaded automatically - click "Load from SharePoint".'; } console.warn('BNA SharePoint auto-load needs interactive sign-in:', e && e.message); }
     else if (status) { status.style.color = 'var(--error)'; status.textContent = `Failed: ${e.message}`; }
   } finally {
     btn.disabled = false;
