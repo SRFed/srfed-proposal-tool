@@ -1830,7 +1830,7 @@
 <!-- ══════════════════════════ BID/NO-BID TAB ════════════════════════════ -->
 <div class="tab-pane" id="pane-triage">
   <div class="card" style="margin-bottom:24px">
-    <div class="card-header"><span class="icon">🗂️</span> Opportunity Triage</div>
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><span><span class="icon">🗂️</span> Opportunity Triage</span><button onclick="triageClearAll()" title="Remove all opportunities and pasted-list results from this tab. Does not affect the Bid/No-Bid tab." style="padding:5px 12px;font-size:12px;font-weight:700;background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.55);border-radius:6px;cursor:pointer;white-space:nowrap">Clear Triage</button></div>
     <div class="card-body">
       <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Screen a whole batch of opportunities fast. Drop a pile of downloaded solicitation files to sort them into opportunities by solicitation number, then run <strong>Screen all opportunities</strong> for a quick <strong>Pursue / Maybe / Pass</strong> read on each and send the promising ones into a full analysis with <strong>Deep-dive in Bid/No-Bid</strong>. A quick screen — verify against the full solicitation before bidding.</p>
       <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:18px">
@@ -1838,7 +1838,7 @@
         <button id="triageModeList" onclick="triageSetMode('list')" style="padding:8px 15px;font-size:12.5px;font-weight:700;border:none;border-left:1px solid var(--border);cursor:pointer;background:#fff;color:var(--muted)">📋 From a list</button>
       </div>
       <div id="triageFilesView">
-        <div class="drop-zone" id="triageMassDz" style="min-height:88px;margin-bottom:16px;padding:20px;border-style:dashed;text-align:center">
+        <div class="drop-zone" id="triageMassDz" style="min-height:88px;margin-bottom:16px;padding:20px;border-style:dashed;text-align:center;display:flex;flex-direction:column;justify-content:center;align-items:center">
           <input type="file" id="triageMassFi" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.txt" style="display:none" />
           <div class="dz-title" style="font-size:14px;font-weight:700;color:var(--blue)">⤓ Drop a pile of solicitations here to sort into opportunities for triage</div>
           <div class="dz-sub" style="font-size:12px;color:var(--muted)">Files are grouped by the solicitation number in each. Anything that can’t be matched lands in an Unsorted zone to sort manually. Or click to browse.</div>
@@ -3271,7 +3271,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '236';
+const APP_VERSION = '241';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -17672,7 +17672,7 @@ function _oppClearScoped(scope, btn) {
   const spec = OPP_CLEAR_SCOPES[scope];
   if (!spec) return;
   if (!_oppHasData()) { showStatus('info', 'Nothing to clear', 'This opportunity workspace is already empty.'); return; }
-  if (!confirm('Clear: ' + spec.label + '?\n\nThe page reloads, so any loaded documents are dropped \u2014 browsers cannot save uploaded files.\n\nYour current work is backed up first: use \u201cRestore previous\u201d on any tab to bring it back.')) return;
+  if (!confirm('Clear: ' + spec.label + '?\n\nThe page reloads, so loaded documents on THIS opportunity are dropped \u2014 browsers cannot save uploaded files. (Your Triage tab is kept.)\n\nYour current work is backed up first: use \u201cRestore previous\u201d on any tab to bring it back.')) return;
   try {
     if (typeof _pricingWrite === 'function') _pricingWrite();
     if (typeof saveSession === 'function') saveSession();
@@ -17680,17 +17680,16 @@ function _oppClearScoped(scope, btn) {
                      session: localStorage.getItem('srfed_session'), analysis: localStorage.getItem(_ANA_KEY) };
     localStorage.setItem(OPP_BACKUP_KEY, JSON.stringify(backup));
   } catch (e) {
-    // Backup failed (e.g. storage full) -- abort so we never clear without a saved copy.
     showStatus('error', 'Could not clear', 'Saving the current opportunity failed, so nothing was cleared \u2014 your work is untouched.');
     return;
   }
-  _oppReloading = true;                       // no unload flush may write the old model back
+  _oppReloading = true;
   try { if (typeof _pricingSaveTimer !== 'undefined' && _pricingSaveTimer) clearTimeout(_pricingSaveTimer); } catch (e) {}
   try {
     spec.keys.forEach(function (k) { localStorage.removeItem(k); });
     sessionStorage.setItem('opp_flash', 'cleared:' + scope);
   } catch (e) {}
-  location.reload();
+  _triageStashForReload().then(function () { location.reload(); }, function () { location.reload(); });
 }
 
 // Everything, including Settings and API keys. No backup is taken, because a backup that
@@ -17847,6 +17846,69 @@ function onboardFocusKey() {
 let triageZones = [];
 let _triageSeq = 0;
 
+function _triageIdb() {
+  return new Promise(function (resolve, reject) {
+    var req;
+    try { req = indexedDB.open('srfedTriage', 1); } catch (e) { reject(e); return; }
+    req.onupgradeneeded = function () { try { req.result.createObjectStore('zones'); } catch (e) {} };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+// Stash the Triage zones (with their File objects  which localStorage can't hold, but IndexedDB can)
+// just before the workspace "Clear" reload, so Triage survives it. Best-effort: any failure resolves
+// quietly and the reload still happens  Triage simply isn't preserved (the pre-existing behavior).
+function _triageStashForReload() {
+  return new Promise(function (resolve) {
+    try {
+      if (typeof triageZones === 'undefined' || !triageZones.some(function (z) { return z.files && z.files.length; })) { resolve(); return; }
+      var zonesP = triageZones.map(function (z) {
+        var filesP = (z.files || []).map(function (f) {
+          return f.arrayBuffer().then(function (buf) { return { name: f.name, type: f.type || '', lastModified: f.lastModified || Date.now(), buf: buf }; });
+        });
+        return Promise.all(filesP).then(function (files) { return { id: z.id, label: z.label, verdict: z.verdict || null, sentToBna: !!z.sentToBna, files: files }; });
+      });
+      Promise.all(zonesP).then(function (zones) {
+        _triageIdb().then(function (db) {
+          var tx = db.transaction('zones', 'readwrite');
+          tx.objectStore('zones').put({ zones: zones, seq: (typeof _triageSeq !== 'undefined' ? _triageSeq : 0) }, 'current');
+          tx.oncomplete = function () { try { db.close(); } catch (e) {} try { sessionStorage.setItem('triage_restore', '1'); } catch (e) {} resolve(); };
+          tx.onerror = function () { resolve(); };
+          tx.onabort = function () { resolve(); };
+        }, function () { resolve(); });
+      }, function () { resolve(); });
+    } catch (e) { resolve(); }
+  });
+}
+// After the reload, if we stashed Triage, put it back. Runs after triageInit's default zones; the async
+// IndexedDB read naturally resolves after that sync setup, so the restored zones win.
+function _triageRestoreAfterReload() {
+  var flag; try { flag = sessionStorage.getItem('triage_restore'); } catch (e) { flag = null; }
+  if (!flag) return;
+  try { sessionStorage.removeItem('triage_restore'); } catch (e) {}
+  _triageIdb().then(function (db) {
+    var tx = db.transaction('zones', 'readonly');
+    var rq = tx.objectStore('zones').get('current');
+    rq.onsuccess = function () {
+      var rec = rq.result;
+      try { var t2 = db.transaction('zones', 'readwrite'); t2.objectStore('zones').delete('current'); t2.oncomplete = function () { try { db.close(); } catch (e) {} }; } catch (e) { try { db.close(); } catch (e2) {} }
+      if (rec && rec.zones && rec.zones.length) {
+        try {
+          triageZones = rec.zones.map(function (z) {
+            var files = (z.files || []).map(function (fd) {
+              try { return new File([fd.buf], fd.name, { type: fd.type || '', lastModified: fd.lastModified || Date.now() }); }
+              catch (e) { var b = new Blob([fd.buf], { type: fd.type || '' }); try { b.name = fd.name; } catch (e2) {} return b; }
+            });
+            return { id: z.id, label: z.label, files: files, verdict: z.verdict || null, sentToBna: !!z.sentToBna };
+          });
+          if (typeof _triageSeq !== 'undefined') _triageSeq = rec.seq || triageZones.reduce(function (m, z) { return Math.max(m, z.id || 0); }, 0);
+          if (typeof triageRenderZones === 'function') triageRenderZones();
+        } catch (e) {}
+      }
+    };
+    rq.onerror = function () { try { db.close(); } catch (e) {} };
+  }, function () {});
+}
 function triageInit() {
   _triageWireMass();
   if (triageZones.length) { triageRenderZones(); return; }
@@ -17861,9 +17923,20 @@ function triageAddZone(silent) {
 function triageRemoveZone(id) { triageZones = triageZones.filter(z => z.id !== id); triageRenderZones(); }
 function triageSetLabel(id, val) { const z = triageZones.find(x => x.id === id); if (z) z.label = String(val || '').trim() || ('Opportunity ' + id); }
 
+function _triageBarColor(z) {
+  if (z.label === 'Unsorted') return '#d97706';
+  if (z.verdict && !z.verdict.error) {
+    if (z.verdict.verdict === 'Pursue') return '#16a34a';
+    if (z.verdict.verdict === 'Maybe') return '#d97706';
+    if (z.verdict.verdict === 'Pass') return '#dc2626';
+  }
+  return 'var(--fam-decide,#2aa79b)';
+}
 function _triageZoneHtml(z) {
   const isUn = (z.label === 'Unsorted');
-  const bar = isUn ? '#d97706' : 'var(--fam-decide,#2aa79b)';
+  const bar = _triageBarColor(z);
+  const sent = !!z.sentToBna;
+  const sentBadge = sent ? '<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700;background:#dcfce7;color:#166534;white-space:nowrap">\u2713 Sent to Bid/No-Bid</span>' : '';
   const screenBtn = '<button onclick="triageScreenZone(' + z.id + ')" title="Screen just this opportunity" style="padding:6px 12px;font-size:12px;font-weight:600;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:6px;cursor:pointer;white-space:nowrap">Screen</button>';
   const xBtn = '<button onclick="triageRemoveZone(' + z.id + ')" title="Remove this opportunity" style="padding:6px 10px;font-size:13px;font-weight:700;background:#fff;color:var(--muted);border:1px solid var(--border);border-radius:6px;cursor:pointer">\u2715</button>';
   let head;
@@ -17874,11 +17947,11 @@ function _triageZoneHtml(z) {
   } else {
     head = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
       + '<input type="text" value="' + escHtml(z.label) + '" onchange="triageSetLabel(' + z.id + ',this.value)" title="Rename this opportunity" style="font-weight:700;font-size:14px;color:var(--blue);border:1px solid var(--border);border-radius:6px;padding:5px 9px;flex:1;min-width:140px;font-family:inherit" />'
-      + screenBtn + xBtn + '</div>';
+      + sentBadge + screenBtn + xBtn + '</div>';
   }
-  return '<div class="card" id="triageCard-' + z.id + '" style="margin-bottom:16px;border-left:4px solid ' + bar + ';padding:16px">'
+  return '<div class="card" id="triageCard-' + z.id + '" style="margin-bottom:16px;border-left:4px solid ' + bar + ';padding:16px' + (sent ? ';background:#f1f5f9' : '') + '">'
     + head
-    + '<div class="drop-zone" id="triageDz-' + z.id + '" style="min-height:70px;margin-bottom:8px;padding:12px;text-align:center">'
+    + '<div class="drop-zone" id="triageDz-' + z.id + '" style="min-height:70px;margin-bottom:8px;padding:12px;text-align:center;display:flex;flex-direction:column;justify-content:center;align-items:center">'
     +   '<input type="file" id="triageFi-' + z.id + '" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.txt" style="display:none" />'
     +   '<div class="dz-sub" style="font-size:11.5px;color:var(--muted)">Drop this opportunity\u2019s files, or click to browse</div>'
     + '</div>'
@@ -17946,15 +18019,18 @@ function _triageVerdictHtml(z) {
     +   _triageField('Value', v.value) + _triageField('Place of perf.', v.place_of_performance)
     + '</div>'
     + (v.rationale ? ('<div style="font-size:12.5px;line-height:1.5;color:var(--text);margin-bottom:10px"><span style="color:var(--muted)">Why:</span> ' + escHtml(v.rationale) + '</div>') : '')
-    + '<button onclick="triageDeepDive(' + z.id + ')" style="padding:7px 14px;font-size:12.5px;font-weight:700;background:var(--fam-decide,#2aa79b);color:#fff;border:none;border-radius:6px;cursor:pointer">Deep-dive in Bid/No-Bid \u2192</button>'
+    + '<button onclick="triageDeepDive(' + z.id + ')" style="padding:7px 14px;font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">Deep-dive in Bid/No-Bid \u2192</button>'
     + '<div style="font-size:10.5px;color:var(--muted);margin-top:8px">Quick screen \u2014 verify against the full solicitation before bidding.</div>'
     + '</div>';
 }
 function _triageRenderVerdict(z) {
   const el = document.getElementById('triageVerdict-' + z.id);
-  if (!el) return;
-  if (z.screening) { el.innerHTML = '<div style="font-size:12.5px;color:var(--muted)"><span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:7px"></span>Screening\u2026</div>'; return; }
-  el.innerHTML = z.verdict ? _triageVerdictHtml(z) : '';
+  if (el) {
+    if (z.screening) { el.innerHTML = '<div style="font-size:12.5px;color:var(--muted)"><span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:7px"></span>Screening\u2026</div>'; }
+    else { el.innerHTML = z.verdict ? _triageVerdictHtml(z) : ''; }
+  }
+  const card = document.getElementById('triageCard-' + z.id);
+  if (card) card.style.borderLeftColor = _triageBarColor(z);
 }
 async function _triageExtract(files) {
   let text = '';
@@ -18036,10 +18112,16 @@ async function triageScreenAll() {
 function triageDeepDive(id) {
   const z = triageZones.find(x => x.id === id);
   if (!z || !z.files.length) return;
-  if (typeof bnaFiles !== 'undefined' && bnaFiles.length && !confirm('This replaces the files currently on the Bid/No-Bid tab with \u201c' + z.label + '\u201d. Continue?')) return;
+  const _bnaTxt = document.getElementById('bnaTextInput');
+  const _hadText = !!(_bnaTxt && _bnaTxt.value.trim().length);
+  const _hadFiles = (typeof bnaFiles !== 'undefined' && bnaFiles.length);
+  if ((_hadFiles || _hadText) && !confirm('This replaces the files and pasted text currently on the Bid/No-Bid tab with \u201c' + z.label + '\u201d. Continue?')) return;
   if (typeof bnaFiles !== 'undefined') bnaFiles.length = 0;
+  if (_bnaTxt) _bnaTxt.value = '';
   if (typeof addFilesToArray === 'function' && typeof bnaFiles !== 'undefined') addFilesToArray(z.files.slice(), bnaFiles, 'fileListBNA');
   if (typeof updateBnaBtn === 'function') updateBnaBtn();
+  z.sentToBna = true;
+  triageRenderZones();
   if (typeof switchTab === 'function') switchTab('bidnobid');
 }
 
@@ -18157,6 +18239,20 @@ function triageClearList() {
   const res = document.getElementById('triageListResults'); if (res) res.innerHTML = '';
   const st = document.getElementById('triageListStatus'); if (st) st.textContent = '';
 }
+function triageClearAll() {
+  const hasFiles = triageZones.some(z => z.files.length);
+  const inp = document.getElementById('triageListInput');
+  const hasList = (_triageListRows && _triageListRows.length) || (inp && inp.value.trim());
+  if (!hasFiles && !hasList) { if (typeof showStatus === 'function') showStatus('info', 'Nothing to clear', 'The Triage tab is already empty.', false); return; }
+  if (!confirm('Clear the Triage tab?\n\nThis removes all opportunities and any pasted-list results, and it can\u2019t be undone. Your Bid/No-Bid work is not affected.')) return;
+  triageZones = [];
+  _triageSeq = 0;
+  for (let k = 0; k < 3; k++) triageAddZone(true);
+  triageRenderZones();
+  triageClearList();
+  triageSetMode('files');
+  if (typeof showStatus === 'function') showStatus('success', 'Triage cleared', 'Started fresh \u2014 drop a new pile of solicitations to sort.', false);
+}
 function _triageListRowHtml(r, i) {
   const parts = [];
   if (r.agency && r.agency !== 'not stated') parts.push(escHtml(r.agency));
@@ -18204,15 +18300,16 @@ function triageListToZone(i) {
 async function triageScreenList() {
   const inp = document.getElementById('triageListInput');
   const raw = inp ? String(inp.value || '').trim() : '';
-  const st = document.getElementById('triageListStatus');
   const res = document.getElementById('triageListResults');
-  const setStatus = (t) => { if (st) st.textContent = t; };
-  if (!raw) { setStatus('Paste a list first.'); if (inp) inp.focus(); return; }
+  const status = (typeof showStatus === 'function') ? showStatus : function () {};
+  if (!raw) { status('warn', 'Nothing to screen', 'Paste a list into the box first.', false); if (inp) inp.focus(); return; }
   const apiKey = (typeof getApiKey === 'function') && getApiKey();
-  if (!apiKey) { setStatus('Connect your Anthropic API key (in Settings) to screen a list.'); return; }
+  if (!apiKey) { status('warn', 'No API key', 'Connect your Anthropic API key in Settings to screen a list.', false); return; }
   const btn = document.getElementById('triageListBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Screening\u2026'; }
-  setStatus('Reading the list\u2026'); if (res) res.innerHTML = '';
+  status('info', 'Screening the list', 'Reading and scoring the pasted opportunities\u2026', true);
+  if (typeof setProgress === 'function') setProgress(25);
+  if (res) res.innerHTML = '';
   try {
     const capText = (typeof CLIENT_CONFIG !== 'undefined' && CLIENT_CONFIG.capabilityStatementText) ? CLIENT_CONFIG.capabilityStatementText : 'No company capability profile is configured; assess general merits and note that company fit could not be personalized.';
     const today = new Date().toDateString();
@@ -18229,21 +18326,23 @@ async function triageScreenList() {
       + 'PASTED SHORTLIST:\n' + raw.slice(0, 30000);
     const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 8000, messages: [{ role: 'user', content: promptText }] };
     const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', mode: 'cors', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(payload) });
-    if (!resp.ok) { const et = await resp.text(); setStatus('Request failed (' + resp.status + '): ' + et.slice(0, 140)); return; }
+    if (typeof setProgress === 'function') setProgress(65);
+    if (!resp.ok) { const et = await resp.text(); status('error', 'Screening failed', 'Request failed (' + resp.status + '): ' + et.slice(0, 140), false); return; }
     const data = await resp.json();
-    if (data.error) { setStatus('Error: ' + data.error.message); return; }
+    if (data.error) { status('error', 'Screening failed', data.error.message, false); return; }
     let txt = (data.content || []).map(b => b.text || '').join('').trim();
     txt = txt.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
     const a = txt.indexOf('['), b = txt.lastIndexOf(']');
     let rows = null;
     try { rows = JSON.parse(a >= 0 && b >= 0 ? txt.slice(a, b + 1) : txt); } catch (e) { rows = null; }
-    if (!Array.isArray(rows) || !rows.length) { setStatus('Couldn\u2019t find any opportunities in that text \u2014 paste the list rows themselves, not just a subject line.'); return; }
+    if (!Array.isArray(rows) || !rows.length) { status('warn', 'No opportunities found', 'Couldn\u2019t find any opportunities in that text \u2014 paste the list rows themselves, not just a subject line.', false); return; }
     _triageListRows = rows;
     _triageRenderList();
+    if (typeof setProgress === 'function') setProgress(100);
     const pu = rows.filter(r => r.verdict === 'Pursue').length, mb = rows.filter(r => r.verdict === 'Maybe').length, pa = rows.filter(r => r.verdict === 'Pass').length;
-    setStatus('Found ' + rows.length + ' \u2014 ' + pu + ' Pursue, ' + mb + ' Maybe, ' + pa + ' Pass. Sorted best-first; verify before bidding.');
+    status('success', 'List screened', 'Found ' + rows.length + ' \u2014 ' + pu + ' Pursue, ' + mb + ' Maybe, ' + pa + ' Pass. Sorted best-first; verify before bidding.', false);
   } catch (e) {
-    setStatus('Something went wrong: ' + (e && e.message ? e.message : e));
+    status('error', 'Screening failed', (e && e.message ? e.message : String(e)), false);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Screen the list'; }
   }
@@ -18268,10 +18367,10 @@ async function _triageGroupByAI(files, apiKey) {
   }
   const promptText =
     'These are files from a bulk download of U.S. Government solicitations, to be grouped by OPPORTUNITY so each opportunity can be screened. '
-    + 'Each file below has a FILENAME and, when readable, a FIRST-PAGE TEXT snippet. Two files belong to the SAME opportunity when they share a solicitation / RFQ / RFP / notice number (check BOTH the filename AND the text \u2014 the number is often ONLY inside the document), or are unmistakably the same procurement (same agency, program, and title). '
+    + 'Each file below has a FILENAME and, when readable, a FIRST-PAGE TEXT snippet. GROUP TWO FILES TOGETHER ONLY WHEN YOU ARE CONFIDENT THEY ARE THE SAME PROCUREMENT. The decisive signal is a shared solicitation / RFQ / RFP / notice / reference number \u2014 check BOTH the filename AND the text, since the number is often ONLY inside the document: if two files carry the SAME number they are the same opportunity, and if they carry DIFFERENT numbers they are DIFFERENT opportunities even when the agency or work looks similar. When a file shows no number, corroborate using MULTIPLE signals together \u2014 agency AND sub-agency/contracting office AND the requirement title/program AND the response/close date AND the KO/COR name \u2014 and match a file to an existing group only when SEVERAL of these agree; do NOT merge on a single weak signal alone (a shared agency, NAICS, or set-aside is NOT enough, since one agency runs many unrelated solicitations). When the signals are ambiguous or conflict, keep the files SEPARATE (or leave a truly unattributable file in "Unsorted") rather than guessing \u2014 a wrong merge that hides two different opportunities in one box is worse than an extra group or an Unsorted file the user can drag, because the user visually verifies these groups. '
     + 'Ignore trailing timestamps in filenames like ".1785767112632" and copy markers like "(1)". '
     + 'Create a labeled group for EVERY distinct opportunity, INCLUDING single-file ones \u2014 do NOT lump unrelated files together, and do NOT drop a file just because it has no number in its name. Label each group with the solicitation number when you can find one (in the text or the filename); otherwise a short 3-6 word name taken from the document title or agency. '
-    + 'Use the label "Unsorted" ONLY for a file you genuinely cannot tie to any opportunity \u2014 aim to leave Unsorted empty. '
+    + 'Use the label "Unsorted" ONLY for a file you genuinely cannot tie to any opportunity \u2014 aim to leave Unsorted empty, but prefer Unsorted over a doubtful merge. '
     + 'Respond with ONLY a JSON array, no prose or markdown or code fences: [{"label":"...","files":["<exact filename>", ...]}, ...]. Every filename must appear in exactly ONE group, using the EXACT filename strings given.\n\n'
     + 'FILES:\n' + entries.join('\n');
   const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 6000, messages: [{ role: 'user', content: promptText }] };
@@ -18316,6 +18415,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initDropZone('dropZoneBNA',        'fileInputBNA',        bnaFiles,        'fileListBNA');
   initDropZone('dropZoneBNADocs',    'fileInputBNADocs',    bnaCompanyFiles, 'fileListBNADocs');
   if (typeof triageInit === 'function') triageInit();
+  if (typeof _triageRestoreAfterReload === 'function') _triageRestoreAfterReload();
   initBnaWeights();
   renderWeightEditor(); // editor starts expanded — render immediately
   setupTabConnections();
@@ -21408,6 +21508,8 @@ async function runBnaCombined() {
   if (intelBody) intelBody.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px"><span class="spinner-dark" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span>Extracting opportunity details…</div>';
   // Put the Analyze button into a loading state for the WHOLE run (extraction + scoring),
   // not just the scoring phase — otherwise it looks idle while details are being extracted.
+  // Clear the PREVIOUS opportunity's scoring immediately so stale results don't linger while the new run works.
+  const _scoreBody = document.getElementById('bnaResults'); if (_scoreBody) _scoreBody.style.display = 'none';
   const _runBtn = document.getElementById('bnaRunBtn');
   const _runBtnHtml = _runBtn ? _runBtn.innerHTML : '';
   if (_runBtn) { _runBtn.disabled = true; _runBtn.innerHTML = '<span class="spinner-auto" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></span> Analyzing…'; }
@@ -22351,7 +22453,7 @@ async function extractOpportunityIntel(docContent, apiKey) {
     `AUTHORITATIVE USER INPUT: Part of the input may be free text the user typed themselves (shown under a "USER-PROVIDED CONTEXT" heading), not formal solicitation language. Treat anything the user typed as AUTHORITATIVE ground truth and map it into the matching fields even when the formal documents do not mention it. In particular: if the user names a contract vehicle (e.g. they wrote "GSA MAS", "SEWP", "OASIS+", "on our Schedule"), put it in contract_vehicle (normalize "GSA MAS" to "GSA MAS / Federal Supply Schedule"); map a stated source/portal to source, a stated set-aside to set_aside, a stated agency to the agency fields, and a stated dollar value to the value fields. A user-supplied fact OVERRIDES "Not stated in documents" \u2014 never report a field as not stated if the user provided it.\n` +
     `1. Use VERBATIM text from the document for all fields — do not paraphrase, expand, or infer the title or ID. Copy them exactly.\n` +
     `2. Break the federal customer into THREE separate fields, each WITH its standard abbreviation in parentheses: (a) department_agency = the top-level Cabinet Department or independent agency (e.g. "Department of Health and Human Services (HHS)", "Department of the Navy (DON)", "General Services Administration (GSA)", "National Aeronautics and Space Administration (NASA)"); (b) sub_agency = the operating division, bureau, or military command beneath it (e.g. "Administration for Children and Families (ACF)", "Naval Surface Warfare Center Dahlgren Division (NSWCDD)", "Federal Acquisition Service (FAS)") \u2014 use "" if there is none; (c) contracting_office = the specific buying/contracting office issuing this action (e.g. "Office of Administration (OA)") \u2014 use "" if not stated. Do NOT cram all three into one field. Example for ACF Office of Administration under HHS: department_agency "Department of Health and Human Services (HHS)", sub_agency "Administration for Children and Families (ACF)", contracting_office "Office of Administration (OA)". Common abbreviations: Army=DA, Navy=DON, Air Force=DAF, Marines=USMC, Space Force=USSF, Defense agencies=DoD, VA=VA, DHS=DHS, State=DoS, Justice=DOJ.\n` +
-    `3. For requirement_name: copy the EXACT title from the solicitation cover page — do not reword or expand it.\n` +
+    `3. For requirement_name: copy the EXACT title from the solicitation cover page — do not reword or expand it. For id_number: find the solicitation / RFQ / RFP / notice / reference number and copy it EXACTLY (keep dashes, letters, and leading zeros). Look on the cover page, the SF-1449 / SF-18 / SF-33 form block, the document header or footer, the SAM.gov notice ID, AND the USER-PROVIDED CONTEXT. Agency formats vary widely — e.g. N00189-25-R-0001, W912DY-25-R-0042, FA8501-25-R-0001, 47QRAA25R0001, 36C10X26Q0225, 91990026Q0072, 70Z02326QDCO00001, NB204000-26-01138. Use "Not stated in documents" only if there is genuinely no such number anywhere in the input.\n` +
     `4. If a field is not explicitly stated, use "Not stated in documents". Only use [Inferred] prefix when making a genuinely reasonable inference that is not directly stated.\n` +
     `5. For stage: classify into EXACTLY ONE controlled value from the notice/request type: "Sources Sought", "RFI", "Draft", "Pre-solicitation", "RFQ", or "RFP". Read the OVERALL action type from explicit language ("Request for Quotation" = RFQ, "Request for Proposal" = RFP, "Sources Sought", "Request for Information" = RFI, "Presolicitation" = Pre-solicitation, "Draft RFP/RFQ" = Draft). A draft PWS, draft SOW, or other draft ATTACHMENT is a document type, NOT a stage: never output "Draft PWS" and do NOT set stage to "Draft" merely because a draft attachment is present - if the action is an active RFQ or RFP that includes a draft PWS, the stage is RFQ or RFP. Use "Draft" ONLY when the solicitation ITSELF is explicitly released as a draft for industry comment. Output only one of the six values, or "Not stated in documents" if genuinely indeterminate.\n` +
     `6. For labor_categories, build the REALISTIC STAFFED TEAM you would actually price - NOT a menu of every title or skill mentioned. (a) If the solicitation gives a workload / level-of-effort / staffing table (see the WORKLOAD rule below), reproduce EXACTLY those categories and set loe_basis to "government". (b) Otherwise the labor is quoter-defined (you propose the team in a pricing model), so set loe_basis to "quoter": name each DISTINCT role and CONSOLIDATE overlapping skills under one qualified person. Expertise areas or SME domains (e.g. Records Management, Section 508, FOIA/FACA, Technical Writing, Content Management) are NOT separate labor categories when one senior person - often the PM/SME - would cover several; do NOT reify a list of required skills into one role per skill. Give the team you would actually staff to perform the scope: a small virtual A&AS / advisory / support effort is typically 2-5 people (e.g. a lead/PM plus 1-3 support analysts), not one role per mentioned domain. Assign EVERY role a base_year_fte (whole numbers preferred; fractional only for genuine part-time) and an est_loaded_rate = your realistic fully-loaded hourly rate for that role in USD (integer; e.g. senior PM/SME ~150-190, mid analyst ~95-130, junior/admin ~70-95) unless min_hourly_rate is stated. Sort by base_year_fte descending, then by name.\n` +
