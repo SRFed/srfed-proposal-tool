@@ -3271,7 +3271,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '245';
+const APP_VERSION = '247';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -17616,7 +17616,8 @@ function _oppBarHtml(bottom) {
           _oppMenuItem('docs',     '\uD83D\uDCC4 Loaded documents and drafts', 'Keeps your pricing model, win strategy and assumptions.') +
           _oppMenuItem('bna',      '\uD83C\uDFAF Bid/No-Bid analysis and win strategy', 'Also clears assumptions, win themes, discriminators and notes. Keeps the pricing model.') +
           _oppMenuItem('pricing',  '\uD83D\uDCB0 Pricing model', 'Also clears labor categories, tasks, hours, rates and periods. Keeps the win strategy.') +
-          _oppMenuItem('all',      '\uD83E\uDDF9 Everything for this opportunity', 'The whole workspace. Saved to Restore first.') +
+          _oppMenuItem('all',      '\uD83E\uDDF9 Everything for this opportunity', 'All opportunity tabs \u2014 documents, drafts, Bid/No-Bid, pricing. Keeps your Triage tab. Saved to Restore first.') +
+          _oppMenuItem('allplus',  '\uD83D\uDDC2\uFE0F Everything for this opportunity, plus the Triage tab', 'The whole workspace AND the Triage tab. Keeps Settings and API keys. Workspace saved to Restore first \u2014 the Triage tab is not restorable.') +
           '<div style="border-top:1px solid var(--border);margin:5px 2px"></div>' +
           _oppMenuItem('factory',  '\u26A0\uFE0F Factory reset', 'Also clears Settings, API keys and saved resume positions. CANNOT be restored.', true) +
           '<div style="font-size:10.5px;color:var(--muted);padding:5px 9px 3px;line-height:1.45">Every option reloads the page, so uploaded files are dropped either way \u2014 browsers cannot save them. The options differ in which <em>saved</em> work survives.</div>' +
@@ -17627,7 +17628,7 @@ function _oppBarHtml(bottom) {
   '</div>';
 }
 function injectOpportunityControls() {
-  ['bidnobid','partners','proposal','pricing','market','compliance','presentation','editor'].forEach(function (p) {
+  ['triage','bidnobid','partners','proposal','pricing','market','compliance','presentation','editor'].forEach(function (p) {
     var el = document.getElementById('pane-' + p);
     if (!el || el.dataset.oppInjected) return;
     el.dataset.oppInjected = '1';
@@ -17677,6 +17678,7 @@ const OPP_CLEAR_SCOPES = {
   bna:     { keys: ['srfed_session', _ANA_KEY],                 label: 'Bid/No-Bid analysis and win strategy' },
   pricing: { keys: [PRICING_KEY],                               label: 'Pricing model' },
   all:     { keys: [PRICING_KEY, 'srfed_session', _ANA_KEY],    label: 'Everything for this opportunity' },
+  allplus: { keys: [PRICING_KEY, 'srfed_session', _ANA_KEY],    label: 'Everything for this opportunity, plus the Triage tab' },
 };
 
 function _oppClearScoped(scope, btn) {
@@ -17684,8 +17686,10 @@ function _oppClearScoped(scope, btn) {
   if (scope === 'factory') return _oppFactoryReset();
   const spec = OPP_CLEAR_SCOPES[scope];
   if (!spec) return;
-  if (!_oppHasData()) { showStatus('info', 'Nothing to clear', 'This opportunity workspace is already empty.'); return; }
-  if (!confirm('Clear: ' + spec.label + '?\n\nThe page reloads, so loaded documents on THIS opportunity are dropped \u2014 browsers cannot save uploaded files. (Your Triage tab is kept.)\n\nYour current work is backed up first: use \u201cRestore previous\u201d on any tab to bring it back.')) return;
+  var _hasTriage = (typeof triageZones !== 'undefined') && triageZones.some(function (z) { return z.files && z.files.length; });
+  if (!_oppHasData() && !(scope === 'allplus' && _hasTriage)) { showStatus('info', 'Nothing to clear', 'This opportunity workspace is already empty.'); return; }
+  var _triageNote = (scope === 'allplus') ? ' This ALSO clears the Triage tab, which cannot be restored.' : ' (Your Triage tab is kept.)';
+  if (!confirm('Clear: ' + spec.label + '?\n\nThe page reloads, so loaded documents on THIS opportunity are dropped \u2014 browsers cannot save uploaded files.' + _triageNote + '\n\nYour current work is backed up first: use \u201cRestore previous\u201d on any tab to bring it back.')) return;
   try {
     if (typeof _pricingWrite === 'function') _pricingWrite();
     if (typeof saveSession === 'function') saveSession();
@@ -17702,7 +17706,12 @@ function _oppClearScoped(scope, btn) {
     spec.keys.forEach(function (k) { localStorage.removeItem(k); });
     sessionStorage.setItem('opp_flash', 'cleared:' + scope);
   } catch (e) {}
-  _triageStashForReload().then(function () { location.reload(); }, function () { location.reload(); });
+  if (scope === 'allplus') {
+    // This scope intentionally CLEARS the Triage tab too: skip the stash so nothing is restored after the reload.
+    location.reload();
+  } else {
+    _triageStashForReload().then(function () { location.reload(); }, function () { location.reload(); });
+  }
 }
 
 // Everything, including Settings and API keys. No backup is taken, because a backup that
@@ -18473,7 +18482,8 @@ window.addEventListener('DOMContentLoaded', () => {
           pricing: { t: 'Pricing model cleared',       m: 'Your pricing model was cleared. The rest of the opportunity (analysis, win strategy) is intact. Use \u201cRestore previous\u201d on any tab to undo.' },
           bna:     { t: 'Bid/No-Bid analysis cleared',  m: 'The Bid/No-Bid analysis and win strategy were cleared. Your pricing model is intact. Use \u201cRestore previous\u201d on any tab to undo.' },
           docs:    { t: 'Documents and drafts cleared', m: 'Loaded documents and generated drafts were cleared. Your saved work (analysis, pricing, strategy) is intact \u2014 re-upload documents to continue.' },
-          all:     { t: 'Workspace cleared',            m: 'Everything for this opportunity was cleared. Use \u201cRestore previous\u201d on any tab to bring it back.' }
+          all:     { t: 'Workspace cleared',            m: 'Everything for this opportunity was cleared. Use \u201cRestore previous\u201d on any tab to bring it back.' },
+          allplus: { t: 'Workspace and Triage cleared', m: 'Everything for this opportunity and the Triage tab were cleared. Use \u201cRestore previous\u201d on any tab to bring the opportunity back \u2014 the Triage tab is not restorable.' }
         })[_flashScope] || { t: 'Workspace cleared', m: 'Use \u201cRestore previous\u201d on any tab to bring the last opportunity back.' };
         showStatus('success', _ct.t, _ct.m);
       }
