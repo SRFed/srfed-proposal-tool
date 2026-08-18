@@ -3270,8 +3270,9 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // ── App version ───────────────────────────────────────────────────────────────
 // Single source of truth for the build number shown in the Settings footer.
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
-// can confirm which build is live by searching page source for "Version 153".
-const APP_VERSION = '250';
+// can confirm which build is live from the Settings-tab footer, or by searching
+// the page source for the APP_VERSION value below.
+const APP_VERSION = '252';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -12195,7 +12196,8 @@ function pricingPivotDownload() {
   ws['!cols'] = aoa[0].map((_, c) => ({ wch: c < nrd ? 22 : 15 }));
   for (let c = 0; c < aoa[0].length; c++) { const a = XLSX.utils.encode_cell({ r: 0, c: c }); if (ws[a]) ws[a].s = { font: { bold: true } }; }
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Pricing Pivot');
-  const nm = ('SRFed-Pricing-Pivot-' + [_pxPivot.r1, _pxPivot.r2, _pxPivot.col].filter(x => x).join('-by-')).replace(/[^A-Za-z0-9._-]/g, '_') + '.xlsx';
+  const _brand = (CLIENT_CONFIG.companyShortName || '').trim();
+  const nm = ((_brand ? _brand + '-' : '') + 'Pricing-Pivot-' + [_pxPivot.r1, _pxPivot.r2, _pxPivot.col].filter(x => x).join('-by-')).replace(/[^A-Za-z0-9._-]/g, '_') + '.xlsx';
   XLSX.writeFile(wb, nm);
 }
 function pricingFmt(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
