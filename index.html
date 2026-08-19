@@ -1492,6 +1492,7 @@
     <div class="card-header"><span class="icon">📥</span> Download Generated Documents</div>
     <div class="card-body">
       <div class="downloads" id="downloadList"></div>
+      <div id="pricingTieOut" style="display:none"></div>
       <div style="margin-top:14px;padding:12px 14px;background:var(--pale);border:1px solid var(--light-blue);border-radius:8px;font-size:13px;color:var(--text);line-height:1.55">
         <div style="font-weight:700;color:var(--blue);margin-bottom:6px">📄 Opening your documents in Word</div>
         <div style="margin-bottom:6px"><strong>1. Click “Enable Editing.”</strong> Word opens any file downloaded from a browser in Protected View. This is a Windows/Office security feature (not something the file can switch off), so this one click is required on every volume.</div>
@@ -2912,7 +2913,7 @@
         <h3>🔐 Certifications & Clearances</h3>
         <div class="settings-grid">
           <div class="settings-field"><label>Clearances</label><input type="text" id="s_clearances" placeholder="Active SECRET FCL, personnel up to TS/SCI"/></div>
-          <div class="settings-field"><label>CMMC Level</label><input type="text" id="s_cmmc" placeholder="CMMC Level 2 Compliant"/></div>
+          <div class="settings-field"><label>CMMC Level</label><input type="text" id="s_cmmc" placeholder="CMMC Level II compliant"/></div>
           <div class="settings-field"><label>DCAA Status</label><input type="text" id="s_dcaa" placeholder="DCAA-approved accounting system"/></div>
         </div>
       </div>
@@ -2937,10 +2938,13 @@
             </select>
           </div>
           <div class="settings-field">
-            <label>CMMC Level</label>
+            <label>CMMC Level <span style="color:var(--muted);font-weight:400">(highest held — tiered; lower levels implied)</span></label>
             <select id="s_cap_cmmc" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:white">
               <option value="">— select —</option>
-              <option>None</option><option>1</option><option>2</option><option>3</option>
+              <option value="None">None</option>
+              <option value="1">Level I</option>
+              <option value="2">Level II</option>
+              <option value="3">Level III</option>
             </select>
           </div>
           <div class="settings-field">
@@ -3119,7 +3123,7 @@
         <div class="settings-field" style="margin-bottom:14px">
           <label>Drop in a GSA MAS schedule to auto-fill</label>
           <div id="gsadz" class="cap-dz" onclick="document.getElementById('gsaSchedFile').click()" ondragover="gsaSchedDzOver(event)" ondragleave="gsaSchedDzLeave(event)" ondrop="gsaSchedDzDrop(event)">
-            <span id="gsadz-label">📎 Drop your GSA Schedule price list here, or click to browse &nbsp;&middot;&nbsp; PDF or Excel</span>
+            <span id="gsadz-label">Drop your GSA Schedule price list here, or click to browse &nbsp;&middot;&nbsp; PDF or Excel</span>
           </div>
           <input type="file" id="gsaSchedFile" accept=".pdf,.xlsx,.xls,.doc,.docx" style="display:none" onchange="parseGsaScheduleSettings(this.files[0])"/>
           <div id="gsadz-status" style="font-size:12px;margin-top:6px;display:none"></div>
@@ -3243,7 +3247,7 @@
 
       <div style="display:flex;gap:10px;margin-top:8px">
         <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
-        <button onclick="resetSettings()" style="padding:8px 16px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:white;cursor:pointer;color:var(--muted)">↺ Reset to Defaults</button>
+        <button class="btn btn-secondary btn-sm" onclick="resetSettings()">↺ Reset to Defaults</button>
       </div>
       <div id="settingsSavedMsg" style="display:none;margin-top:10px;padding:8px 14px;background:var(--success-bg);border:1px solid #86efac;border-radius:6px;font-size:13px;color:var(--success)">✅ Settings saved successfully.</div>
       <div id="appVersionFooter" style="margin-top:24px;padding-top:14px;border-top:1px solid var(--border);text-align:center;font-size:11px;color:var(--muted)">Sales Tool &middot; Version <span id="appVersionText">—</span></div>
@@ -3272,7 +3276,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live from the Settings-tab footer, or by searching
 // the page source for the APP_VERSION value below.
-const APP_VERSION = '255';
+const APP_VERSION = '261';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -3333,7 +3337,7 @@ const CLIENT_CONFIG = {
   uei:              'N5RZPM2JPJ21',
   gsaMas:           '47QRAA25D006B',
   clearances:       'Active SECRET Facility Clearance (FCL); key personnel hold SECRET or above',
-  cmmc:             'CMMC Level 1 self-attested; advancing toward Level 2 in partnership with USXCyber, implementing all NIST SP 800-171 controls.',
+  cmmc:             'CMMC Level II compliant, implementing all NIST SP 800-171 controls.',
   dcaa:             'DCAA-compliant accounting system (audited by DCAA Central Maryland Branch Office and DCMA Mid-Atlantic).',
 
   // ── Company Capacity Profile (drives Bid/No-Bid prime/sub gating) ──────────
@@ -3343,9 +3347,9 @@ const CLIENT_CONFIG = {
     facilityClearance: 'Secret',                 // None | Public Trust | Confidential | Secret | Top Secret | TS/SCI
     businessSize:      'Small',                   // Small | Other-than-small
     setAsides:         ['SDVOSB','VOSB','Small Business'], // certifications HELD
-    cmmcLevel:         '1',                        // None | 1 | 2 | 3
-    isoCerts:          [],                          // e.g. ['9001','27001']
-    contractVehicles:  ['GSA MAS'],                 // free-text vehicle tags HELD
+    cmmcLevel:         '2',                        // highest CMMC level held (tiered; lower implied): '' | None | 1 | 2 | 3
+    isoCerts:          ['9001'],                          // e.g. ['9001','27001']
+    contractVehicles:  ['GSA MAS', 'IHT2.0', 'MDA SHIELD', 'SeaPort-NxG', 'T4NG2'],                 // free-text vehicle tags HELD
     dcaaApproved:      true,                        // DCAA-approved/adequate accounting system (required to prime cost-reimbursement contracts)
     maxPrimeFTE:       20,                          // largest team size realistically primeable
     maxPrimeValue:     '$25,000,000',               // $ ceiling for prime (total award value); editable in capacity profile.
@@ -3811,6 +3815,7 @@ function _pptProposalDigest() {
   }
   const v3 = p.volume3 || {};
   if (v3.pricing_philosophy) L.push('[Pricing Philosophy] ' + clip(v3.pricing_philosophy, 1000));
+  if (v3.reasonableness_risk) L.push('[Reasonableness & Risk] ' + clip(v3.reasonableness_risk, 1000));
   if (v3.total_price_narrative) L.push('[Price Summary] ' + clip(v3.total_price_narrative, 1000));
   return L.join('\n');
 }
@@ -8674,7 +8679,7 @@ async function reviseVolume() {
       `Maintain the same professional proposal voice. Do not remove compliant content.\n\n` +
       (vol === '1' ? `Return ONLY JSON:\n{"understanding_of_requirement":"...","technical_approach":"...","integrated_methodology":"...","management_approach":"...","staffing_plan":"...","key_personnel_intro":"..."}` :
        vol === '2' ? `Return ONLY JSON:\n{"references":[{"program_name":"...","overview":"...","relevance":"...","similarity":"..."}]}` :
-       vol === '3' ? `Return ONLY JSON:\n{"pricing_philosophy":"...","boe_narrative":"...","wrap_rate_narrative":"...","total_price_narrative":"...","compliance_additional":"..."}` :
+       vol === '3' ? `Return ONLY JSON:\n{"pricing_philosophy":"...","boe_narrative":"...","reasonableness_risk":"Price Reasonableness (fair/reasonable/cost-realistic vs market & IGCE) AND Risk (cost/schedule/performance risks + mitigations)","wrap_rate_narrative":"...","total_price_narrative":"...","compliance_additional":"..."}` :
        vol === '4' ? `Return ONLY JSON:\n{"cover_letter_additional":"...","additional_fill_ins":[],"oci_plan":"...","clearance_plan_additional":"...","gfp":"...","cmmc":"...","administrative_compliance":"..."}` :
        `Return ONLY JSON:\n{"executive_summary":"..."}`);
 
@@ -9641,8 +9646,9 @@ async function runGeneration() {
       (briefing.section_l_instructions||[]).map(i => `  - ${i}`).join('\n') + '\n\n' +
 
       `WIN STRATEGY:\n` +
+      `  GOLDEN THREAD — the finished proposal must read as ONE coherent story, not a set of disconnected volumes. Treat the win themes below as that thread: state them crisply in the Executive Summary, then open EVERY volume by tying its argument back to the SAME themes in the SAME language (reuse the key phrases; do not reinvent them section to section). Every major claim should ladder up to one of these themes, so that by the end an evaluator could name ${CLIENT_CONFIG.companyShortName}'s core differentiators without hunting for them.\n` +
       (winThemes.length > 0
-        ? `  Win Themes (weave into every section opening):\n` + winThemes.map((t,i)=>`  ${i+1}. ${t}`).join('\n') + '\n'
+        ? `  Win Themes (the thread — weave into every section opening):\n` + winThemes.map((t,i)=>`  ${i+1}. ${t}`).join('\n') + '\n'
         : `  Win Themes: not specified — derive themes from evaluation factors and PWS priorities\n`) +
       (discriminators.length > 0
         ? `  Discriminators (what makes ${CLIENT_CONFIG.companyShortName} uniquely qualified):\n` + discriminators.map((d,i)=>`  ${i+1}. ${d}`).join('\n') + '\n'
@@ -9687,6 +9693,10 @@ async function runGeneration() {
 
     // Helper: make a single API call for one section, with timeout
     const PROPOSAL_FLAVOR_GUIDANCE = `
+
+VOICE — write in ${CLIENT_CONFIG.companyShortName}'s established voice: confident but never boastful, specific and evidence-backed rather than adjective-heavy, active voice, plain professional register. Honor the writing style, signature phrases, and tone samples provided above. Cut marketing fluff, hedging, and filler — every sentence should carry something an evaluator can actually score.
+
+VISUALS, USED PURPOSEFULLY — reach for a visual element ONLY when it conveys something prose cannot, and match the element to the content: a process or workflow → [[FLOW]]; a phased schedule or transition → [[TIMELINE]]; a quantitative comparison across periods or categories → [[CHART]]; the single strongest discriminator in a section → [[CALLOUT]]; a cleared, genuinely fitting client testimonial → [[QUOTE]]; a team or reporting structure → [[ORGCHART]]. An unmotivated visual is worse than none — most paragraphs use none, and even a strong section rarely needs more than one or two. Each element's exact format is specified below.
 
 WRITING TEXTURE — this applies to every narrative field you return. Government proposals are read by busy evaluators, so do NOT return uniform walls of text; vary the texture for readability while keeping full substance and specificity:
 - Keep well-formed paragraphs as the backbone, but wherever you enumerate discrete items — PWS task coverage, quality controls, 30/60/90-day transition milestones, discriminators, risks and their mitigations, personnel qualifications — render them as a short bulleted list rather than one dense paragraph. Begin each bullet line with "- " (a hyphen and a space). Three to six tight bullets read far better than a six-sentence paragraph.
@@ -9846,12 +9856,16 @@ Do not over-format — most content stays as prose. The goal is a document a per
         const wrapGuidance = pricingCtx
           ? `"wrap_rate_narrative":"MINIMUM 2 paragraphs explaining the wrap-rate buildup using the ACTUAL fringe, overhead, G&A, and fee percentages and the resulting wrap factor from the pricing model. Explain DCAA compliance and audit-readiness.",`
           : `"wrap_rate_narrative":"MINIMUM 2 paragraphs explaining wrap rate components: fringe benefits, overhead, G&A, and profit/fee. Explain DCAA compliance and audit-readiness.",`;
+        const reasonablenessGuidance = pricingCtx
+          ? `"reasonableness_risk":"MINIMUM 2 paragraphs, in TWO labeled parts. Part 1 — Price Reasonableness: explain why the proposed price is fair, reasonable, and cost-realistic, grounded in the model's REAL basis (GSA Schedule ceiling rates and the offered discount, or the fringe/overhead/G&A/fee wrap buildup and resulting wrap factor); address how it aligns with prevailing market/competitive rates and the Government's likely IGCE, and that it is adequate to perform the PWS with no unbalanced or below-cost pricing. Part 2 — Risk: identify the principal COST, SCHEDULE, and PERFORMANCE risks to the Government and how ${CLIENT_CONFIG.companyShortName}'s pricing approach mitigates each (stable fully burdened rates, disciplined escalation assumptions, staffing continuity, DCAA-adequate accounting, demonstrated financial capacity). Cite the real figures where they strengthen the argument.",`
+          : `"reasonableness_risk":"MINIMUM 2 paragraphs, in TWO labeled parts. Part 1 — Price Reasonableness: explain why the proposed price is fair, reasonable, and cost-realistic relative to prevailing market rates and the Government estimate, with no unbalanced pricing. Part 2 — Risk: identify the principal COST, SCHEDULE, and PERFORMANCE risks to the Government and how the pricing approach mitigates each. Use [RATE]/[TOTAL] placeholders for specific figures.",`;
 
         addJob('3', 'Vol III — Price Narrative',
           `You are writing the PRICE/COST NARRATIVE volume of a government proposal for ${CLIENT_CONFIG.companyShortName}.\n\n` +
           priceGuidance +
           `Return ONLY JSON:\n{"pricing_philosophy":"MINIMUM 2 paragraphs on pricing approach, value proposition, and cost realism strategy tailored to this agency and contract type.",` +
           boeGuidance +
+          reasonablenessGuidance +
           wrapGuidance +
           totalGuidance +
           `"compliance_additional":"List all solicitation-specific pricing compliance requirements found in the RFP — representations, certifications, pricing formats required."}`,
@@ -9952,6 +9966,7 @@ Do not over-format — most content stays as prose. The goal is a document a per
       }
     } catch (e) { console.error('pricing workbook bundle failed:', e); }
     renderDownloads(docs);
+    try { if (typeof _pricingTieOutReport === 'function') _pricingTieOutReport(proposalData); } catch (e) { console.error('pricing tie-out failed:', e); }
     setRunning(false);
     // Reset the approve button if generation was started from the outline panel
     const approveBtn = document.querySelector('#outlinePreviewPanel .btn-primary');
@@ -10697,6 +10712,151 @@ function buildPricingTotalTableOoxml() {
   } catch (e) { console.error('buildPricingTotalTableOoxml failed:', e); return ''; }
 }
 
+function buildPricingChartOoxml() {
+  try {
+    if (typeof pricingModel !== 'object' || !pricingModel) return '';
+    const P = pricingModel.periods || [];
+    if (!P.length || (typeof pricingBaseTotal === 'function' && pricingBaseTotal() <= 0)) return '';
+    if (typeof _chartImageOoxml !== 'function' || typeof pricingPeriodCost !== 'function') return '';
+    const parts = P.map((pp, i) => {
+      const label = String(pp.name || ('Period ' + (i + 1))).replace(/[|=,]/g, ' ').trim();
+      return label + '=' + Math.round(pricingPeriodCost(i));
+    });
+    const _tt = (typeof pricingTravelTotal === 'function') ? pricingTravelTotal() : { total: 0 };
+    if (_tt && _tt.total > 0) parts.push('Travel/ODCs=' + Math.round(_tt.total));
+    if (parts.length < 2) return '';
+    const spec = 'Total Evaluated Price by Period | series=Price | ' + parts.join(' | ');
+    const heading = (typeof _pxHeading === 'function') ? _pxHeading('Figure III-1. Total Evaluated Price by Period') : '';
+    return heading + _chartImageOoxml(spec);
+  } catch (e) { console.error('buildPricingChartOoxml failed:', e); return ''; }
+}
+
+// ─── PHASE 6: PRICING FACT TIE-OUT ──────────────────────────────────────────
+// After generation, extract every dollar / percent / hour figure the writer put
+// in the price narrative and reconcile each against the REAL pricing model.
+// Anything that can't be matched (within rounding tolerance) is surfaced for the
+// user to verify before export — so nothing invented or stale slips through.
+function _pricingFactSet() {
+  const facts = [];
+  const add = (v, label, kind) => {
+    const n = Math.round((parseFloat(v) || 0) * 100) / 100;
+    if (n > 0 && isFinite(n)) facts.push({ value: n, label: label, kind: kind || 'dollar' });
+  };
+  try {
+    if (typeof pricingModel !== 'object' || !pricingModel || !(pricingModel.lcats || []).length) return facts;
+    if (typeof pricingBaseTotal === 'function' && pricingBaseTotal() <= 0) return facts;
+    const P = pricingModel.periods || [];
+    let cum = 0;
+    P.forEach((pp, i) => {
+      const c = (typeof pricingPeriodCost === 'function') ? pricingPeriodCost(i) : 0;
+      add(c, (pp.name || ('Period ' + (i + 1))) + ' price', 'dollar');
+      cum += c;
+      if (i > 0) add(cum, 'cumulative through ' + (pp.name || ('Period ' + (i + 1))), 'dollar');
+      if (parseFloat(pp.escalation) > 0) add(parseFloat(pp.escalation), 'escalation %', 'percent');
+    });
+    if (typeof pricingGrandTotal === 'function') add(pricingGrandTotal(), 'grand total', 'dollar');
+    const tt = (typeof pricingTravelTotal === 'function') ? ((pricingTravelTotal() || {}).total || 0) : 0;
+    if (tt > 0) { add(tt, 'travel/ODCs', 'dollar'); if (typeof pricingGrandTotal === 'function') add(pricingGrandTotal() + tt, 'total incl. travel', 'dollar'); }
+    if (typeof pricingBaseTotal === 'function') add(pricingBaseTotal(), 'base period total', 'dollar');
+    if (typeof pricingWrapFactor === 'function') add(pricingWrapFactor(), 'wrap factor', 'number');
+    const pr = CLIENT_CONFIG.pricing || {};
+    [['fringe','fringe %'],['overhead','overhead %'],['ga','G&A %'],['fee','fee %']].forEach(function (k) { if (parseFloat(pr[k[0]]) > 0) add(parseFloat(pr[k[0]]), k[1], 'percent'); });
+    if (parseFloat(pricingModel.gsaDiscount) > 0) add(parseFloat(pricingModel.gsaDiscount), 'GSA discount %', 'percent');
+    if (typeof defaultHpf === 'function') add(defaultHpf(), 'billable hours per FTE', 'number');
+    if (typeof pricingTotalHours === 'function') add(pricingTotalHours(), 'total labor hours', 'number');
+    (pricingModel.lcats || []).forEach(function (l) {
+      if (typeof pricingBilledRate === 'function') add(pricingBilledRate(l, 0), (l.name || 'LCAT') + ' rate', 'dollar');
+      if (typeof pricingRowHours === 'function') add(pricingRowHours(l.id), (l.name || 'LCAT') + ' hours', 'number');
+      if (typeof pricingRowCost === 'function') add(pricingRowCost(l), (l.name || 'LCAT') + ' cost', 'dollar');
+    });
+    (pricingModel.tasks || []).forEach(function (t) {
+      if (typeof pricingColCost === 'function') add(pricingColCost(t.id), (t.name || 'task') + ' cost', 'dollar');
+      if (typeof pricingColHours === 'function') add(pricingColHours(t.id), (t.name || 'task') + ' hours', 'number');
+    });
+    add(P.length, 'number of periods', 'number');
+  } catch (e) { console.error('_pricingFactSet failed:', e); }
+  return facts;
+}
+function _extractProposalNumbers(text) {
+  const out = [], src = String(text || '');
+  let m;
+  const reDollar = /\$\s?([\d][\d,]*(?:\.\d+)?)\s*(billion|million|thousand|[MKB])?\b/gi;
+  while ((m = reDollar.exec(src))) {
+    let n = parseFloat(m[1].replace(/,/g, '')); const u = (m[2] || '').toLowerCase();
+    if (u === 'billion' || u === 'b') n *= 1e9; else if (u === 'million' || u === 'm') n *= 1e6; else if (u === 'thousand' || u === 'k') n *= 1e3;
+    if (n > 0) out.push({ raw: m[0].trim(), value: n, kind: 'dollar', idx: m.index });
+  }
+  const rePct = /([\d]+(?:\.\d+)?)\s?%/g;
+  while ((m = rePct.exec(src))) { const n = parseFloat(m[1]); if (n >= 0) out.push({ raw: m[0].trim(), value: n, kind: 'percent', idx: m.index }); }
+  const reHrs = /([\d][\d,]*(?:\.\d+)?)\s*(?:billable\s+)?(?:labor\s+)?hours?\b/gi;
+  while ((m = reHrs.exec(src))) { const n = parseFloat(m[1].replace(/,/g, '')); if (n > 0) out.push({ raw: m[0].trim(), value: n, kind: 'number', idx: m.index }); }
+  return out;
+}
+function _tieOutProposalNumbers(text, facts) {
+  const nums = _extractProposalNumbers(text), matched = [], flagged = [];
+  nums.forEach(function (nm) {
+    let best = null, bestRel = Infinity;
+    facts.forEach(function (f) {
+      if (f.kind !== nm.kind) return;
+      const err = Math.abs(nm.value - f.value), rel = f.value ? err / f.value : (err === 0 ? 0 : Infinity);
+      const ok = nm.kind === 'percent' ? (err <= 0.51) : (rel <= 0.015 || err < 1);
+      if (ok && rel < bestRel) { bestRel = rel; best = f; }
+    });
+    if (best) matched.push(Object.assign({}, nm, { fact: best })); else flagged.push(nm);
+  });
+  return { matched: matched, flagged: flagged, total: nums.length };
+}
+function _ctxSnippet(text, idx, raw) {
+  if (idx == null) return '';
+  const s = String(text), start = Math.max(0, idx - 30), end = Math.min(s.length, idx + (raw ? raw.length : 0) + 30);
+  return s.slice(start, end).replace(/\s+/g, ' ').trim();
+}
+function _pricingTieOutReport(proposalData) {
+  const el = document.getElementById('pricingTieOut');
+  if (!el) return null;
+  const facts = _pricingFactSet();
+  if (!facts.length) { el.style.display = 'none'; el.innerHTML = ''; return null; }
+  const v3 = (proposalData && proposalData.volume3) || {};
+  const v0 = (proposalData && proposalData.volume0) || {};
+  const sections = [
+    ['Pricing Philosophy', v3.pricing_philosophy, false],
+    ['Basis of Estimate', v3.boe_narrative, false],
+    ['Reasonableness & Risk', v3.reasonableness_risk, false],
+    ['Wrap Rate', v3.wrap_rate_narrative, false],
+    ['Total Price', v3.total_price_narrative, false],
+    ['Compliance', v3.compliance_additional, false],
+    ['Executive Summary', v0.executive_summary, true]
+  ];
+  let nMatched = 0; const flags = [];
+  sections.forEach(function (row) {
+    const name = row[0], txt = row[1], dollarsOnly = row[2];
+    if (!txt) return;
+    const r = _tieOutProposalNumbers(txt, facts);
+    (dollarsOnly ? r.matched.filter(function (x) { return x.kind === 'dollar'; }) : r.matched).forEach(function () { nMatched++; });
+    (dollarsOnly ? r.flagged.filter(function (x) { return x.kind === 'dollar'; }) : r.flagged).forEach(function (f) { flags.push({ section: name, raw: f.raw, kind: f.kind, ctx: _ctxSnippet(txt, f.idx, f.raw) }); });
+  });
+  if (!nMatched && !flags.length) { el.style.display = 'none'; el.innerHTML = ''; return { matched: 0, flagged: [] }; }
+  if (!flags.length) {
+    el.style.display = 'block';
+    el.innerHTML = '<div style="border:1px solid #86efac;background:#f0fdf4;border-radius:8px;padding:12px 14px;margin-top:14px;font-size:13px;color:#065f46">'
+      + '\u2713 <strong>Pricing tie-out passed.</strong> All ' + nMatched + ' dollar, percentage, and hour figure' + (nMatched === 1 ? '' : 's') + ' in the price narrative reconcile to your price model.</div>';
+  } else {
+    const rows = flags.map(function (f) {
+      const kindLabel = f.kind === 'dollar' ? '' : (f.kind === 'percent' ? ' (percentage)' : ' (hours)');
+      return '<li style="margin:6px 0"><strong>' + escHtml(f.raw) + '</strong>' + kindLabel + ' <span style="color:var(--muted)">\u2014 ' + escHtml(f.section) + '</span>'
+        + (f.ctx ? '<div style="font-size:12px;color:var(--muted);margin-top:2px">\u201C\u2026' + escHtml(f.ctx) + '\u2026\u201D</div>' : '') + '</li>';
+    }).join('');
+    el.style.display = 'block';
+    el.innerHTML = '<div style="border:1px solid #fcd34d;background:#fffbeb;border-radius:8px;padding:12px 14px;margin-top:14px;font-size:13px;color:#92400e">'
+      + '\u26A0\uFE0F <strong>Pricing tie-out: ' + flags.length + ' figure' + (flags.length === 1 ? '' : 's') + ' to verify.</strong> '
+      + nMatched + ' figure' + (nMatched === 1 ? '' : 's') + ' reconciled to your price model, but ' + (flags.length === 1 ? 'this one could' : 'these could') + ' not be matched. '
+      + 'Each may be legitimate (a rounded sum, or a figure quoted from the RFP) or an error \u2014 confirm each against your pricing before you submit:'
+      + '<ul style="margin:8px 0 0 0;padding-left:20px">' + rows + '</ul></div>';
+  }
+  return { matched: nMatched, flagged: flags };
+}
+
+
 // Combined block (used as a fallback when the template has no dedicated table placeholders).
 
 
@@ -10864,6 +11024,9 @@ function injectContentIntoXml(xml, data, vol) {
       const combined = (laborTables + totalTable);
       if (combined) xml = insertAnyPricingAnchor(xml, combined);
     }
+    const chartOoxml = (typeof buildPricingChartOoxml === 'function') ? buildPricingChartOoxml() : '';
+    if (/\{\{PRICING_CHART\}\}/.test(xml)) xml = replaceParaWithOoxml(xml, '{{PRICING_CHART}}', chartOoxml);
+    xml = replaceContent(xml, '{{REASONABLENESS_RISK}}', v.reasonableness_risk    || '');
     xml = replaceContent(xml, '{{PRICING_PHILOSOPHY}}',    v.pricing_philosophy       || '');
     xml = replaceContent(xml, '{{BOE_NARRATIVE}}',         v.boe_narrative            || '');
     xml = replaceContent(xml, '{{WRAP_RATE}}',             v.wrap_rate_narrative      || '');
@@ -18996,6 +19159,8 @@ function _clearanceRank(s) {
   return 0; // none / unclassified / not stated
 }
 function _cmmcRank(s) { const m = String(s || '').match(/[123]/); return m ? +m[0] : 0; }
+function _cmmcTop(cap) { if (!cap) return ''; if (Array.isArray(cap.cmmcLevels) && cap.cmmcLevels.length) { var m = Math.max.apply(null, cap.cmmcLevels.map(function(x){ return _cmmcRank(x); })); return m > 0 ? String(m) : ''; } var r = _cmmcRank(cap.cmmcLevel); return r > 0 ? String(r) : (cap.cmmcLevel === 'None' ? 'None' : ''); }
+function _cmmcLabel(cap) { return ({'1':'Level I','2':'Level II','3':'Level III'})[_cmmcTop(cap)] || 'None'; }
 function _parseMoney(s) {
   if (!s) return null;
   const str = String(s).toLowerCase().replace(/[, $]/g, '');
@@ -19301,8 +19466,8 @@ function evaluateBnaGates(opp, cap) {
     primeBlockers.push(`requires a ${opp.required_clearance} facility clearance to prime — ${co} holds ${cap.facilityClearance || 'None'}`);
     perfConstraints.push(`classified work (${opp.required_clearance}) limits ${co} to the unclassified portion of scope`);
   }
-  if (_cmmcRank(opp.required_cmmc) > _cmmcRank(cap.cmmcLevel)) {
-    perfConstraints.push(`requires CMMC Level ${_cmmcRank(opp.required_cmmc)}; ${co} holds ${cap.cmmcLevel || 'None'}`);
+  if (_cmmcRank(opp.required_cmmc) > _cmmcRank(_cmmcTop(cap))) {
+    perfConstraints.push(`requires CMMC Level ${_cmmcRank(opp.required_cmmc)}; ${co} holds ${_cmmcLabel(cap)}`);
   }
   if (opp.required_iso) {
     const reqIso = String(opp.required_iso).match(/\d{4,5}/g) || [];
@@ -21816,7 +21981,7 @@ async function runBidNoBid() {
       `Set-aside certifications HELD: ${(_cap.setAsides || []).join(', ') || 'none'}\n` +
       `Business size: ${_cap.businessSize || 'not specified'}\n` +
       `Highest FACILITY clearance HELD: ${_cap.facilityClearance || 'None'}\n` +
-      `CMMC level HELD: ${_cap.cmmcLevel || 'None'}\n` +
+      `CMMC level HELD: ${_cmmcLabel(_cap)}\n` +
       `ISO certifications HELD: ${(_cap.isoCerts || []).join(', ') || 'none'}\n` +
       `Contract vehicles/IDIQs HELD: ${(_cap.contractVehicles || []).join(', ') || 'none'}\n` +
       `DCAA-approved/adequate accounting system: ${_cap.dcaaApproved ? 'YES' : 'NO'}\n` +
@@ -24030,7 +24195,7 @@ function loadCapacityIntoUI(cap) {
   const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
   set('s_cap_clearance', cap.facilityClearance);
   set('s_cap_size',      cap.businessSize);
-  set('s_cap_cmmc',      cap.cmmcLevel);
+  set('s_cap_cmmc',      _cmmcTop(cap));
   set('s_cap_maxfte',    cap.maxPrimeFTE);
   set('s_cap_maxvalue',  cap.maxPrimeValue);
   // DCAA Yes/No. If unset (e.g. settings saved before this field existed), migrate from the
@@ -24087,7 +24252,7 @@ function checkCapacityProfile() {
   const missing = [];
   if (!cap.facilityClearance) missing.push('Highest facility clearance held');
   if (!cap.businessSize)      missing.push('Business size status');
-  if (!cap.cmmcLevel)         missing.push('CMMC level');
+  if (!_cmmcTop(cap)) missing.push('CMMC level');
   if (cap.maxPrimeFTE === '' || cap.maxPrimeFTE == null) missing.push('Max FTEs you can prime');
   if (!cap.setAsides || cap.setAsides.length === 0) missing.push('At least one set-aside certification (or "Small Business")');
   // ISO, vehicles, and max value are optional for completeness
@@ -24597,7 +24762,19 @@ async function loadModelsIntoDropdown(forceRefresh) {
   }
 }
 
-function saveSettings() {
+let _settingsAutoSaveTimer = null;
+function _initSettingsAutoSave() {
+  const pane = document.getElementById('pane-settings');
+  if (!pane || pane._autoSaveWired) return;
+  pane._autoSaveWired = true;
+  const trigger = () => { clearTimeout(_settingsAutoSaveTimer); _settingsAutoSaveTimer = setTimeout(() => { try { saveSettings({ auto: true }); } catch (e) {} }, 900); };
+  pane.addEventListener('input', trigger);
+  pane.addEventListener('change', trigger);
+}
+if (typeof document !== 'undefined') { if (document.getElementById('pane-settings')) _initSettingsAutoSave(); else document.addEventListener('DOMContentLoaded', _initSettingsAutoSave); }
+
+function saveSettings(opts) {
+  opts = opts || {}; const _auto = opts.auto === true;
   // Capture prior Azure config to detect changes that require MSAL re-init
   const priorAzure = JSON.stringify({
     c: CLIENT_CONFIG.azureClientId, t: CLIENT_CONFIG.azureTenantId, r: CLIENT_CONFIG.redirectUri
@@ -24696,6 +24873,7 @@ function saveSettings() {
   });
   if (newAzure !== priorAzure) {
     const msg = document.getElementById('settingsSavedMsg');
+    if (_auto) { if (msg) { msg.innerHTML = '✅ Auto-saved — reload later to apply Microsoft sign-in changes.'; msg.style.display = 'block'; setTimeout(() => { if (msg) msg.style.display = 'none'; }, 2500); } return; }
     if (msg) {
       msg.innerHTML = '✅ Settings saved. Microsoft sign-in settings changed — reload the page now for them to take effect.';
       msg.style.display = 'block';
@@ -24707,7 +24885,7 @@ function saveSettings() {
   }
 
   const msg = document.getElementById('settingsSavedMsg');
-  if (msg) { msg.textContent = '✅ Settings saved successfully.'; msg.style.display = 'block'; setTimeout(() => msg.style.display = 'none', 3000); }
+  if (msg) { msg.textContent = _auto ? '✅ Auto-saved' : '✅ Settings saved successfully.'; msg.style.display = 'block'; setTimeout(() => msg.style.display = 'none', _auto ? 1500 : 3000); }
 }
 
 function resetSettings() {
