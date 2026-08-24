@@ -2398,14 +2398,7 @@
       <div id="pricingTravel" style="margin-bottom:16px"></div>
       <div id="pricingMaterials" style="margin-bottom:16px"></div>
       <div id="pricingClin" style="margin-bottom:16px"></div>
-      <!-- Finalize: the ONE explicit build-join. The model is assembled continuously; this locks in
-           the solicitation's CLINs onto it as the single source of truth. Check + export come after. -->
-      <div style="margin-bottom:16px;border-top:1px solid var(--border);padding-top:16px">
-        <div style="font-weight:700;font-size:13px;margin-bottom:2px">🔨 Finalize &amp; build</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">One button, at the end: joins the solicitation's CLIN structure onto your assembled pricing (labor, rates, hours, discount, travel) into a single source of truth. Everything else has been live all along \u2014 this locks the CLINs in. Do this before checking against the PWS or exporting.</div>
-        <button id="pricingFinalizeBtn" onclick="pricingFinalizeBuild(this)" style="padding:9px 18px;font-size:13px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer">🔨 Finalize &amp; build</button>
-        <div id="pricingFinalizeStatus" style="display:none;font-size:12.5px;margin-top:12px"></div>
-      </div>
+
 
       <!-- Live summary: the bottom-line total, right after the build so it is the first thing you see (moved up from below the PWS check). -->
       <div id="pricingSummary" style="margin-bottom:16px"></div>
@@ -3276,7 +3269,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live from the Settings-tab footer, or by searching
 // the page source for the APP_VERSION value below.
-const APP_VERSION = '263';
+const APP_VERSION = '268';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -12095,7 +12088,39 @@ function pricingClinDefaultLines() {
   if (mt && mt.total > 0) lines.push({ id: _prId('clin_'), title: 'Materials', scope: 'materials', type: 'cost', taskIds: [] });
   return lines;
 }
-function pricingClinEnsureLines() { const c = pricingClin(); if (c.enabled && !c.lines.length) c.lines = pricingClinDefaultLines(); }
+// Materialize the complete per-period CLIN structure: every base CLIN the government stated with a
+// fixed number becomes a REAL record in each later period the solicitation left unstated (0002 ->
+// 1002 -> 2002), flagged inferred. Regenerated idempotently (drop prior _derived, rebuild) so it
+// tracks period changes. Default lines carry no fixed number and already expand per period via
+// pricingClinNumber, so they need nothing here. Result: the schedule and pivot read one structure,
+// with no option-CLIN derivation left at projection time.
+function pricingClinMaterialize() {
+  var c = pricingClin();
+  if (!c || !c.enabled || !Array.isArray(c.lines)) return;
+  c.lines = c.lines.filter(function (l) { return !l._derived; });
+  var P = (typeof pricingModel !== 'undefined' && pricingModel && pricingModel.periods) || [];
+  if (P.length < 2) return;
+  var heads = c.lines.filter(function (l) { return !l.unpriced && (l.periodBind == null || l.periodBind === 0) && String(l.clinNo || '').trim(); });
+  var add = [];
+  heads.forEach(function (head) {
+    var baseNo = String(head.clinNo).trim();
+    for (var i = 1; i < P.length; i++) {
+      var want = pricingDeriveClinNo(baseNo, i);
+      if (!want || want === baseNo) continue;
+      var dup = c.lines.some(function (l) { return !l.unpriced && l.periodBind === i && String(l.clinNo || '') === want; });
+      if (dup) continue;
+      add.push({ id: _prId('clin_'), clinNo: want, title: head.title, type: head.type, scope: head.scope, taskIds: (head.taskIds || []).slice(), nte: head.nte, periodBind: i, stated: false, _derived: true, _baseClin: baseNo });
+    }
+  });
+  if (add.length) c.lines = c.lines.concat(add);
+}
+function pricingClinEnsureLines() {
+  var c = pricingClin();
+  if (!c.enabled) return;
+  if (!c._fromStated && typeof pricingStatedClins === 'function' && typeof pricingClinBuildFromStated === 'function' && pricingStatedClins().length) pricingClinBuildFromStated({ silent: true });
+  if (!c.lines.length) c.lines = pricingClinDefaultLines();
+  pricingClinMaterialize();
+}
 function pricingClinPeriods() {
   const P = pricingModel.periods || [];
   const out = P.map((p, i) => ({ name: p.name || ('Period ' + (i + 1)), months: pricingPeriodMonths(p), srcIdx: i, isExt: false, prefix: i }));
@@ -12125,6 +12150,21 @@ function pricingClinPeriodHours(taskIds, i) {
   // of a partial period while the extended amount still tied out.
   return h * pricingPeriodFraction(M.periods[i]);
 }
+function pricingDeriveClinNo(clinNo, i) {
+  var s = String(clinNo == null ? '' : clinNo).trim();
+  if (i <= 0 || !s) return s;
+  return /^0\d{3,}[A-Za-z]{0,2}$/.test(s) ? (String(i) + s.slice(1)) : s;
+}
+// A CLIN's labor dollars in a period = the priced cells that RESOLVE to that CLIN, summed from the
+// same flat rows the pivot is built from. So the schedule and the pivot are two views of ONE source
+// and cannot disagree - and a period with several labor CLINs attributes each role to its own CLIN
+// instead of counting all labor under every line.
+function pricingClinLaborAmountFor(clinNo, i) {
+  var rows = (typeof pricingFlatRows === 'function') ? pricingFlatRows() : [];
+  var c = 0, want = String(clinNo);
+  for (var k = 0; k < rows.length; k++) { var r = rows[k]; if (r && r.category === 'Labor' && String(r.clin) === want && r.periodIdx === i) c += (r.price || 0); }
+  return c;
+}
 function pricingClinLineAmount(line, pd) {
   if (line.scope === 'custom') {
     if (pd.isExt) return 0;                                            // fixed CLINs don't extend with services
@@ -12135,12 +12175,18 @@ function pricingClinLineAmount(line, pd) {
   let amt;
   if (line.scope === 'travelodc') { const tp = (typeof pricingTravelByPeriod === 'function') ? pricingTravelByPeriod() : []; amt = tp[pd.srcIdx] || 0; }
   else if (line.scope === 'materials') { const mp = (typeof pricingMaterialsByPeriod === 'function') ? pricingMaterialsByPeriod() : []; amt = mp[pd.srcIdx] || 0; }
+  else if ((line.scope === 'labor' || line.scope === 'tasks') && !pd.isExt && line.clinNo && typeof pricingClinLaborAmountFor === 'function') amt = pricingClinLaborAmountFor(String(line.clinNo), pd.srcIdx);
   else amt = pricingClinPeriodCost(line.scope === 'tasks' ? (line.taskIds || []) : null, pd.srcIdx);
   if (line.nte != null && line.nte !== '' && +line.nte > 0 && amt > +line.nte) amt = +line.nte;  // reimbursable ceiling
   return pd.isExt ? amt * (pd.extFactor || 1) : amt;
 }
 function pricingClinLineHours(line, pd) {
   if (line.scope === 'travelodc' || line.scope === 'custom' || line.scope === 'materials') return 0;
+  if ((line.scope === 'labor' || line.scope === 'tasks') && !pd.isExt && line.clinNo && typeof pricingFlatRows === 'function') {
+    var rows = pricingFlatRows(), hh = 0, want = String(line.clinNo);
+    for (var k = 0; k < rows.length; k++) { var r = rows[k]; if (r && r.category === 'Labor' && String(r.clin) === want && r.periodIdx === pd.srcIdx) hh += (r.hours || 0); }
+    return hh;
+  }
   const h = pricingClinPeriodHours(line.scope === 'tasks' ? (line.taskIds || []) : null, pd.srcIdx);
   return pd.isExt ? h * (pd.extFactor || 1) : h;
 }
@@ -12166,7 +12212,7 @@ function pricingClinScheduleRows() {
       else if (type === 'COST') { qty = 1; unit = 'Lot'; unitPrice = amt; }
       else if (monthly) { qty = pd.months; unit = 'Month'; unitPrice = pd.months ? amt / pd.months : amt; }
       else { qty = 1; unit = (pd.months === 12 ? 'Year' : 'Lot'); unitPrice = amt; }
-      rows.push({ clin: (line.clinNo ? String(line.clinNo) : pricingClinNumber(li, pd.prefix)), desc: line.title || 'Line item', period: pd.name, type: (type === 'COST' ? 'Cost/NTE' : type), qty, unit, unitPrice, total: amt, isExt: pd.isExt });
+      rows.push({ clin: (line.clinNo ? String(line.clinNo) : pricingClinNumber(li, pd.prefix)), desc: line.title || 'Line item', period: pd.name, type: (type === 'COST' ? 'Cost/NTE' : type), qty, unit, unitPrice, total: amt, derived: !!line._derived, isExt: pd.isExt });
       pTot += amt;
     });
     rows.push({ subtotal: true, period: pd.name, total: pTot, isExt: pd.isExt });
@@ -12260,6 +12306,33 @@ function pricingClinBuildFromStated(opts) {
 }
 // ── Pricing pivot ("slice & dice") ────────────────────────────────────────────
 // The CLIN dimension, factored out so the Excel Line-Item Detail AND the pivot use ONE definition.
+// The CLIN a record bills under, resolved GOVERNMENT-FIRST (word is gospel), then user/AI:
+//   1) government task-scoped CLIN - a stated line whose scope covers this task in this period
+//   2) the role's ASSIGNED CLIN, used ONLY if it matches a government-stated CLIN (validated); its
+//      option-year number is the stated one if the government gave it, else derived by prefix-swap
+//   3) the government's general stated labor CLIN for the period
+//   4) an option period with no bound line: the base CLIN of that scope, prefix-derived (fills a hole)
+// The assignment is read from a real `clin` field, or parsed from a legacy "(CLIN ...)" role name.
+// Every priced record therefore resolves to exactly ONE CLIN, so any slice sums back to the total.
+function _lcatClinRaw(l) {
+  if (!l) return '';
+  var explicit = String(l.clin == null ? '' : l.clin).trim();
+  if (explicit) return explicit;
+  var m = String(l.name == null ? '' : l.name).match(/\(\s*clins?\b[:#\s]*([0-9][0-9A-Za-z]*)/i);
+  return m ? m[1] : '';
+}
+// Move any legacy "(CLIN 0001/1001)" text OUT of the role name into the structured `clin` field
+// (base number only; option numbers derive). Idempotent - once stripped there is nothing to match.
+function pricingNormalizeLcatClins() {
+  var M = pricingModel; if (!M || !Array.isArray(M.lcats)) return;
+  var RE = /\s*\(\s*clins?\b[:#\s]*[0-9][0-9A-Za-z]*(?:\s*\/\s*[0-9A-Za-z]+)*\s*\)\s*$/i;
+  M.lcats.forEach(function (l) {
+    if (!l || typeof l.name !== 'string' || !RE.test(l.name)) return;
+    var tok = l.name.match(/\(\s*clins?\b[:#\s]*([0-9][0-9A-Za-z]*)/i);
+    if (tok && !String(l.clin == null ? '' : l.clin).trim()) l.clin = tok[1];
+    l.name = l.name.replace(RE, '').trim();
+  });
+}
 function pricingClinDim() {
   const M = pricingModel;
   if (!(M.clins && M.clins.enabled) || typeof pricingClinPeriods !== 'function' || typeof pricingClinNumber !== 'function') return null;
@@ -12268,9 +12341,25 @@ function pricingClinDim() {
   const lines = (typeof pricingClin === 'function' ? (pricingClin().lines || []) : []);
   const numFor = (li, i) => { if (li < 0 || !pds[i]) return ''; const _l = lines[li]; return (_l && _l.clinNo) ? String(_l.clinNo) : pricingClinNumber(li, pds[i].prefix); };
   const _bind = (l, i) => !l.unpriced && (l.periodBind == null || l.periodBind === i);
+  // Federal numbering: the leading digit is the period (0=base, 1=OY1, 2=OY2 ...). Where the
+  // government stated a base CLIN but not the option, derive the option number by swapping that
+  // digit (0002 -> 1002). Standard leading-zero numbers only; otherwise return unchanged.
+  const resolve = (scope, i, taskId, assigned) => {
+    if (taskId != null) { const li = lines.findIndex(l => _bind(l, i) && l.scope === 'tasks' && (l.taskIds || []).indexOf(taskId) >= 0); if (li >= 0) return numFor(li, i); }
+    const a = String(assigned == null ? '' : assigned).trim();
+    if (a) {
+      const want = pricingDeriveClinNo(a, i);
+      const li = lines.findIndex(l => _bind(l, i) && l.scope === scope && (String(l.clinNo || '') === want || String(l._baseClin || '') === a)); if (li >= 0) return numFor(li, i);
+      if (lines.findIndex(l => !l.unpriced && l.scope === scope && String(l.clinNo || '') === a) >= 0) return want;
+    }
+    const li = lines.findIndex(l => _bind(l, i) && l.scope === scope); if (li >= 0) return numFor(li, i);
+    if (i > 0) { const b = lines.findIndex(l => !l.unpriced && l.scope === scope && (l.periodBind == null || l.periodBind === 0)); if (b >= 0) return pricingDeriveClinNo(numFor(b, 0), i); }
+    return '';
+  };
   return {
-    forTask: (taskId, i) => { let li = lines.findIndex(l => _bind(l, i) && l.scope === 'tasks' && (l.taskIds || []).indexOf(taskId) >= 0); if (li < 0) li = lines.findIndex(l => _bind(l, i) && l.scope === 'labor'); return numFor(li, i); },
-    forScope: (scope, i) => numFor(lines.findIndex(l => _bind(l, i) && l.scope === scope), i)
+    forRow:   (lcat, taskId, i) => resolve('labor', i, taskId, (typeof _lcatClinRaw === 'function' ? _lcatClinRaw(lcat) : (lcat && lcat.clin))),
+    forScope: (scope, i) => resolve(scope, i, null, null),
+    forTask:  (taskId, i) => resolve('labor', i, taskId, null)
   };
 }
 // One flat, tidy row per (LCAT x task x period) plus travel/ODC/materials rows — the same dataset
@@ -12286,7 +12375,7 @@ function pricingFlatRows() {
   const pName = i => (P[i] && P[i].name) || ('Period ' + (i + 1));
   const gsaYear = i => (typeof pricingGsaScheduleYearForPeriod === 'function') ? pricingGsaScheduleYearForPeriod(i) : 1;
   const dim = (typeof pricingClinDim === 'function') ? pricingClinDim() : null;
-  const clinT = (tid, i) => dim ? (dim.forTask(tid, i) || '') : '';
+  const clinL = (lc, tid, i) => dim ? (dim.forRow(lc, tid, i) || '') : '';
   const clinS = (sc, i) => dim ? (dim.forScope(sc, i) || '') : '';
   // Every LCAT x task x period row carries the FULL attribute set so the pivot can slice by any of
   // them. Rate/salary/discount are per-role-per-period; for GSA roles the paid rate is implied back
@@ -12307,7 +12396,7 @@ function pricingFlatRows() {
       const discount = undisc > 0 ? (1 - billed / undisc) * 100 : 0;
       const baseBilled = effRate(l, 0);
       const escalation = baseBilled > 0 ? (billed / baseBilled - 1) * 100 : 0;
-      rows.push({ category: 'Labor', lcat: (l.name || '(unnamed)'), gsaLcat: gLcat, task: (((t.code ? t.code + ' ' : '') + (t.name || '')).trim() || '(task)'), clin: clinT(t.id, i), period: pName(i), periodIdx: i, price: price, hours: hrs, fte: fte, baseRate: paid, burdenedRate: billed, listRate: undisc, salary: paid * 2080, discount: discount, escalation: escalation });
+      rows.push({ category: 'Labor', lcat: (l.name || '(unnamed)'), gsaLcat: gLcat, task: (((t.code ? t.code + ' ' : '') + (t.name || '')).trim() || '(task)'), clin: clinL(l, t.id, i), period: pName(i), periodIdx: i, price: price, hours: hrs, fte: fte, baseRate: paid, burdenedRate: billed, listRate: undisc, salary: paid * 2080, discount: discount, escalation: escalation });
     }); });
   });
   const _tp = (typeof pricingTravelOnlyByPeriod === 'function') ? pricingTravelOnlyByPeriod() : [];
@@ -12348,7 +12437,7 @@ function pricingPivotBuild() {
     const arr = rkArr(r), k = arr.join('\u0001'), v = val(r);
     // Rate/ratio averages apply to LABOR rows only (travel/ODC/materials carry no rate); a labor
     // row's legitimate 0 (base-year escalation, a 0% discount) still counts.
-    const use = (r.category === 'Labor');
+    const use = (r.category === 'Labor') && !(meas === 'escalation' && r.periodIdx === 0);
     if (!(k in cell)) { cell[k] = {}; order.push(k); labels[k] = arr; }
     const ck = colDim ? ((r[colDim] == null || r[colDim] === '') ? '\u2014' : String(r[colDim])) : NOCOL;
     if (colDim && colKeys.indexOf(ck) < 0) colKeys.push(ck);
@@ -13994,7 +14083,7 @@ function _pxSnapshotConstraints() {
   const M = pricingModel;
   return {
     lcats: (M.lcats || []).map(l => ({
-      name: l.name, gsaLcat: l.gsaLcat, advertised: l.advertised, hpf: l.hpf,
+      name: l.name, clin: l.clin, gsaLcat: l.gsaLcat, advertised: l.advertised, hpf: l.hpf,
       baseRate: l.baseRate, rateInput: l.rateInput, rateBasis: l.rateBasis,
       rateStatus: l.rateStatus, scaCovered: l.scaCovered, wdWage: l.wdWage,
     })),
@@ -14021,7 +14110,7 @@ function _pxReassertConstraints(snap, fixed) {
       if (!hit) {
         // The build dropped a role the user had fixed — put it back rather than lose it.
         const nl = { id: (typeof _prId === 'function' ? _prId('l_') : ('l_' + Math.random().toString(36).slice(2, 8))),
-                     name: s.name, gsaLcat: s.gsaLcat || '', advertised: s.advertised || 0,
+                     name: s.name, clin: s.clin || '', gsaLcat: s.gsaLcat || '', advertised: s.advertised || 0,
                      hpf: s.hpf || '', baseRate: s.baseRate || 0, rateInput: s.rateInput || '',
                      rateBasis: s.rateBasis || 'paid', rateStatus: s.rateStatus || '',
                      scaCovered: !!s.scaCovered, wdWage: s.wdWage || '', evaluated: false };
@@ -14386,6 +14475,23 @@ function pricingReconcileStatedFte(lcats, hours, mask, tasks, target, hpf) {
 // The Advertised FTE for a model-proposed role: the explicit "fte" when given (the staffing
 // decision), else the integer headcount, else the FTE implied by the proposed hours. Drives both the
 // Advertised FTE and the role's total hours so the two always tie out.
+// A proposed role's CLIN, government-first. The analysis now links each labor category to its
+// solicitation CLIN (labor_categories[].clin), so a drafted role inherits that number by name -
+// no back-end reconstruction. Empty when the solicitation never tied this role to a CLIN; the
+// resolver then falls back to the stated labor CLIN. Never fabricates a number.
+function _pxRoleClin(m) {
+  var raw = String((m && (m.clin != null ? m.clin : (m.clin_number != null ? m.clin_number : ''))) || '').trim();
+  if (!raw) {
+    var cats = (typeof window !== 'undefined' && window._lastBnaIntel && Array.isArray(window._lastBnaIntel.labor_categories)) ? window._lastBnaIntel.labor_categories : [];
+    var want = String((m && m.role_name) || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    for (var i = 0; i < cats.length && want; i++) {
+      var nm = String((cats[i] && cats[i].lcat) || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      if (nm && nm === want) { raw = String((cats[i].clin != null ? cats[i].clin : '') || '').trim(); break; }
+    }
+  }
+  var tok = raw.match(/([0-9][0-9A-Za-z]*)/);
+  return tok ? tok[1] : '';
+}
 function _pxRoleFte(m, hpf) {
   const f = parseFloat(m && m.fte);
   if (f > 0) return f;
@@ -14474,7 +14580,7 @@ function pricingApplyAutoBuild(a) {
         if (wdWage === '' && (m.wd_min_wage === 0 || m.wd_min_wage)) { const w = parseFloat(m.wd_min_wage); if (w > 0) wdWage = w; }
       }
     }
-    lcats.push({ id, name: String(m.role_name || 'Role').trim(), baseRate: '', hpf: '', advertised: _pxRoleFte(m, defaultHpf()), gsaLcat, scaCovered, wdWage });
+    lcats.push({ id, clin: _pxRoleClin(m), name: String(m.role_name || 'Role').trim(), baseRate: '', hpf: '', advertised: _pxRoleFte(m, defaultHpf()), gsaLcat, scaCovered, wdWage });
     hours[id] = {};
     const hbt = m.hours_by_task || {};
     Object.keys(hbt).forEach(k => { const tid = _pxMatchTaskId(k); if (tid) hours[id][tid] = Math.max(0, Math.round(parseFloat(hbt[k]) || 0)); });
@@ -14499,7 +14605,7 @@ function pricingApplyAutoBuild(a) {
     _directed.forEach(d => {
       const src = lcats.find(l => _norm(l.name) === _norm(d.lcat)) || null;
       const id = src ? src.id : _prId('l_');
-      _nl.push({ id, name: d.lcat, baseRate: src ? src.baseRate : '', hpf: src ? src.hpf : '', advertised: d.count, gsaLcat: src ? src.gsaLcat : '', scaCovered: src ? !!src.scaCovered : false, wdWage: src ? src.wdWage : '' });
+      _nl.push({ id, clin: (src && src.clin) ? src.clin : _pxRoleClin({ role_name: d.lcat }), name: d.lcat, baseRate: src ? src.baseRate : '', hpf: src ? src.hpf : '', advertised: d.count, gsaLcat: src ? src.gsaLcat : '', scaCovered: src ? !!src.scaCovered : false, wdWage: src ? src.wdWage : '' });
       _nh[id] = src ? (hours[id] || {}) : {};
       if (src && mask[id]) _nm[id] = mask[id];
     });
@@ -14570,6 +14676,14 @@ function pricingApplyAutoBuild(a) {
   pricingModel.lcats = lcats;
   pricingModel.hours = hours;
   pricingModel.mask = mask;
+  // Harmonic buildout: build the CLIN structure as part of THIS same pass - so the model is whole
+  // (roles, tasks, hours, AND their CLINs) the instant it is drafted, not after a later Finalize
+  // step. Numbers come straight from the solicitation; each role already carries its `clin`
+  // (stamped above from the analysis), so the pivot just reads it. Option CLINs derive at projection.
+  try {
+    if (typeof pricingNormalizeLcatClins === 'function') pricingNormalizeLcatClins();
+    if (typeof pricingStatedClins === 'function' && typeof pricingClinBuildFromStated === 'function' && pricingStatedClins().length) pricingClinBuildFromStated({ silent: true });
+  } catch (e) {}
   pricingModel.lcats.forEach(function (l) { var _k = String(l.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); var _pin = _ratePins[_k]; if (_pin) { l.rateBasis = _pin.rateBasis; l.rateInput = _pin.rateInput; l.baseRate = _pin.baseRate; l.rateStatus = _pin.rateStatus; l.evaluated = _pin.evaluated; if (_pin.mktBand) l.mktBand = _pin.mktBand; } });
   if (pricingModel.fteSource !== 'stated') {
     const total = lcats.reduce((s, l) => s + (parseFloat(l.advertised) || 0), 0);
@@ -14651,6 +14765,7 @@ function pricingRenderAutoBuildPanel() {
 }
 
 function pricingRenderAll() {
+  if (typeof pricingNormalizeLcatClins === 'function') pricingNormalizeLcatClins();
   { const _db = document.getElementById('pricingAutoBuildBtn'); if (_db && !_db.disabled) _db.innerHTML = (typeof pricingModel !== 'undefined' && pricingModel && pricingModel._reverseSolved) ? '\u21ba Re-draft from scratch' : '\u2728 Draft the staffing plan'; }   // (#4) label reflects whether a sheet has been applied
   // Phase 5: seed the GSA rate card from the company default (Settings) the first time this
   // pricing session touches an empty rate card, and keep the shared default in sync with
@@ -14870,8 +14985,10 @@ function pricingRenderLcats() {
     else if (l.rateStatus === 'entered') _chip = '<span title="A rate you entered" style="font-size:9.5px;font-weight:700;color:var(--blue);background:#dbeafe;border:1px solid #93c5fd;border-radius:4px;padding:1px 5px;white-space:nowrap">entered</span>';
     else if (l.evaluated) _chip = '<span title="You looked this up on Market Rates" style="font-size:9.5px;font-weight:700;color:#15803d;background:#dcfce7;border:1px solid #86efac;border-radius:4px;padding:1px 5px;white-space:nowrap">\u2713 researched</span>';
     const _warn = paid > 0 ? '' : '<div style="grid-column:1/-1;font-size:10.5px;color:var(--warn);padding-left:2px">enter a rate to derive the burdened figures</div>';
+    const _clinOn = !!(pricingModel.clins && pricingModel.clins.enabled);
+    const _clinInput = _clinOn ? ('<input value="' + pricingEsc(_lcatClinRaw(l)) + '" onchange="pricingSetLcat(\'' + l.id + '\',\'clin\',this.value)" placeholder="CLIN" title="Base-period CLIN this role bills under (from the solicitation). Option-year CLINs derive automatically. Blank uses the stated labor CLIN." style="width:62px;flex-shrink:0;padding:6px 6px;border:1px solid var(--border);border-radius:6px;font-size:11px;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums"/>') : '';
     return `<div id="pxLcat_${l.id}" style="display:grid;grid-template-columns:minmax(150px,2fr) 210px 188px 64px 64px auto;gap:6px 8px;align-items:center;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
-      <input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (e.g. Registered Nurse)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;box-sizing:border-box"/>
+      <div style="min-width:0;display:flex;gap:4px;align-items:center"><input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (e.g. Registered Nurse)" style="flex:1;min-width:0;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;box-sizing:border-box"/>${_clinInput}</div>
       <div style="min-width:0;display:flex;align-items:center;gap:3px">
         <select onchange="pricingSetLcatRate('${l.id}','rateBasis',this.value)" title="What are you entering? The other three figures derive from it." style="flex:1;min-width:0;padding:6px 16px 6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:white;text-overflow:ellipsis">${opt('paid','Company Paid Hourly Rate')}${opt('salary','Company Paid Annualized Salary')}${opt('loaded','Fully Burdened Hourly Rate')}${opt('annual','Fully Burdened Annualized Salary')}</select>
         <input type="text" inputmode="decimal" value="${_pxFmtMoney(rInput)}" onchange="pricingSetLcatRate('${l.id}','rateInput',this.value)" title="${l.rateStatus==='proposed'?'Proposed rate \u2014 recommended by the tool; edit or confirm to make it yours':(l.rateStatus==='entered'?'You set this rate':'')}" style="width:84px;flex-shrink:0;padding:6px 8px;border-radius:6px;font-size:12.5px;text-align:center;${_pxRateCellCss(l)}"/>
@@ -15303,7 +15420,7 @@ function pricingRenderClin() {
       '<label style="font-size:13px;cursor:pointer"><input type="checkbox" ' + (c.farExtension ? 'checked' : '') + ' onchange="pricingToggleFarExt()"> Show 6-month FAR 52.217-8 extension (evaluation only, at final-year rates)</label></div></div>';
     h += '<div style="margin-top:10px"><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">CLIN line items (each repeats per period)</div>' +
       '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:var(--muted);font-size:11px"><th style="padding:4px 6px">Title</th><th style="padding:4px 6px">Scope</th><th style="padding:4px 6px">Type</th><th style="padding:4px 6px"></th></tr></thead><tbody>';
-    c.lines.forEach(line => {
+    c.lines.filter(function (l) { return !l._derived; }).forEach(line => {
       const scopeSel = [['labor','All labor'],['tasks','Specific PWS tasks'],['travelodc','Travel & ODC'],['materials','Materials'],['custom','Custom fixed amount']].map(o => '<option value="' + o[0] + '" ' + (line.scope === o[0] ? 'selected' : '') + '>' + o[1] + '</option>').join('');
       const typeSel = [['FFP','FFP'],['T&M','T&M'],['cost','Cost / NTE']].map(o => '<option value="' + o[0] + '" ' + ((line.type || 'FFP') === o[0] ? 'selected' : '') + '>' + o[1] + '</option>').join('');
       h += '<tr style="border-top:1px solid var(--border)">' +
@@ -15323,7 +15440,7 @@ function pricingRenderClin() {
     h += '</tbody></table>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">' +
       '<button onclick="pricingAddClinLine()" style="padding:5px 12px;font-size:12px;font-weight:600;background:#fff;color:var(--blue);border:1px solid var(--mid-blue);border-radius:6px;cursor:pointer">+ Add CLIN line</button>' +
-      ((typeof pricingStatedClins === 'function' && pricingStatedClins().length) ? '<span style="font-size:11.5px;color:var(--muted)">The solicitation states ' + pricingStatedClins().length + ' CLIN(s) \u2014 they\'re applied when you <strong>Finalize &amp; build</strong> at the end of the flow.</span>' : '') +
+      ((typeof pricingStatedClins === 'function' && pricingStatedClins().length) ? '<span style="font-size:11.5px;color:var(--muted)">The solicitation states ' + pricingStatedClins().length + ' CLIN(s) \u2014 they\'re applied automatically to your CLIN schedule as you build \u2014 no separate step.</span>' : '') +
       '</div></div>';
     const rows = pricingClinScheduleRows();
     const _nClin = rows.filter(function (r) { return (r.clin !== undefined) && !r.grand && !r.subtotal && !r.extHeader && !r.grandWithExt && !r.optHeader; }).length;
@@ -15337,7 +15454,7 @@ function pricingRenderClin() {
       else if (r.subtotal) h += '<tr style="background:' + (r.isExt ? '#faf5ff' : '#f8fafc') + ';font-weight:700"><td colspan="7" style="padding:5px 8px">' + escHtml(r.period) + ' subtotal</td><td style="padding:5px 8px;text-align:right">' + pricingFmt(r.total) + '</td></tr>';
       else if (r.optHeader) h += '<tr><td colspan="8" style="padding:8px;background:#fff7ed;color:#9a3412;font-size:11.5px">Optional / separately-priced CLINs &mdash; stated by the Government; not part of the contract value above.</td></tr>';
       else if (r.opt) h += '<tr style="border-top:1px solid var(--border);background:#fffbf5;color:#7c2d12"><td style="padding:5px 8px;font-variant-numeric:tabular-nums">' + escHtml(r.clin) + '</td><td style="padding:5px 8px">' + escHtml(r.desc) + '</td><td style="padding:5px 8px">' + escHtml(r.period) + '</td><td style="padding:5px 8px">' + escHtml(r.type) + '</td><td style="padding:5px 8px;text-align:right">' + r.qty + '</td><td style="padding:5px 8px">' + escHtml(r.unit) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.unitPrice) + '</td><td style="padding:5px 8px;text-align:right">' + (r.nte ? 'NTE ' : '') + pricingFmtC(r.total) + '</td></tr>';
-      else h += '<tr style="border-top:1px solid var(--border)"><td style="padding:5px 8px;font-variant-numeric:tabular-nums">' + r.clin + '</td><td style="padding:5px 8px">' + escHtml(r.desc) + '</td><td style="padding:5px 8px">' + escHtml(r.period) + '</td><td style="padding:5px 8px">' + escHtml(r.type) + '</td><td style="padding:5px 8px;text-align:right">' + r.qty + '</td><td style="padding:5px 8px">' + escHtml(r.unit) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.unitPrice) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.total) + '</td></tr>';
+      else h += '<tr style="border-top:1px solid var(--border)"><td style="padding:5px 8px;font-variant-numeric:tabular-nums">' + r.clin + (r.derived ? ' <span style="font-size:9px;font-weight:700;color:#7c3aed;background:#f3e8ff;padding:1px 5px;border-radius:3px;vertical-align:middle">INFERRED</span>' : '') + '</td><td style="padding:5px 8px">' + escHtml(r.desc) + '</td><td style="padding:5px 8px">' + escHtml(r.period) + '</td><td style="padding:5px 8px">' + escHtml(r.type) + '</td><td style="padding:5px 8px;text-align:right">' + r.qty + '</td><td style="padding:5px 8px">' + escHtml(r.unit) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.unitPrice) + '</td><td style="padding:5px 8px;text-align:right">' + pricingFmtC(r.total) + '</td></tr>';
     });
     h += '</tbody></table></div></details>';
     const pds = pricingClinPeriods();
@@ -16077,7 +16194,7 @@ function pricingBuildWorkbook() {
           _alab(l),
           r2(hi * _lpre * frac(i))
         ].concat(_locOn ? [r2(pricingLocalityRate(l) * 100)] : [])
-         .concat([_clinDim ? _clinDim.forTask(t.id, i) : '']));
+         .concat([_clinDim ? _clinDim.forRow(l, t.id, i) : '']));
       });
     });
   });
@@ -21332,32 +21449,6 @@ function _constrainedPwsContext() {
 // pricingModel; the master dataset is produced on demand), so "build" here means the single
 // deliberate step that isn't automatic: applying the solicitation's CLINs onto the finished model.
 // Fast + deterministic; a short beat keeps the build moment visible, as Paul asked.
-function pricingFinalizeBuild(btn) {
-  const st = document.getElementById('pricingFinalizeStatus');
-  // (#4) soft-gate: Finalize needs at least one role. A soft guard here (not a hard lock on every
-  // step) is enough \u2014 the model is assembled continuously and hard-locking would fight that.
-  const _roles = (typeof pricingModel !== 'undefined' && pricingModel && Array.isArray(pricingModel.lcats)) ? pricingModel.lcats.filter(function (l) { return String((l && l.name) || '').trim(); }).length : 0;
-  if (!_roles) { if (st) { st.style.display = 'block'; st.style.color = 'var(--error)'; st.innerHTML = '\u26a0 No labor categories yet \u2014 add roles (or run \u2728 <strong>Draft the staffing plan</strong> in Step 3, or start from an uploaded sheet in Step 0) before finalizing.'; } return; }
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-auto" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> Building\u2026'; }
-  if (st) { st.style.display = 'block'; st.style.color = 'var(--muted)'; st.textContent = 'Joining CLIN structure to assembled pricing model\u2026'; }
-  setTimeout(function () {
-    let nStated = 0;
-    try { nStated = (typeof pricingStatedClins === 'function') ? pricingStatedClins().length : 0; } catch (e) {}
-    if (nStated && typeof pricingClinBuildFromStated === 'function') { try { pricingClinBuildFromStated({ silent: true }); } catch (e) {} }
-    if (typeof pricingModel !== 'undefined' && pricingModel) pricingModel._built = true;
-    if (typeof pricingSave === 'function') pricingSave();
-    if (typeof pricingRenderAll === 'function') pricingRenderAll();
-    // (#10) The pivot's CLIN column could miss the freshly-built CLIN lines on the first paint — a
-    // render/state-timing quirk that used to need a second "Re-finalize" click to clear. CLIN state is
-    // now committed above (built silently, then ONE clean render); force one more pivot rebuild on the
-    // next frame so the CLIN column always fills in on the very first Finalize.
-    if (typeof pricingPivotRender === 'function') { const _rp = function () { try { pricingPivotRender(); } catch (e) {} }; if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_rp); else setTimeout(_rp, 0); }
-    const b2 = document.getElementById('pricingFinalizeBtn');
-    const st2 = document.getElementById('pricingFinalizeStatus');
-    if (b2) { b2.disabled = false; b2.innerHTML = '🔨 Re-finalize'; }
-    if (st2) { st2.style.display = 'block'; st2.innerHTML = '<span style="color:#166534;font-weight:700">\u2713 Built.</span> ' + (nStated ? ('CLIN structure joined \u2014 ' + nStated + ' CLIN(s) from the solicitation applied to your pricing.') : 'The solicitation states no CLINs, so none were applied (correct).') + ' Run the PWS check below, then export.'; }
-  }, 550);
-}
 function pricingModelReviewCsv() {
   const M = pricingModel;
   if (!M || !M.lcats || !M.lcats.length) return '';
@@ -22861,7 +22952,7 @@ async function extractOpportunityIntel(docContent, apiKey) {
     `3. For requirement_name: copy the EXACT title from the solicitation cover page — do not reword or expand it. For id_number: find the solicitation / RFQ / RFP / notice / reference number and copy it EXACTLY (keep dashes, letters, and leading zeros). Look on the cover page, the SF-1449 / SF-18 / SF-33 form block, the document header or footer, the SAM.gov notice ID, AND the USER-PROVIDED CONTEXT. Agency formats vary widely — e.g. N00189-25-R-0001, W912DY-25-R-0042, FA8501-25-R-0001, 47QRAA25R0001, 36C10X26Q0225, 91990026Q0072, 70Z02326QDCO00001, NB204000-26-01138. Use "Not stated in documents" only if there is genuinely no such number anywhere in the input.\n` +
     `4. If a field is not explicitly stated, use "Not stated in documents". Only use [Inferred] prefix when making a genuinely reasonable inference that is not directly stated.\n` +
     `5. For stage: classify into EXACTLY ONE controlled value from the notice/request type: "Sources Sought", "RFI", "Draft", "Pre-solicitation", "RFQ", or "RFP". Read the OVERALL action type from explicit language ("Request for Quotation" = RFQ, "Request for Proposal" = RFP, "Sources Sought", "Request for Information" = RFI, "Presolicitation" = Pre-solicitation, "Draft RFP/RFQ" = Draft). A draft PWS, draft SOW, or other draft ATTACHMENT is a document type, NOT a stage: never output "Draft PWS" and do NOT set stage to "Draft" merely because a draft attachment is present - if the action is an active RFQ or RFP that includes a draft PWS, the stage is RFQ or RFP. Use "Draft" ONLY when the solicitation ITSELF is explicitly released as a draft for industry comment. Output only one of the six values, or "Not stated in documents" if genuinely indeterminate.\n` +
-    `6. For labor_categories, build the REALISTIC STAFFED TEAM you would actually price - NOT a menu of every title or skill mentioned. (a) If the solicitation gives a workload / level-of-effort / staffing table (see the WORKLOAD rule below), reproduce EXACTLY those categories and set loe_basis to "government". (b) Otherwise the labor is quoter-defined (you propose the team in a pricing model), so set loe_basis to "quoter": name each DISTINCT role and CONSOLIDATE overlapping skills under one qualified person. Expertise areas or SME domains (e.g. Records Management, Section 508, FOIA/FACA, Technical Writing, Content Management) are NOT separate labor categories when one senior person - often the PM/SME - would cover several; do NOT reify a list of required skills into one role per skill. Give the team you would actually staff to perform the scope: a small virtual A&AS / advisory / support effort is typically 2-5 people (e.g. a lead/PM plus 1-3 support analysts), not one role per mentioned domain. Assign EVERY role a base_year_fte (whole numbers preferred; fractional only for genuine part-time) and an est_loaded_rate = your realistic fully-loaded hourly rate for that role in USD (integer; e.g. senior PM/SME ~150-190, mid analyst ~95-130, junior/admin ~70-95) unless min_hourly_rate is stated. Sort by base_year_fte descending, then by name.\n` +
+    `6. For labor_categories, build the REALISTIC STAFFED TEAM you would actually price - NOT a menu of every title or skill mentioned. (a) If the solicitation gives a workload / level-of-effort / staffing table (see the WORKLOAD rule below), reproduce EXACTLY those categories and set loe_basis to "government". (b) Otherwise the labor is quoter-defined (you propose the team in a pricing model), so set loe_basis to "quoter": name each DISTINCT role and CONSOLIDATE overlapping skills under one qualified person. Expertise areas or SME domains (e.g. Records Management, Section 508, FOIA/FACA, Technical Writing, Content Management) are NOT separate labor categories when one senior person - often the PM/SME - would cover several; do NOT reify a list of required skills into one role per skill. Give the team you would actually staff to perform the scope: a small virtual A&AS / advisory / support effort is typically 2-5 people (e.g. a lead/PM plus 1-3 support analysts), not one role per mentioned domain. Assign EVERY role a base_year_fte (whole numbers preferred; fractional only for genuine part-time) and an est_loaded_rate = your realistic fully-loaded hourly rate for that role in USD (integer; e.g. senior PM/SME ~150-190, mid analyst ~95-130, junior/admin ~70-95) unless min_hourly_rate is stated. Set clin to the Section B / CLIN-schedule number this role's effort is priced under WHEN the solicitation ties this labor to a specific CLIN (base-period number, verbatim, leading zeros preserved); leave it EMPTY when the solicitation lists CLINs without tying this role to one, or lists none - never invent a CLIN. Sort by base_year_fte descending, then by name.\n` +
     `7. For is_sca: the contract is SCA/SCLS-covered whenever a Wage Determination is attached or referenced, or FAR 52.222-41 applies - treat a WD's presence as DECISIVE evidence of coverage. When the contract is SCA-covered, mark is_sca true for every non-exempt SERVICE position (administrative, technical support, clerical, operations, maintenance, help-desk, and similar roles). Mark a position false ONLY if it is a bona-fide exempt professional/administrative/executive/computer employee under 29 CFR 541, or the contract is genuinely not SCA-covered. Do NOT mark positions false just because the SCA clause does not name each one individually, and do NOT default everything to false when a WD is present.\n` +
     `8. For min_hourly_rate: ONLY populate this if the solicitation or an attached Wage Determination EXPLICITLY states the exact dollar amount for this LCAT. If no rate is stated verbatim, use "" (empty string). Do NOT estimate, infer, or look up WD rates - only copy exact figures from the document.\n` +
     `9. For pursuit_recommendation: this is a REQUIRED professional judgment — NEVER leave it blank or use "Not stated". Decide "Prime", "Subcontract", or "Pass" for ${CLIENT_CONFIG.companyShortName || 'the company'}${CLIENT_CONFIG.businessType ? ' (a ' + CLIENT_CONFIG.businessType + ')' : ''} and give a one- to two-sentence rationale grounded in set-aside fit, capability alignment, and competitive position. Begin the value with the decision word. Example: "Prime - the set-aside aligns directly with the company's certifications and the NAICS matches core capabilities."\n\n` +
@@ -22870,7 +22961,7 @@ async function extractOpportunityIntel(docContent, apiKey) {
 Respond with ONLY a raw JSON object. No markdown. No backticks. Start with { end with }.\n` +
     `WORKLOAD / LEVEL-OF-EFFORT TABLE (OVERRIDES rule 10 whenever such a table is present): If the solicitation gives an estimated-hours / workload / level-of-effort table by labor category, treat those hours as the authoritative basis and do NOT estimate. (a) ANNUAL hours = the sum of the BASE-YEAR hours column ONLY; NEVER add the base-year and option-year columns together (option periods are SEPARATE performance periods, not additional concurrent staff). (b) fte_count = annual hours / 1912, rounded to ONE decimal, PREFIXED with "[GovEst] " because it is derived from the government's STATED workload estimate (an estimate, not a firm requirement) - e.g. "[GovEst] 7.7". (c) For EACH labor category, base_year_fte = that category base-year hours / 1912 to one decimal, and set base_year_hours to that category's base-year hours as an INTEGER exactly as stated in the table. (d) base_year_value and total_contract_value are the government's stated workload priced at a rate WE assume, so PREFIX BOTH with "[Inferred] ". Compute base_year_value = annual hours times a REALISTIC blended fully-loaded hourly rate: for analytical / professional-services labor (data analysts, business process engineers, program managers, and similar) a defensible blended fully-loaded rate is roughly $100-$150/hr - use a higher rate ONLY for genuinely specialized or cleared labor and note that in award_value_rationale. Do NOT use inflated rates (e.g. $250+/hr) for standard analyst / professional labor. Example base_year_value "[Inferred] ~$1.8M/yr". total_contract_value = base_year_value times the real contract LENGTH IN YEARS, not the number of ordering periods - a 6-month base plus four 12-month option years is 4.5 years, not 5 - e.g. "[Inferred] ~$3.6M". In award_value_rationale state the hours basis and the assumed blended rate (e.g. "RFQ base-year workload of 14685 hours across 5 labor categories at a blended loaded rate of ~$125/hr").\n\n` +
     `IMPORTANT: Use only plain ASCII in all string values. No special characters, no em-dashes, no smart quotes, no newlines inside strings.\n\n` +
-    `{"department_agency":"top-level Cabinet Department or independent agency, with abbreviation","sub_agency":"operating division/bureau/command beneath it with abbreviation, or empty string if none","contracting_office":"specific contracting/buying office issuing this action, or empty string if not stated","requirement_name":"EXACT verbatim title from document","id_number":"exact solicitation/RFQ/RFP number","stage":"exactly one of: Sources Sought | RFI | Draft | Pre-solicitation | RFQ | RFP (per rule 5); never 'Draft PWS'; or 'Not stated in documents'","next_due_date":"the next date an action is due from the offeror - normally the proposal/quote DUE (close) date. If the base solicitation and one or more amendments each state a due/close date, use the LATEST (maximum) - amendments push the deadline out; never report a superseded earlier date. Give as YYYY-MM-DD (add time/zone if stated); empty string if not stated","opportunity_url":"","source":"where this opportunity was found/sourced if the user or documents state it - e.g. SAM.gov, GSA eBuy, Unison Marketplace/ORBIT, an agency forecast (APFS/AFPS), GovWin, a direct agency email, or a sources-sought notice. This is the portal/channel it came through, distinct from the contract vehicle. Use the value the user provided if noted; empty string if not stated","description":"2-3 sentence description in your own words; if this opportunity establishes or is itself a contract vehicle (IDIQ/MATOC/BPA/GWAC), state that explicitly","fte_count":"per the WORKLOAD / LEVEL-OF-EFFORT rule above when such a table is present (base-year hours only / 1912, one decimal, PREFIXED [GovEst]); else the explicitly stated figure (no prefix); else empty string","contract_years":"total years in the period of performance as a PLAIN INTEGER (base year + all option years), e.g. 5 for a base plus four option years; empty string if not stated - do NOT put hours, dollars, or dates here","place_of_performance":"","work_setting":"","period_of_performance":"","pop_start_date":"the START date of the base period of performance if the documents state one (e.g. an anticipated award date or base-period start); if only estimated/anticipated, prefix [Inferred]; empty if not stated","pop_end_date":"the END date of the BASE period ONLY (the first ordering/performance period, typically ~364-365 days after pop_start_date) as YYYY-MM-DD. This is NOT the end of the option years - if the base period is 12 months and starts 2025-10-01 this is 2026-09-30. Use a stated base-period end if given; else compute it from pop_start_date + the base period length (prefix [Inferred] if computed). Do NOT put the final option-year end date here - that is last_possible_performance_date. Empty if neither stated nor computable","last_possible_performance_date":"the LAST date performance can occur on the contract, INCLUDING every option period - the end of the final option year (typically ~5 years after pop_start_date for a base + four options) as YYYY-MM-DD. This is DISTINCT from pop_end_date: pop_end_date ends the base period, this ends the whole contract. On a single-period contract with no options the two are the SAME. Use a stated final/option end date if given; else compute it from pop_start_date + total contract duration (base + all options), prefix [Inferred]; empty if neither stated nor computable","facility_clearance_required":"","personnel_clearance_required":"","set_aside":"the EXACT operative set-aside from the solicitation (the SAM.gov Set-Aside Type, the 'Set-Aside:' block, or the FAR clause: 52.219-6 = Total Small Business, 52.219-27 = SDVOSB, 52.219-30 = WOSB, 52.219-29 = EDWOSB, 52.219-3 = HUBZone, 52.219-18 = 8(a)). These are DISTINCT categories - never substitute one for another; a Total Small Business set-aside is NOT WOSB/SDVOSB/8(a)/HUBZone. Cross-check against the required certifications - if offerors must hold a specific certification, the set_aside MUST match it. Do NOT infer a socioeconomic set-aside from small-business subcontracting goals, agency socioeconomic goals, or NAICS size-standard eligibility - classify ONLY from the operative set-aside determination. CRITICAL CHECKBOX RULE: standard forms (SF-1449 block 10, SF-33, SF-1442) print Small Business, WOSB, EDWOSB, SDVOSB, HUBZone and 8(a) as checkbox LABELS on EVERY form regardless of the real set-aside, and PDF text extraction routinely drops or misplaces the check-mark - so you often CANNOT tell which box is checked from the raw text. NEVER assign a socioeconomic set-aside (WOSB/EDWOSB/SDVOSB/HUBZone/8(a)) merely because its label appears in that list or a stray mark sits near it. Assign a socioeconomic type ONLY when named unambiguously - by the SAM.gov Set-Aside Type field, an explicit 'set aside 100% for <type> concerns' sentence, or a set-aside FAR clause cited AS the authority. If only the ambiguous checkbox block is present with no such unambiguous naming, classify it as Total Small Business (the broadest small-business reading) - do NOT guess a restrictive socioeconomic type that could wrongly bar the bid, and set prime eligibility to reflect Total Small Business (a small business qualifies). Use 'Not stated in documents' only if genuinely absent","contract_vehicle":"the NAME of the existing contract vehicle this work is ordered under, if any - e.g. SEWP V, OASIS+, Alliant 2, GSA MAS / Federal Supply Schedule, CIO-SP4, 8(a) STARS III, or a specifically named agency IDIQ or BPA. This is a PROPER NAME, not a contract type or structure: do NOT put IDIQ, MATOC, BPA, GWAC, single/multiple award, FFP, or T&M here (those belong in contract_type). If this opportunity is ITSELF establishing a new vehicle (e.g. standing up an IDIQ/MATOC/BPA that is being competed), put N/A here and make that clear in requirement_name and description instead. If the work is open-market/standalone or no named vehicle is identified, put N/A","ko_name_office":"","cor_name_office":"","naics_code":"","sin":"","psc":"","base_year_value":"","total_contract_value":"","award_value_rationale":"","new_or_recompete":"","incumbent":"","contract_type":"","sca_coverage":"whether the contract is covered by the Service Contract Act / Service Contract Labor Standards (SCLS). Answer 'Yes - SCA covered' if a Wage Determination is attached or referenced (a WD document, an SF-98/98a, a WD number such as 2015-XXXX or a state/area WD, or DOL occupation-and-wage tables) OR FAR 52.222-41 applies - the PRESENCE of a Wage Determination is DECISIVE, answer Yes. Answer 'No - exempt' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption). Do NOT answer No merely because the work sounds professional or technical. Use 'Not stated in documents' only if genuinely not addressed","loe_basis":"government if the solicitation gives a workload/staffing/hours table, otherwise quoter (you propose the team in a pricing model); empty if unclear","certifications_required":[],"labor_categories":[{"lcat":"Exact Labor Category Title","key_personnel":false,"is_sca":false,"min_hourly_rate":"","clearance":"","experience_yrs":"","education":"","base_year_fte":"","base_year_hours":"","est_loaded_rate":"","notes":""}],"stated_clins":[{"number":"the CLIN number EXACTLY as written in the solicitation's pricing/CLIN schedule (Section B, or a Section 1.2 'Contract Line Item Number' table), preserving ALL leading zeros and the exact width used (e.g. '00010','00011','0001','1001','0002AA'); copy verbatim - never renumber, pad, or normalize. Include EVERY CLIN listed, base and option and optional","title":"the CLIN description/title as written (e.g. 'Activity-Based Costing Support','Travel')","clin_type":"one of 'FFP' (firm-fixed-price), 'reimbursable' (a cost-reimbursable / travel / ODC / not-to-exceed line), 'T&M', or 'cost'; use any explicit FFP-vs-reimbursable CLIN instruction list in the pricing section to classify","nte":"the not-to-exceed / ceiling dollar amount stated for THIS CLIN as a number (e.g. 7500, 25000); '' if none stated","period_label":"the performance period this CLIN sits under, copied from its heading (e.g. 'Base Period','Option Period 1','Option Year 2','Optional Base','Optional Task Option Period 1')","scope_hint":"one of 'labor' (the priced services/effort CLIN), 'travel', 'materials', or 'other'","optional":"true if this CLIN is an OPTIONAL / separately-exercisable line or belongs to a separate optional task track (not part of the primary base+option-year pricing); else false"}],"pursuit_recommendation":"prime/sub/pass with brief rationale"}`;
+    `{"department_agency":"top-level Cabinet Department or independent agency, with abbreviation","sub_agency":"operating division/bureau/command beneath it with abbreviation, or empty string if none","contracting_office":"specific contracting/buying office issuing this action, or empty string if not stated","requirement_name":"EXACT verbatim title from document","id_number":"exact solicitation/RFQ/RFP number","stage":"exactly one of: Sources Sought | RFI | Draft | Pre-solicitation | RFQ | RFP (per rule 5); never 'Draft PWS'; or 'Not stated in documents'","next_due_date":"the next date an action is due from the offeror - normally the proposal/quote DUE (close) date. If the base solicitation and one or more amendments each state a due/close date, use the LATEST (maximum) - amendments push the deadline out; never report a superseded earlier date. Give as YYYY-MM-DD (add time/zone if stated); empty string if not stated","opportunity_url":"","source":"where this opportunity was found/sourced if the user or documents state it - e.g. SAM.gov, GSA eBuy, Unison Marketplace/ORBIT, an agency forecast (APFS/AFPS), GovWin, a direct agency email, or a sources-sought notice. This is the portal/channel it came through, distinct from the contract vehicle. Use the value the user provided if noted; empty string if not stated","description":"2-3 sentence description in your own words; if this opportunity establishes or is itself a contract vehicle (IDIQ/MATOC/BPA/GWAC), state that explicitly","fte_count":"per the WORKLOAD / LEVEL-OF-EFFORT rule above when such a table is present (base-year hours only / 1912, one decimal, PREFIXED [GovEst]); else the explicitly stated figure (no prefix); else empty string","contract_years":"total years in the period of performance as a PLAIN INTEGER (base year + all option years), e.g. 5 for a base plus four option years; empty string if not stated - do NOT put hours, dollars, or dates here","place_of_performance":"","work_setting":"","period_of_performance":"","pop_start_date":"the START date of the base period of performance if the documents state one (e.g. an anticipated award date or base-period start); if only estimated/anticipated, prefix [Inferred]; empty if not stated","pop_end_date":"the END date of the BASE period ONLY (the first ordering/performance period, typically ~364-365 days after pop_start_date) as YYYY-MM-DD. This is NOT the end of the option years - if the base period is 12 months and starts 2025-10-01 this is 2026-09-30. Use a stated base-period end if given; else compute it from pop_start_date + the base period length (prefix [Inferred] if computed). Do NOT put the final option-year end date here - that is last_possible_performance_date. Empty if neither stated nor computable","last_possible_performance_date":"the LAST date performance can occur on the contract, INCLUDING every option period - the end of the final option year (typically ~5 years after pop_start_date for a base + four options) as YYYY-MM-DD. This is DISTINCT from pop_end_date: pop_end_date ends the base period, this ends the whole contract. On a single-period contract with no options the two are the SAME. Use a stated final/option end date if given; else compute it from pop_start_date + total contract duration (base + all options), prefix [Inferred]; empty if neither stated nor computable","facility_clearance_required":"","personnel_clearance_required":"","set_aside":"the EXACT operative set-aside from the solicitation (the SAM.gov Set-Aside Type, the 'Set-Aside:' block, or the FAR clause: 52.219-6 = Total Small Business, 52.219-27 = SDVOSB, 52.219-30 = WOSB, 52.219-29 = EDWOSB, 52.219-3 = HUBZone, 52.219-18 = 8(a)). These are DISTINCT categories - never substitute one for another; a Total Small Business set-aside is NOT WOSB/SDVOSB/8(a)/HUBZone. Cross-check against the required certifications - if offerors must hold a specific certification, the set_aside MUST match it. Do NOT infer a socioeconomic set-aside from small-business subcontracting goals, agency socioeconomic goals, or NAICS size-standard eligibility - classify ONLY from the operative set-aside determination. CRITICAL CHECKBOX RULE: standard forms (SF-1449 block 10, SF-33, SF-1442) print Small Business, WOSB, EDWOSB, SDVOSB, HUBZone and 8(a) as checkbox LABELS on EVERY form regardless of the real set-aside, and PDF text extraction routinely drops or misplaces the check-mark - so you often CANNOT tell which box is checked from the raw text. NEVER assign a socioeconomic set-aside (WOSB/EDWOSB/SDVOSB/HUBZone/8(a)) merely because its label appears in that list or a stray mark sits near it. Assign a socioeconomic type ONLY when named unambiguously - by the SAM.gov Set-Aside Type field, an explicit 'set aside 100% for <type> concerns' sentence, or a set-aside FAR clause cited AS the authority. If only the ambiguous checkbox block is present with no such unambiguous naming, classify it as Total Small Business (the broadest small-business reading) - do NOT guess a restrictive socioeconomic type that could wrongly bar the bid, and set prime eligibility to reflect Total Small Business (a small business qualifies). Use 'Not stated in documents' only if genuinely absent","contract_vehicle":"the NAME of the existing contract vehicle this work is ordered under, if any - e.g. SEWP V, OASIS+, Alliant 2, GSA MAS / Federal Supply Schedule, CIO-SP4, 8(a) STARS III, or a specifically named agency IDIQ or BPA. This is a PROPER NAME, not a contract type or structure: do NOT put IDIQ, MATOC, BPA, GWAC, single/multiple award, FFP, or T&M here (those belong in contract_type). If this opportunity is ITSELF establishing a new vehicle (e.g. standing up an IDIQ/MATOC/BPA that is being competed), put N/A here and make that clear in requirement_name and description instead. If the work is open-market/standalone or no named vehicle is identified, put N/A","ko_name_office":"","cor_name_office":"","naics_code":"","sin":"","psc":"","base_year_value":"","total_contract_value":"","award_value_rationale":"","new_or_recompete":"","incumbent":"","contract_type":"","sca_coverage":"whether the contract is covered by the Service Contract Act / Service Contract Labor Standards (SCLS). Answer 'Yes - SCA covered' if a Wage Determination is attached or referenced (a WD document, an SF-98/98a, a WD number such as 2015-XXXX or a state/area WD, or DOL occupation-and-wage tables) OR FAR 52.222-41 applies - the PRESENCE of a Wage Determination is DECISIVE, answer Yes. Answer 'No - exempt' ONLY if the solicitation affirmatively states the work is exempt (e.g. a bona-fide professional-services exemption). Do NOT answer No merely because the work sounds professional or technical. Use 'Not stated in documents' only if genuinely not addressed","loe_basis":"government if the solicitation gives a workload/staffing/hours table, otherwise quoter (you propose the team in a pricing model); empty if unclear","certifications_required":[],"labor_categories":[{"lcat":"Exact Labor Category Title","key_personnel":false,"is_sca":false,"min_hourly_rate":"","clearance":"","experience_yrs":"","education":"","base_year_fte":"","base_year_hours":"","est_loaded_rate":"","clin":"the CLIN number from the solicitation's Section B / pricing schedule that THIS labor category's effort is priced under - the base-period number copied verbatim with leading zeros (e.g. '0001','0002AA') - ONLY when the solicitation ties this specific labor to that CLIN; empty string when the solicitation lists CLINs but does not tie this role to one, or lists no CLINs. Never invent, guess, or renumber","notes":""}],"stated_clins":[{"number":"the CLIN number EXACTLY as written in the solicitation's pricing/CLIN schedule (Section B, or a Section 1.2 'Contract Line Item Number' table), preserving ALL leading zeros and the exact width used (e.g. '00010','00011','0001','1001','0002AA'); copy verbatim - never renumber, pad, or normalize. Include EVERY CLIN listed, base and option and optional","title":"the CLIN description/title as written (e.g. 'Activity-Based Costing Support','Travel')","clin_type":"one of 'FFP' (firm-fixed-price), 'reimbursable' (a cost-reimbursable / travel / ODC / not-to-exceed line), 'T&M', or 'cost'; use any explicit FFP-vs-reimbursable CLIN instruction list in the pricing section to classify","nte":"the not-to-exceed / ceiling dollar amount stated for THIS CLIN as a number (e.g. 7500, 25000); '' if none stated","period_label":"the performance period this CLIN sits under, copied from its heading (e.g. 'Base Period','Option Period 1','Option Year 2','Optional Base','Optional Task Option Period 1')","scope_hint":"one of 'labor' (the priced services/effort CLIN), 'travel', 'materials', or 'other'","optional":"true if this CLIN is an OPTIONAL / separately-exercisable line or belongs to a separate optional task track (not part of the primary base+option-year pricing); else false"}],"pursuit_recommendation":"prime/sub/pass with brief rationale"}`;
 
   const content = [...docContent, { type: 'text', text: prompt }];
 
@@ -23631,7 +23722,10 @@ function reconcileStaffing(intel) {
       delete c._k; delete c._fte; delete c._rate; delete c._rateBasis;
     });
     intel.labor_categories = cats;
-    intel.fte_count = (source === 'government-workload' ? '[GovEst] ' : '[Proposed] ') + (Math.round(totalFte * 100) / 100);
+    var _isVehicleOpp = (typeof _bnaIsVehicle === 'function') && _bnaIsVehicle(intel) && source !== 'government-workload';
+    intel.fte_count = _isVehicleOpp
+      ? 'Level of effort is set per order \u2014 not applicable at the vehicle level.'
+      : ((source === 'government-workload' ? '[GovEst] ' : '[Proposed] ') + (Math.round(totalFte * 100) / 100));
 
     const fmt = v => v >= 1e6 ? ('$' + (Math.round(v / 1e5) / 10) + 'M') : ('$' + Math.round(v / 1000) + 'K');
     const anchorVal = statedHard ? anchorTarget : labor;   // the annual rate the total ties to
@@ -23649,6 +23743,26 @@ function reconcileStaffing(intel) {
                               periods: periods, statedMonths: _bl.statedMonths,
                               conflict: _bl.conflict, contractYears: contractYears,
                               partial: _partial };
+    // The extracted last_possible_performance_date sometimes equals the BASE period end even when
+    // the contract has option periods (contractYears > base) - a "7 contract years" opportunity that
+    // reports a last-possible date one year out is self-contradictory. When the extracted value is
+    // missing or sits at/inside the base period, project it from the base START plus the derived total
+    // contract length and mark it [Inferred]. A genuinely later extracted date is trusted as-is.
+    (function () {
+      const _strip = s => String(s == null ? '' : s).replace(/^\s*\[[^\]]*\]\s*/, '').trim();
+      const _ds = Date.parse(_strip(intel.pop_start_date));
+      if (isNaN(_ds)) return;                                 // no start date to project from
+      if (!(contractYears > (_bl.years || 0) + 0.05)) return; // no options beyond the base - base end IS the last date
+      const _de = Date.parse(_strip(intel.pop_end_date));
+      const _cur = Date.parse(_strip(intel.last_possible_performance_date));
+      if (!isNaN(_cur)) {                                     // trust an extracted date that already runs past the base period
+        if (!isNaN(_de) && _cur > _de + 5 * 86400000) return;
+        if (isNaN(_de) && _cur > _ds + 400 * 86400000) return;
+      }
+      const _d = new Date(_ds + Math.round(contractYears * 365.25) * 86400000 - 86400000);
+      const _iso = _d.getUTCFullYear() + '-' + String(_d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(_d.getUTCDate()).padStart(2, '0');
+      intel.last_possible_performance_date = '[Inferred] ' + _iso;
+    })();
     if (statedHard) {                        // keep the hard base (stated OR incumbent-sourced) verbatim; derive the total from IT
       if (!hasNum(intel.total_contract_value) || isInf(intel.total_contract_value)) intel.total_contract_value = '[Inferred] ~' + fmt(anchorVal * contractYears);
       // The stated figure is left verbatim — it is the Government's number, not ours — but
@@ -23676,7 +23790,7 @@ function reconcileStaffing(intel) {
         (Math.round((_govHpf.hpf / _govHpf.currentHpf) * 100) / 100) + '.' : '') +
         (source === 'proposed-loe' ? ' Quoter-defined LOE \u2014 confirm headcount in Pricing.' : '');
     }
-    intel._staffingReconciliation = { source: source, nRoles: cats.length, totalFte: Math.round(totalFte * 100) / 100, blended: Math.round(blended), baseValue: Math.round(anchorVal), periods: periods, contractYears: contractYears, valueDerived: !statedHard,
+    intel._staffingReconciliation = { source: source, vehicle: _isVehicleOpp, nRoles: cats.length, totalFte: Math.round(totalFte * 100) / 100, blended: Math.round(blended), baseValue: Math.round(anchorVal), periods: periods, contractYears: contractYears, valueDerived: !statedHard,
       rateDetail: rateDetail(), rateSource: rateSourceOf(),
       govHpf: _govHpf ? _govHpf.hpf : null, govHpfFrom: _govHpf ? _govHpf.currentHpf : null,
       govHpfClean: _govHpf ? _govHpf.clean : 0, govHpfTotal: _govHpf ? _govHpf.total : 0,
@@ -23685,9 +23799,26 @@ function reconcileStaffing(intel) {
     return intel;
   } catch (e) { console.warn('reconcileStaffing failed', e); return intel; }
 }
+// A standing acquisition VEHICLE (IDIQ/MATOC/BPA/GWAC/CSO) has no level of effort of its own -
+// effort is set per individual order - so proposing a team/FTE for it is misleading. True when the
+// opportunity is NOT ordered under a NAMED vehicle (contract_vehicle is N/A or blank - the schema's
+// signal that this action establishes or IS the vehicle) AND the text carries vehicle language.
+function _bnaIsVehicle(intel) {
+  if (!intel) return false;
+  var veh = String(intel.contract_vehicle == null ? '' : intel.contract_vehicle).trim().toUpperCase();
+  if (veh && veh !== 'N/A' && veh !== 'NA' && veh !== 'NONE' && veh !== 'N.A.') return false; // ordered under a named vehicle = a task order, not itself a vehicle
+  var hay = (String(intel.requirement_name || '') + ' \u2014 ' + String(intel.description || '') + ' \u2014 ' + String(intel.contract_type || '')).toLowerCase();
+  if (/\b(idiq|matoc|gwac|bpa|cso|boa)\b/.test(hay)) return true;
+  return /(indefinite[\-\s]delivery|multiple[\-\s]award|basic ordering agreement|blanket purchase agreement|government[\-\s]wide acquisition|commercial solutions opening|enterprise[\-\s]wide|ordering (agreement|period|vehicle)|standing (vehicle|solicitation|framework|contract)|ongoing acquisition mechanism|is itself a (contract )?vehicle|establish(es|ing)? (a |an )?(new )?(idiq|matoc|bpa|gwac|vehicle))/.test(hay);
+}
 function _staffingBanner(intel) {
   const r = intel && intel._staffingReconciliation;
   if (!r || !r.nRoles) return '';
+  if (r.vehicle) {
+    return '<div style="margin:2px 0 12px;border:1px solid #fcd34d;background:#fffbeb;border-radius:8px;padding:9px 12px">'
+      + '<div style="font-size:12px;font-weight:800;color:#92400e">\u2696 Staffing &amp; value \u2014 set per order</div>'
+      + '<div style="font-size:11.5px;color:var(--text);margin-top:3px;line-height:1.55">This opportunity is itself a contract vehicle (IDIQ / MATOC / BPA / GWAC / CSO), so it carries no level of effort of its own \u2014 effort is set per individual order, and the FTE count is not applicable at the vehicle level. Any role shapes or value shown are illustrative sizing only; build staffing per task order in Pricing when an order is competed.</div></div>';
+  }
   const proposed = r.source === 'proposed-loe';
   const fmt = v => v >= 1e6 ? ('$' + (Math.round(v / 1e5) / 10) + 'M') : ('$' + Math.round(v / 1000) + 'K');
   const bord = proposed ? '#fcd34d' : 'var(--info-border)', bg = proposed ? '#fffbeb' : 'var(--info-bg)', hd = proposed ? '#92400e' : 'var(--info-text)';
