@@ -1869,8 +1869,8 @@
 
   <!-- Step 1: Document Input -->
   <div class="card" style="margin-bottom:24px">
-    <div class="card-header"><span class="icon">📄</span> Step 1: Document Input</div>
-    <div class="card-body">
+    <div class="card-header"><span class="icon">📄</span> Step 1: Document Input <span id="bnaStep1Caret" onclick="bnaToggleStep('bnaStep1Body','bnaStep1Caret')" style="cursor:pointer;font-size:12px;font-weight:600;color:white;margin-left:auto;opacity:0.9">▾ Hide</span></div>
+    <div class="card-body" id="bnaStep1Body">
       <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Upload the solicitation and optionally your company documents. Company documents significantly improve scoring accuracy for Past Performance and Technical Capability.</p>
 
       <!-- Solicitation Documents -->
@@ -1938,8 +1938,8 @@
 
   <!-- Step 2: Scoring Weights + Analyze — locked until solicitation docs present -->
   <div class="card step-locked" id="bnaStep2Card" style="margin-bottom:24px">
-    <div class="card-header"><span class="icon">⚖️</span> Step 2: Customize Scoring &amp; Analyze</div>
-    <div class="card-body">
+    <div class="card-header"><span class="icon">⚖️</span> Step 2: Customize Scoring &amp; Analyze <span id="bnaStep2Caret" onclick="bnaToggleStep('bnaStep2Body','bnaStep2Caret')" style="cursor:pointer;font-size:12px;font-weight:600;color:white;margin-left:auto;opacity:0.9">▾ Hide</span></div>
+    <div class="card-body" id="bnaStep2Body">
       <div class="lock-msg"><span class="lock-icon">🔒</span><span class="lock-text">Drop solicitation documents in Step 1 to unlock</span></div>
 
       <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Adjust how much each factor contributes to the final score (weights must total exactly 100%). Clicking <strong>Analyze</strong> first extracts the opportunity details, then scores the opportunity below.</p>
@@ -2083,7 +2083,7 @@
           <div style="height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden">
             <div id="bnaScoreBar" style="height:100%;width:0%;border-radius:4px;transition:width 0.4s,background 0.4s"></div>
           </div>
-          <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5">A weak critical factor (technical capability, past performance, scope clarity) <strong>caps</strong> the fit — one real gap is decisive, not averaged away. When that ceiling is <strong>binding</strong>, the score stops there: spread calibration is skipped so a genuine gap isn’t penalized twice. Otherwise the blended score is spread-calibrated so marginal opportunities don’t all hover near the middle. <strong>Eligibility is a prime/sub gate, not averaged in</strong>, and the final verdict above also weighs how much scope you can self-perform.</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5">A weak execution factor (technical capability or scope clarity) <strong>caps</strong> the fit — one real delivery gap is decisive, not averaged away. Past performance is not a cap: weak references still count in the average, but don't hold back a bid you can deliver. When that ceiling is <strong>binding</strong>, the score stops there: spread calibration is skipped so a genuine gap isn’t penalized twice. Otherwise the blended score is spread-calibrated so marginal opportunities don’t all hover near the middle. <strong>Eligibility is a prime/sub gate, not averaged in</strong>, and the final verdict above also weighs how much scope you can self-perform.</div>
         </div><!-- end bnaScoreBreakdown -->
 
         <!-- Risks and strategy -->
@@ -2285,6 +2285,8 @@
     </div>
   </div>
 
+  <div id="pricingStatedClinPreview"></div>
+
   <!-- Step 3: PWS Tasks -->
   <div class="card step-locked" id="pricingStep3" style="margin-bottom:20px">
     <div class="card-header"><span class="icon">🧱</span> Step 3: PWS Tasks</div>
@@ -2403,6 +2405,11 @@
       <!-- Live summary: the bottom-line total, right after the build so it is the first thing you see (moved up from below the PWS check). -->
       <div id="pricingSummary" style="margin-bottom:16px"></div>
 
+      <!-- Gap analysis renders directly under the tie-out card that triggers it (its own container,
+           NOT part of pricingRenderSummary(), so a routine re-render never wipes a result being read). -->
+      <div id="pricingGapProgress" style="display:none;margin-bottom:10px"></div>
+      <div id="pricingGapPanel" style="margin-bottom:16px"></div>
+
       <!-- Pivot: its own section (#9/#16) — an obvious divide ends Finalize and sets the pivot apart; the card carries its own heading. -->
       <div style="border-top:2px solid #e2e8f0;margin:28px 0 16px"></div>
       <div id="pricingPivot" style="margin-bottom:16px"></div>
@@ -2420,10 +2427,6 @@
         <div id="constrainedPwsResults" style="display:none;margin-top:14px"></div>
       </div>
 
-      <!-- #5 Wave 4: gap analysis. Its own container, NOT part of pricingRenderSummary(), so a
-           routine re-render never wipes a result the user is still reading. -->
-      <div id="pricingGapProgress" style="display:none;margin-bottom:10px"></div>
-      <div id="pricingGapPanel" style="margin-bottom:16px"></div>
 
       <!-- Export to Excel -->
       <div id="pricingExportRow" style="margin-bottom:16px"></div>
@@ -3269,7 +3272,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live from the Settings-tab footer, or by searching
 // the page source for the APP_VERSION value below.
-const APP_VERSION = '268';
+const APP_VERSION = '281';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -7250,11 +7253,10 @@ function matchTemplatesToVolumes(templates) {
     else unmatched.push(f);
   }
 
-  // Assign unmatched files to unfilled slots in order (1-4 only; never auto-fill Vol 0)
-  let ui = 0;
-  for (const v of ['1','2','3','4']) {
-    if (!map[v] && ui < unmatched.length) map[v] = unmatched[ui++];
-  }
+  // Do NOT blind-fill: a template whose name does not identify its volume is NOT dropped into the next
+  // empty slot (that silently produced wrong-volume content - e.g. a stray file becoming the price
+  // narrative). Only name-matched templates are used; the unmatched ones are reported to the caller.
+  map._unmatched = unmatched.map(function (f) { return (f && f.name) || 'file'; });
   return map;
 }
 
@@ -9141,7 +9143,11 @@ function updateProposalPricingGate() {
     return;
   }
   banner.style.display = 'block';
-  if (pricingDone) {
+  const _scaBlock = (typeof pricingScaExportBlock === 'function') ? pricingScaExportBlock() : [];
+  if (pricingDone && _scaBlock.length) {
+    banner.innerHTML = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid #fca5a5;background:#fef2f2;border-radius:10px;padding:12px 14px"><div style="font-size:13px;color:#991b1b;flex:1;min-width:240px">\u26d4 <strong>Resolve SCA compliance before generating Volume III.</strong> ${_scaBlock.map(function (i) { return escHtml(i.msg); }).join(' ')} Set the Wage Determination (and the H&W rate) in Pricing Step 2 \u2014 the price can\u2019t ship below the SCA floor.</div><button onclick="switchTab('pricing')" style="font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:7px;padding:8px 14px;cursor:pointer;white-space:nowrap">Go to Pricing \u2192</button></div>`;
+    if (runBtn) { runBtn.disabled = true; runBtn.title = 'Resolve the SCA compliance errors on the Pricing tab first.'; }
+  } else if (pricingDone) {
     const title = (typeof cachedBriefing !== 'undefined' && cachedBriefing && cachedBriefing.requirement_title) ? cachedBriefing.requirement_title : '';
     // #30: never mix units in one sentence. Base-period FTE is reported against the BASE-period price;
     // the whole-contract figure is labelled as such, with the live value tie-out beside it.
@@ -10008,6 +10014,7 @@ async function generateDocsClientSide(proposalData, volumes) {
   // Try template-based generation first
   if (spTemplateFiles && spTemplateFiles.length > 0) {
     const templateMap = matchTemplatesToVolumes(spTemplateFiles);
+    if (templateMap._unmatched && templateMap._unmatched.length) errors.push(`Ignored ${templateMap._unmatched.length} template(s) whose names don't identify a volume (${templateMap._unmatched.join(', ')}) — rename each to include its volume (e.g. "Vol III" or "Price") to use it.`);
     showStatus('info', 'Building documents from templates...', 'Injecting content into your proposal templates.', true);
 
     for (const vol of volumes) {
@@ -11750,8 +11757,20 @@ function pricingLocalityRate(l) { return pricingLocalityTaxBurden(l); }
 // Location-adjusted wage: base rate scaled by the labor-cost differential. Used consistently in BOTH
 // the fully burdened rate AND the SCA H&W/wage fringe term, so H&W stays a fixed $/hr while wage-derived
 // components scale together. Never mutates l.baseRate (the pinned anchor).
+// #6 (Phase 3): the WD wage is a FLAT floor already set for the locality (WDs are published county-by-
+// county), so it is used AS-IS - never rescaled. For an SCA-covered role on a non-GSA buy the wage
+// actually paid must be at or above that minimum; this reports whether the floor binds and by how much,
+// and is the single source both the rate build-up and the compliance notes read.
+function pricingWdFloorInfo(l) {
+  if (!(l && l.scaCovered) || pricingIsGsa()) return null;
+  const wd = pricingLcatWdWage(l); if (!(wd > 0)) return null;
+  const raw = (parseFloat(l.baseRate) || 0) * (1 + pricingLocalityLaborDiff(l));
+  return { wd: wd, raw: raw, binds: raw > 0 && raw < wd };
+}
 function pricingEffectiveBaseRate(l) {
-  return (parseFloat(l && l.baseRate) || 0) * (1 + pricingLocalityLaborDiff(l));
+  const raw = (parseFloat(l && l.baseRate) || 0) * (1 + pricingLocalityLaborDiff(l));
+  const _wd = pricingWdFloorInfo(l);            // enforce the WD minimum wage as a flat floor
+  return (_wd && _wd.binds) ? _wd.wd : raw;
 }
 function pricingEffectiveFringeRate(l) {
   const p = CLIENT_CONFIG.pricing || {};
@@ -11774,18 +11793,23 @@ function pricingEffectiveWrapFactor(l) {
   return (1 + f) * (1 + o) * (1 + g) * (1 + fee);
 }
 // SCA compliance issues across the labor mix (for the warning panel + Vol III narrative).
+// Phase 3c - hard SCA blockers for export gating: an SCA-covered role with no Wage Determination wage, or
+// a covered contract with no H&W. These are the sev:'error' issues from pricingScaIssues; a price built
+// with them would understate the SCA floor, so the Excel + proposal exports are blocked until they are
+// resolved. Returns [] when SCA is inactive or clear (non-SCA contracts are never gated).
+function pricingScaExportBlock() {
+  return pricingScaIssues().filter(function (i) { return i && i.sev === 'error'; });
+}
 function pricingScaIssues() {
   const out = [];
   if (!pricingScaActive()) return out;
-  if (pricingScaHw() <= 0) out.push({ type: 'hw', msg: 'This contract is marked SCA-covered but no Health & Welfare rate is set.' });
+  if (pricingScaHw() <= 0) out.push({ type: 'hw', sev: 'error', msg: 'This contract is marked SCA-covered but no Health & Welfare rate is set.' });
   pricingModel.lcats.forEach(l => {
     if (!l.scaCovered) return;
     const wd = pricingLcatWdWage(l);
-    if (wd <= 0) { out.push({ type: 'nowage', lcat: l.name, msg: `${l.name || 'A role'} is SCA-covered but has no Wage Determination minimum wage set.` }); return; }
-    if (!pricingIsGsa()) {
-      const base = parseFloat(l.baseRate) || 0;
-      if (base > 0 && base < wd) out.push({ type: 'floor', lcat: l.name, msg: `${l.name}: base wage ${pricingFmtC(base)}/hr is BELOW the WD minimum of ${pricingFmtC(wd)}/hr.` });
-    }
+    if (wd <= 0) { out.push({ type: 'nowage', sev: 'error', lcat: l.name, msg: `${l.name || 'A role'} is SCA-covered but has no Wage Determination minimum wage set.` }); return; }
+    const fi = pricingWdFloorInfo(l);
+    if (fi && fi.binds) out.push({ type: 'floored', sev: 'info', lcat: l.name, msg: `${l.name}: entered base ${pricingFmtC(fi.raw)}/hr is below the WD minimum \u2014 priced at the ${pricingFmtC(fi.wd)}/hr floor.` });
   });
   return out;
 }
@@ -12631,6 +12655,8 @@ function _pxCopyFallback(tsv, ok, msg) {
   try { const ta = document.createElement('textarea'); ta.value = tsv; ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.focus(); ta.select(); const done = document.execCommand('copy'); document.body.removeChild(ta); done ? ok() : (msg && msg('Copy failed \u2014 select the table and copy manually.')); } catch (e) { msg && msg('Copy failed \u2014 select the table and copy manually.'); }
 }
 function pricingPivotDownload() {
+  var _scaB = pricingScaExportBlock();
+  if (_scaB.length) { if (typeof showStatus === 'function') showStatus('error', 'Resolve SCA compliance before exporting', _scaB.map(function (i) { return i.msg; }).join(' ') + ' Set the Wage Determination (and the H&W rate) in Pricing Step 2 first.'); return; }
   const built = pricingPivotBuild(); if (built.empty || typeof XLSX === 'undefined') return;
   const aoa = built.aoa, nrd = built.nRowDims;
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -13785,6 +13811,44 @@ function pricingRemoveWdRow(id) { pricingModel.sca.rates = pricingModel.sca.rate
 function pricingSetWdRow(id, field, val) { const r = pricingModel.sca.rates.find(x => x.id === id); if (r) { r[field] = val; (field === 'wage') ? pricingRecalc() : pricingRenderAll(); } }
 function pricingAddWdFiles(files) { Array.from(files || []).forEach(f => { if (!pricingWdFiles.find(x => x.name === f.name && x.size === f.size)) pricingWdFiles.push(f); }); pricingRenderAll(); }
 function pricingRemoveWdFile(name) { pricingWdFiles = pricingWdFiles.filter(f => f.name !== name); pricingRenderAll(); }
+// #6 (Phase 3): match each SCA-covered role to the closest Wage Determination occupation by title, so
+// the WD minimum populates automatically instead of being hand-picked per role. The match must be
+// CONFIDENT (exact, containment, or strong token overlap) or the role is left for a manual pick - a
+// wrong occupation would set a wrong floor. wdWage stays display/flag-only until the floor is enforced.
+function _pxWdMatchScore(roleName, occTitle) {
+  const norm = s => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const rn = norm(roleName), on = norm(occTitle);
+  if (!rn || !on) return 0;
+  if (rn === on) return 1;
+  const stop = { and:1, or:1, the:1, of:1, a:1, an:1, to:1, for:1, i:1, ii:1, iii:1, iv:1, v:1, sr:1, jr:1, senior:1, junior:1, level:1, lead:1 };
+  const toks = s => norm(s).split(' ').filter(w => w && !stop[w]);
+  const rt = toks(roleName), ot = toks(occTitle);
+  if (!rt.length || !ot.length) return 0;
+  const rset = {}, oset = {}; rt.forEach(w => { rset[w] = 1; }); ot.forEach(w => { oset[w] = 1; });
+  let inter = 0; Object.keys(rset).forEach(w => { if (oset[w]) inter++; });
+  const overlap = inter / Math.min(Object.keys(rset).length, Object.keys(oset).length);
+  if (rn.indexOf(on) >= 0 || on.indexOf(rn) >= 0) return Math.max(overlap, 0.85);
+  return overlap;
+}
+function pricingAutoMapWd(force, silent) {
+  const res = { mapped: 0, skipped: 0 };
+  if (!pricingScaActive()) return res;
+  const rates = pricingModel.sca.rates || [];
+  if (!rates.length) { if (!silent && typeof showStatus === 'function') showStatus('info', 'No WD occupations yet', 'Read or enter the Wage Determination occupations first, then auto-match.'); return res; }
+  pricingModel.lcats.forEach(l => {
+    if (!l.scaCovered) return;
+    if (!force && pricingLcatWdWage(l) > 0) return;
+    let best = null, bestScore = 0;
+    rates.forEach(r => { const s = _pxWdMatchScore(l.name, r.title); if (s > bestScore) { bestScore = s; best = r; } });
+    if (best && bestScore >= 0.6 && (parseFloat(best.wage) || 0) > 0) { l.wdWage = parseFloat(best.wage); l._wdMatchedTo = String(best.title || ''); res.mapped++; }
+    else { if (force) l._wdMatchedTo = ''; res.skipped++; }
+  });
+  if (!silent) {
+    if (typeof pricingRenderAll === 'function') pricingRenderAll();
+    if (typeof showStatus === 'function') showStatus(res.mapped ? 'success' : 'info', res.mapped ? 'Matched roles to WD occupations' : 'No confident matches', res.mapped + ' role' + (res.mapped === 1 ? '' : 's') + ' matched to a WD occupation' + (res.skipped ? '; ' + res.skipped + ' still ' + (res.skipped === 1 ? 'needs' : 'need') + ' a manual pick (no confident match)' : '') + '. Verify each against the WD.');
+  }
+  return res;
+}
 // Build the best SAM.gov link for the current WD: when both the number and revision are known
 // (usually auto-filled from the RFP by #9), deep-link straight to that exact determination
 // (sam.gov/wage-determination/{number}/{revision}); otherwise open the WD search so the user can
@@ -13848,8 +13912,9 @@ async function pricingParseWd() {
     }
     if (rates.length) pricingModel.sca.rates = rates;
     if (pricingModel.sca.covered == null) pricingModel.sca.covered = true;
+    const _am = pricingAutoMapWd(false, true);
     pricingRenderAll();
-    showStatus('success', 'Wage Determination read', `Extracted ${rates.length} occupation${rates.length === 1 ? '' : 's'}${(parsed && parseFloat(parsed.hw_rate) > 0) ? ` and an H&W rate of ${pricingFmtC(parseFloat(parsed.hw_rate))}/hr` : ''}. Verify against the WD on SAM.gov \u2014 rates change annually.`);
+    showStatus('success', 'Wage Determination read', `Extracted ${rates.length} occupation${rates.length === 1 ? '' : 's'}${(parsed && parseFloat(parsed.hw_rate) > 0) ? ` and an H&W rate of ${pricingFmtC(parseFloat(parsed.hw_rate))}/hr` : ''}.${_am.mapped ? ` Auto-matched ${_am.mapped} covered role${_am.mapped === 1 ? '' : 's'} to a WD occupation.` : ''} Verify against the WD on SAM.gov \u2014 rates change annually.`);
   } catch (e) {
     console.error('WD parse failed:', e);
     showStatus('error', 'Could not read the WD', e.message || String(e));
@@ -13866,7 +13931,7 @@ function pricingRenderSca() {
   const covVal = cov === true ? 'yes' : (cov === false ? 'no' : 'unsure');
   const fringePct = ((CLIENT_CONFIG.pricing || {}).fringe) || 28;
   const radio = (val, label) => `<label style="font-size:12px;display:inline-flex;align-items:center;gap:5px;margin-right:14px;cursor:pointer"><input type="radio" name="pricingScaCov" value="${val}" ${covVal === val ? 'checked' : ''} onchange="pricingSetScaCovered('${val}')" style="width:auto"/> ${label}</label>`;
-  let h = `<div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:#fcfcfd"><div style="font-weight:700;font-size:13px;margin-bottom:6px">Service Contract Act / Wage Determination</div><div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">If this contract is SCA/SCLS-covered, the Wage Determination sets <strong>minimum hourly wages</strong> (by occupation and locality) and a <strong>Health &amp; Welfare</strong> fringe paid on top of wages. The tool then uses these as floors and makes fringe H&amp;W-aware instead of a flat ${fringePct}%.</div><div style="margin-bottom:6px">${radio('yes', 'SCA / SCLS-covered')}${radio('no', 'Not covered (e.g. exempt professional services)')}${radio('unsure', 'Not sure')}</div>`;
+  let h = `<div style="border:1px solid ${cov === true ? '#f59e0b' : 'var(--border)'};border-radius:10px;padding:12px 14px;background:${cov === true ? '#fffbeb' : '#fcfcfd'}"><div style="font-weight:700;font-size:13px;margin-bottom:6px;color:${cov === true ? '#92400e' : 'var(--text)'}">${cov === true ? '\u2696 ' : ''}Service Contract Act / Wage Determination${cov === true ? ' \u2014 covered; set up the Wage Determination below' : ''}</div><div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">If this contract is SCA/SCLS-covered, the Wage Determination sets <strong>minimum hourly wages</strong> (by occupation and locality) and a <strong>Health &amp; Welfare</strong> fringe paid on top of wages. The tool then uses these as floors and makes fringe H&amp;W-aware instead of a flat ${fringePct}%.</div><div style="margin-bottom:6px">${radio('yes', 'SCA / SCLS-covered')}${radio('no', 'Not covered (e.g. exempt professional services)')}${radio('unsure', 'Not sure')}</div>`;
   if (cov === true) {
     h += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"><div><label style="display:block;font-size:11px;color:var(--muted)">WD number</label><input value="${pricingEsc(sca.wdNumber)}" onchange="pricingSetScaField('wdNumber',this.value)" placeholder="2015-4281" style="width:130px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"/></div><div><label style="display:block;font-size:11px;color:var(--muted)">Revision</label><input value="${pricingEsc(sca.wdRevision)}" onchange="pricingSetScaField('wdRevision',this.value)" placeholder="23" style="width:70px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"/></div><div style="flex:1;min-width:140px"><label style="display:block;font-size:11px;color:var(--muted)">Locality (place of performance)</label><input value="${pricingEsc(sca.locality)}" onchange="pricingSetScaField('locality',this.value)" placeholder="e.g. Anne Arundel County, MD" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"/></div></div>`;
     h += `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-top:8px"><div><label style="display:block;font-size:11px;color:var(--muted)">H&amp;W basis</label><select onchange="pricingSetScaHwBasis(this.value)" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:white"><option value="standard" ${sca.hwBasis === 'standard' ? 'selected' : ''}>Standard ($5.55/hr)</option><option value="eo13706" ${sca.hwBasis === 'eo13706' ? 'selected' : ''}>EO 13706 sick leave ($5.09/hr)</option><option value="custom" ${sca.hwBasis === 'custom' ? 'selected' : ''}>Custom</option></select></div><div><label style="display:block;font-size:11px;color:var(--muted)">H&amp;W $/hr</label><input type="text" inputmode="decimal" value="${_pxFmtMoney(sca.hw)}" onchange="pricingSetScaHw(this.value)" style="width:90px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:right"/></div><div style="font-size:10.5px;color:var(--muted);max-width:340px;line-height:1.4">July 2025 rates. H&amp;W updates annually and is furnished separately from wages \u2014 confirm the figure on the actual WD (SAM.gov).</div></div>`;
@@ -13897,7 +13962,9 @@ function pricingRenderSca() {
     h += `<div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.4">${_samHint} DOL Wage Determinations are public; you can also enter the rates by hand above.</div>`;
     h += `</div>`;
     const issues = pricingScaIssues();
-    if (issues.length) h += `<div style="margin-top:10px;border:1px solid #fecaca;background:#fef2f2;border-radius:8px;padding:9px 11px"><div style="font-weight:700;font-size:11.5px;color:#991b1b">\u26a0 SCA compliance check</div><ul style="margin:5px 0 0;padding-left:18px;font-size:11px;color:#7f1d1d">${issues.map(i => `<li>${pricingEsc(i.msg)}</li>`).join('')}</ul></div>`;
+    const _scaErr = issues.filter(i => i.sev !== 'info'), _scaInfo = issues.filter(i => i.sev === 'info');
+    if (_scaErr.length) h += `<div style="margin-top:10px;border:1px solid #fecaca;background:#fef2f2;border-radius:8px;padding:9px 11px"><div style="font-weight:700;font-size:11.5px;color:#991b1b">\u26a0 SCA compliance check</div><ul style="margin:5px 0 0;padding-left:18px;font-size:11px;color:#7f1d1d">${_scaErr.map(i => `<li>${pricingEsc(i.msg)}</li>`).join('')}</ul></div>`;
+    if (_scaInfo.length) h += `<div style="margin-top:8px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px;padding:9px 11px"><div style="font-weight:700;font-size:11.5px;color:#1e40af">\u2713 WD wage floor applied in pricing</div><ul style="margin:5px 0 0;padding-left:18px;font-size:11px;color:#1e3a8a">${_scaInfo.map(i => `<li>${pricingEsc(i.msg)}</li>`).join('')}</ul></div>`;
     h += `</div>`;
   }
   h += `</div>`;
@@ -13910,7 +13977,10 @@ function pricingRenderScaByLcat() {
   const rates = pricingModel.sca.rates || [];
   const isGsa = pricingIsGsa();
   const fringeBase = ((CLIENT_CONFIG.pricing || {}).fringe || 0) / 100;
-  let h = `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:#fafbfc"><div style="font-weight:700;font-size:12px;margin-bottom:6px">SCA wage floors by labor category</div><div style="font-size:11px;color:var(--muted);margin-bottom:8px">Mark which roles are SCA-covered (non-exempt) and tie each to a WD occupation. Covered roles get an H&amp;W-aware fringe and a wage-floor check.</div>`;
+  const _covRoles = pricingModel.lcats.filter(l => l.scaCovered);
+  const _mappedN = _covRoles.filter(l => pricingLcatWdWage(l) > 0).length;
+  const _unmapN = _covRoles.length - _mappedN;
+  let h = `<div style="border:1px solid #fcd34d;border-radius:10px;padding:10px 12px;background:#fffbeb"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"><div style="font-weight:700;font-size:12px;color:#92400e">\u2696 SCA wage floors by labor category</div>${rates.length ? `<button onclick="pricingAutoMapWd(false)" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:4px 10px;cursor:pointer">\u2728 Auto-match roles to WD</button>` : ''}</div><div style="font-size:11px;color:var(--muted);margin-bottom:8px">Mark which roles are SCA-covered (non-exempt) and tie each to a WD occupation. Covered roles get an H&amp;W-aware fringe and a wage-floor check.</div>${_covRoles.length ? `<div style="font-size:11px;font-weight:600;margin-bottom:8px;color:${_unmapN ? '#991b1b' : '#065f46'}">${_mappedN} of ${_covRoles.length} covered role${_covRoles.length === 1 ? '' : 's'} tied to a WD occupation${_unmapN ? ` \u2014 ${_unmapN} still ${_unmapN === 1 ? 'needs' : 'need'} one` : ''}.</div>` : ''}`;
   pricingModel.lcats.forEach(l => {
     const covered = !!l.scaCovered;
     const wage = pricingLcatWdWage(l);
@@ -13925,12 +13995,13 @@ function pricingRenderScaByLcat() {
       if (isGsa) { if (wage > 0) note = `<span style="font-size:11px;color:var(--muted)">Schedule rate must cover WD min ${pricingFmtC(wage)} + H&W ${pricingFmtC(pricingScaHw())}/hr</span>`; }
       else {
         const base = parseFloat(l.baseRate) || 0;
-        if (wage > 0 && base > 0 && base < wage) note += `<span style="font-size:11px;color:var(--error);font-weight:600">\u26a0 base ${pricingFmtC(base)} below WD min ${pricingFmtC(wage)}</span> `;
+        const _fi = pricingWdFloorInfo(l);
+        if (_fi && _fi.binds) note += `<span style="font-size:11px;color:#1e40af;font-weight:600">\u25b2 priced at WD floor ${pricingFmtC(_fi.wd)} (base ${pricingFmtC(_fi.raw)})</span> `;
         const hw = pricingScaHw();
         if (base > 0 && hw > 0) { const ef = pricingEffectiveFringeRate(l); const arrow = ef > fringeBase + 0.0001 ? ' \u25b2' : (ef < fringeBase - 0.0001 ? ' \u25bc' : ''); note += `<span style="font-size:11px;color:var(--muted)">eff. fringe ${(ef * 100).toFixed(0)}%${arrow} vs ${(fringeBase * 100).toFixed(0)}% (higher of fringe or H&W ${pricingFmtC(hw)}/hr)</span>`; }
       }
     }
-    h += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 0;border-top:1px dashed #eee"><label style="font-size:11.5px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;min-width:170px"><input type="checkbox" ${covered ? 'checked' : ''} onchange="pricingSetLcat('${l.id}','scaCovered',this.checked)" style="width:auto"/> <span style="font-weight:600">${pricingEsc(l.name || '(unnamed)')}</span></label>${covered ? picker : '<span style="font-size:11px;color:var(--muted)">exempt</span>'} ${note}</div>`;
+    h += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 0;border-top:1px dashed #eee"><label style="font-size:11.5px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;min-width:170px"><input type="checkbox" ${covered ? 'checked' : ''} onchange="pricingSetLcat('${l.id}','scaCovered',this.checked)" style="width:auto"/> <span style="font-weight:600">${pricingEsc(l.name || '(unnamed)')}</span></label>${covered ? picker : '<span style="font-size:11px;color:var(--muted)">exempt</span>'} ${note}${(covered && l._wdMatchedTo) ? ' <span style="font-size:10.5px;color:var(--muted)">\u21b3 ' + pricingEsc(l._wdMatchedTo) + '</span>' : ''}</div>`;
   });
   h += `</div>`;
   el.innerHTML = h;
@@ -14802,6 +14873,7 @@ function pricingRenderAll() {
   pricingRenderTravel();
   pricingRenderMaterials();
   pricingRenderClin();
+  if (typeof pricingRenderStatedClinPreview === 'function') pricingRenderStatedClinPreview();
   if (typeof pricingPivotRender === 'function') pricingPivotRender();
   pricingRenderFteBar();
   pricingRenderSummary();
@@ -15392,6 +15464,33 @@ function _pxClinLaborCheck(lines, pds, lineAmt, periodCost) {
   return { show: Math.abs(sum - model) > 1, sum, model };
 }
 
+function pricingRenderStatedClinPreview() {
+  var el = document.getElementById('pricingStatedClinPreview'); if (!el) return;
+  var scs = (typeof pricingStatedClins === 'function') ? pricingStatedClins() : [];
+  if (!scs.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = '';
+  var esc = (typeof pricingEsc === 'function') ? pricingEsc : function (s) { return String(s == null ? '' : s); };
+  var rows = scs.map(function (sc) {
+    var num = String(sc.number != null ? sc.number : (sc.clin != null ? sc.clin : '')).trim();
+    var title = String(sc.title != null ? sc.title : (sc.description != null ? sc.description : '')).trim();
+    var type = String(sc.clin_type != null ? sc.clin_type : (sc.type != null ? sc.type : '')).trim();
+    var period = String(sc.period_label != null ? sc.period_label : '').trim();
+    var opt = (sc.optional === true) || (String(sc.optional).toLowerCase() === 'true');
+    var nteRaw = (sc.nte != null && sc.nte !== '') ? String(sc.nte).replace(/[^0-9.]/g, '') : '';
+    var nte = (nteRaw && !isNaN(parseFloat(nteRaw))) ? ('NTE $' + parseFloat(nteRaw).toLocaleString('en-US')) : '';
+    var meta = [type, period, nte].filter(function (x) { return x; }).join(' \u00b7 ');
+    return '<tr style="border-top:1px solid #dbeafe">' +
+      '<td style="padding:5px 8px;font-weight:700;white-space:nowrap;color:#1e40af;vertical-align:top">' + (num ? esc(num) : '\u2014') + (opt ? ' <span style="font-size:9.5px;font-weight:700;background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:0 5px;color:#854d0e">optional</span>' : '') + '</td>' +
+      '<td style="padding:5px 8px;vertical-align:top">' + (title ? esc(title) : '<span style="color:var(--muted)">(no description stated)</span>') + '</td>' +
+      '<td style="padding:5px 8px;white-space:nowrap;color:#64748b;vertical-align:top">' + esc(meta) + '</td>' +
+    '</tr>';
+  }).join('');
+  el.innerHTML = '<div style="border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;padding:12px 14px;margin-bottom:20px">' +
+    '<div style="font-weight:700;font-size:13px;color:#1e40af;margin-bottom:4px">Stated CLINs \u2014 from the solicitation (' + scs.length + ')</div>' +
+    '<div style="font-size:11.5px;color:#1e3a8a;margin-bottom:8px;line-height:1.5">The contract line items the Government stated, shown read-only for reference as you build the price below. You map your pricing onto these in the CLIN step later \u2014 the tool never invents CLIN numbers.</div>' +
+    '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="text-align:left;color:#1e40af"><th style="padding:0 8px 4px;font-weight:700">CLIN</th><th style="padding:0 8px 4px;font-weight:700">Description</th><th style="padding:0 8px 4px;font-weight:700">Type / period</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '</div>';
+}
 function pricingRenderClin() {
   const el = document.getElementById('pricingClin');
   if (!el) return;
@@ -16430,6 +16529,8 @@ function pricingBuildWorkbook() {
 
 function pricingExportWorkbook() {
   if (typeof XLSX === 'undefined') { if (typeof showStatus === 'function') showStatus('error', 'Excel library not loaded', 'Refresh the page (Ctrl+Shift+R) and try again.'); return; }
+  var _scaB = pricingScaExportBlock();
+  if (_scaB.length) { if (typeof showStatus === 'function') showStatus('error', 'Resolve SCA compliance before exporting', _scaB.map(function (i) { return i.msg; }).join(' ') + ' Set the Wage Determination (and the H&W rate) in Pricing Step 2 first.'); return; }
   const wb = pricingBuildWorkbook();
   if (!wb) { if (typeof showStatus === 'function') showStatus('warn', 'Nothing to export', 'Build the price model first (add labor categories, tasks, and rates).'); return; }
   pricingWriteWorkbookWithTables(wb, pricingWorkbookName() + '.xlsx');
@@ -17319,8 +17420,17 @@ function pricingGapApplyAll() {
     if (typeof showStatus === 'function') showStatus('info', 'Nothing to apply', 'None of these moves carries a value this tool can write.');
     return;
   }
+  let overshootMsg = '';
+  const _f2 = (typeof pricingGapFacts === 'function') ? pricingGapFacts() : null;
+  if (_f2 && _f2.ok && _f2.gap && _f2.gap.hasStated && _f2.gap.anchor > 0) {
+    let _run = _f2.totals.baseYear;
+    resolved.forEach((r, idx) => { const imp = parseFloat(g.moves[idx].impact_dollars); if (r.kind === 'write' && !isNaN(imp)) _run += imp; });
+    const _over = _run - _f2.gap.anchor;
+    if (_over > _f2.gap.anchor * 0.02) overshootMsg = '\n\n\u26a0 Applying all of these would put your base year near $' + Math.round(_run).toLocaleString('en-US') + ', about $' + Math.round(_over).toLocaleString('en-US') + ' OVER the $' + Math.round(_f2.gap.anchor).toLocaleString('en-US') + ' anchor. These are ranked options \u2014 you likely want only the top one or two, not all.';
+  }
   if (!confirm('Apply ' + writes.length + ' move' + (writes.length === 1 ? '' : 's') + ' to the price model'
     + (runs.length ? (', and queue ' + runs.length + ' rate lookup' + (runs.length === 1 ? '' : 's')) : '') + '?'
+    + overshootMsg
     + '\n\nThe model is snapshotted first \u2014 Revert puts it back.')) return;
   _pxGapSnapshot();
   let n = 0;
@@ -17404,6 +17514,14 @@ function pricingRenderGapPanel() {
   const _resolved = g.moves.map(_pxGapResolveMove);
   const _nWrite = _resolved.filter(r => r.kind === 'write').length;
   const _nRun   = _resolved.filter(r => r.kind === 'run').length;
+  const _leverLegend = [['rates','Rates'],['staffing','Staffing'],['hours','Hours'],['non-labor','Non-labor'],['scope','Scope'],['data','Data']].map(function(x){ var lc = lever[x[0]] || lever.data; return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:2px;background:' + lc[2] + ';display:inline-block"></span>' + x[1] + '</span>'; }).join(' ');
+  const _gapGuide = '<div style="margin-top:8px;font-size:11.5px;color:var(--text);background:#eef2ff;border:1px solid #c7d2fe;border-radius:7px;padding:8px 11px;line-height:1.55"><strong>How to read this.</strong> Ranked options, not a checklist \u2014 highest-impact first, and <strong>cumulative</strong> if you stack them, so the top move alone often closes the gap and applying every one can overshoot. Take the fewest that get you there. Coloured left edge = the lever: <span style="display:inline-flex;flex-wrap:wrap;gap:8px;margin-top:5px">' + _leverLegend + '</span></div>';
+  let _gapCumulative = '';
+  if (f.ok && f.gap && f.gap.hasStated && f.gap.anchor > 0 && !stale) {
+    const _anchor = f.gap.anchor; let _run = f.totals.baseYear; const _steps = [];
+    g.moves.forEach(function(m, i){ const imp = parseFloat(m.impact_dollars); if (isNaN(imp)) return; _run += imp; const _over = _run - _anchor; const _col = Math.abs(_over) <= _anchor * 0.01 ? '#065f46' : (_over > 0 ? '#991b1b' : '#92400e'); _steps.push('<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0"><span style="color:var(--muted)">Through #' + (i+1) + '</span><span style="font-weight:700;color:' + _col + '">$' + Math.round(_run).toLocaleString('en-US') + ' <span style="font-weight:400;color:var(--muted)">(' + (_over>0?'+':(_over<0?'\u2212':'')) + '$' + Math.abs(Math.round(_over)).toLocaleString('en-US') + ' vs anchor)</span></span></div>'); });
+    if (_steps.length) _gapCumulative = '<div style="margin-top:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;background:#fff;font-size:11.5px"><div style="font-weight:700;color:var(--text);margin-bottom:4px">Stacked in order \u2014 base year now $' + Math.round(f.totals.baseYear).toLocaleString('en-US') + ' vs $' + Math.round(_anchor).toLocaleString('en-US') + ' anchor:</div>' + _steps.join('') + '<div style="font-size:10.5px;color:var(--muted);margin-top:5px">Counts only moves with a computed dollar effect; stacking is approximate. Green \u2248 on the anchor; red is over; amber is still under.</div></div>';
+  }
   el.innerHTML = '<div style="border:1px solid #c7d2fe;background:#f8fafc;border-radius:10px;padding:13px 15px">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
     + '<div style="font-weight:800;font-size:13px;color:#3730a3">\uD83D\uDD0E Gap analysis \u2014 ' + g.moves.length + ' ranked move' + (g.moves.length === 1 ? '' : 's') + '</div>'
@@ -17413,8 +17531,10 @@ function pricingRenderGapPanel() {
     + '<button onclick="pricingAnalyzeGap(this)" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:5px 11px;cursor:pointer">Re-run</button>'
     + '<button onclick="pricingGapDismiss()" style="font-size:11px;font-weight:700;background:#fff;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:5px 11px;cursor:pointer">Dismiss</button></div></div>'
     + (stale ? '<div style="margin-top:8px;font-size:11.5px;font-weight:600;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:7px;padding:7px 11px">\u26a0 The price model has changed since this ran, so the figures below no longer describe it. Re-run the analysis.</div>' : '')
+    + _gapGuide
     + (g.diagnosis ? '<div style="font-size:12.5px;color:var(--text);line-height:1.55;margin-top:8px"><strong>Diagnosis.</strong> ' + esc(g.diagnosis) + '</div>' : '')
     + cards
+    + _gapCumulative
     + (g.residual ? '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-top:10px"><strong>Left unexplained:</strong> ' + esc(g.residual) + '</div>' : '')
     + (g.caution ? '<div style="font-size:12px;color:#92400e;line-height:1.5;margin-top:6px;background:#fffbeb;border:1px solid #fde68a;border-radius:7px;padding:8px 11px"><strong>Caution:</strong> ' + esc(g.caution) + '</div>' : '')
     + '<details style="margin-top:10px"><summary style="font-size:11px;color:var(--muted);cursor:pointer">Show the exact figures this analysis was given</summary>'
@@ -18524,7 +18644,7 @@ function _triageVerdictHtml(z) {
   const v = z.verdict;
   if (!v) return '';
   if (v.error) return '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--error)">' + escHtml(v.error) + '</div>';
-  const elig = (v.eligible === true) ? ' <span style="color:#166534;font-weight:700">\u2713 eligible</span>' : (v.eligible === false) ? ' <span style="color:#991b1b;font-weight:700">\u2717 not eligible</span>' : '';
+  const elig = (v.eligible === true) ? ' <span style="color:#166534;font-weight:700">\u2713 eligible</span>' : (v.eligible === false) ? ' <span style="color:#991b1b;font-weight:700">\u2717 not eligible</span>' : (v.set_aside && /not stated/i.test(v.set_aside) ? ' <span style="color:#92400e;font-weight:600">\u26a0 set-aside unverified</span>' : '');
   const fit = v.naics_fit ? (' <span style="color:var(--muted)">(' + escHtml(v.naics_fit) + ' fit)</span>') : '';
   const days = (v.days_remaining != null && v.days_remaining !== '') ? (' <span style="color:var(--muted)">(' + escHtml(String(v.days_remaining)) + ' days left)</span>') : '';
   return '<div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:12px 14px">'
@@ -18581,18 +18701,29 @@ async function triageScreenZone(id) {
       'You are a federal capture analyst screening a U.S. Government opportunity for a specific company, to decide FAST whether it is worth a full bid/no-bid analysis. '
       + 'Use ONLY the solicitation excerpt and the company profile below. Do NOT invent facts; if a field is not present use "not stated" (or null for days_remaining). Today is ' + today + '. '
       + 'Respond with ONLY a JSON object \u2014 no prose, no markdown, no code fences \u2014 with EXACTLY these keys: '
-      + 'verdict (one of "Pursue","Maybe","Pass"), title, solicitation_number, ebuy_request_id (a GSA eBuy / Unison portal Request ID like "RFQ1827479" if one appears in the text - the portal tracking number, NOT the agency solicitation number; "not stated" if absent), agency, notice_type (e.g. "Sources Sought","RFP","RFQ","Presolicitation","RFI"), set_aside, '
-      + 'eligible (boolean: does the company\u2019s socioeconomic status qualify it to compete? true if full-and-open, or if the company holds the required set-aside status; false if it clearly does not), '
+      + 'verdict (one of "Pursue","Maybe","Pass"), title, solicitation_number, ebuy_request_id (a GSA eBuy / Unison portal Request ID like "RFQ1827479" if one appears in the text - the portal tracking number, NOT the agency solicitation number; "not stated" if absent), agency, notice_type (e.g. "Sources Sought","RFP","RFQ","Presolicitation","RFI"), set_aside (the OPERATIVE set-aside from the excerpt: the SAM.gov Set-Aside Type, a "Set-Aside:" line, or the controlling FAR clause - 52.219-6 = Total Small Business, 52.219-27 = SDVOSB, 52.219-30 = WOSB, 52.219-29 = EDWOSB, 52.219-3 = HUBZone, 52.219-18 = 8(a); these categories are DISTINCT, never substitute one for another. Cross-check the required certifications - if offerors must hold a specific certification, the set-aside MUST match it. Do NOT infer a socioeconomic set-aside from small-business subcontracting goals or NAICS size alone. If the excerpt does not state or clearly establish the set-aside, use "not stated" and do not guess), '
+      + 'eligible (boolean: does the company\u2019s socioeconomic status qualify it to compete? true ONLY if it clearly qualifies - full-and-open, OR the set-aside type matches a certification the company holds per its profile; false if the set-aside is a socioeconomic type the company does NOT hold; null if the set-aside is "not stated" or cannot be determined - NEVER default to true when the set-aside is unknown), '
       + 'naics, naics_fit (one of "strong","partial","weak","unknown"), response_date (the date offers/quotes are DUE; when the base solicitation AND one or more amendments each carry a due/close date, return the LATEST one - an amendment pushes the deadline out and supersedes the earlier date; "not stated" if absent), days_remaining (integer days from today to that response_date, or null), '
       + 'value (rough dollar value or "not stated"), place_of_performance, rationale (ONE short sentence: the single biggest reason for the verdict). '
-      + 'Decision guidance: Pursue when the company is eligible AND the work fits its capabilities AND the timeline is workable; Pass when it is ineligible, clearly outside its capabilities, or the deadline is past/impossible; Maybe when mixed or uncertain.\n\n'
+      + 'Decision guidance: Pursue ONLY when the company is clearly eligible AND the work fits its capabilities AND the timeline is workable; Pass when it is ineligible (a socioeconomic set-aside the company cannot hold), clearly outside its capabilities, or the deadline is past/impossible; Maybe when mixed or uncertain - INCLUDING when the set-aside is not stated (eligibility is unverified, so never Pursue; flag verifying the set-aside). A specific socioeconomic set-aside the company does not hold is an ELIGIBILITY BAR - return Pass, not Maybe.\n\n'
       + 'COMPANY PROFILE:\n' + capText + '\n\n'
       + 'SOLICITATION EXCERPT:\n' + ex.text;
     const content = [{ type: 'text', text: promptText }].concat(ex.docBlocks);
     const payload = { model: (typeof CLAUDE_MODEL !== 'undefined' ? CLAUDE_MODEL : 'claude-sonnet-4-6'), max_tokens: 700, messages: [{ role: 'user', content: content }] };
-    const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', mode: 'cors', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(payload) });
-    if (!resp.ok) { const et = await resp.text(); z.verdict = { error: 'Request failed (' + resp.status + '): ' + et.slice(0, 140) }; return; }
-    const data = await resp.json();
+    let data = null, _tLastErr = null;
+    for (let _att = 0; _att < 3; _att++) {
+      try {
+        const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', mode: 'cors', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(payload) });
+        if (resp.ok) { data = await resp.json(); break; }
+        if ((resp.status === 429 || resp.status === 500 || resp.status === 502 || resp.status === 503 || resp.status === 529) && _att < 2) { _tLastErr = new Error('HTTP ' + resp.status); await new Promise(r => setTimeout(r, 800 * (_att + 1))); continue; }
+        const et = await resp.text(); z.verdict = { error: 'Request failed (' + resp.status + '): ' + et.slice(0, 140) }; return;
+      } catch (_fe) {
+        _tLastErr = _fe;                                   // transient 'Failed to fetch' (network/browser hiccup) - retry with backoff
+        if (_att < 2) { await new Promise(r => setTimeout(r, 800 * (_att + 1))); continue; }
+        throw _fe;
+      }
+    }
+    if (!data) throw (_tLastErr || new Error('Failed to fetch'));
     if (data.error) { z.verdict = { error: 'Error: ' + data.error.message }; return; }
     let rawTxt = (data.content || []).map(b => b.text || '').join('').trim();
     rawTxt = rawTxt.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
@@ -19127,7 +19258,7 @@ function updateBnaLiveScore() {
     }
     if (stepSpreadNote) {
       stepSpreadNote.textContent = dv.spreadApplied
-        ? 'pushes the score toward a clear decision'
+        ? 'spreads the score toward a clear decision — the verdict reads this number'
         : 'skipped — the ceiling already makes this decisive (no double compression)';
     }
   }
@@ -19616,15 +19747,14 @@ function evaluateBnaGates(opp, cap) {
 // Spread/contrast calibration: amplifies a score's distance from the midpoint so honest factor
 // scores resolve toward a clear PASS or PURSUE rather than all clustering near 6-7. Tunable via K.
 function bnaSpreadScore(x) {
-  // A LINEAR gain clipped at 9.8 was not a scale: everything above a blended 8.37 displayed
-  // 9.8, so the two strongest bids in a pipeline were indistinguishable at exactly the moment
-  // you had to choose between them — and 10 was unreachable while 0 was too.
+  // A monotonic S-curve that maps [0,10] onto [0,10] exactly (0->0, 5->5, 10->10, every value
+  // reachable, no two inputs share an output). It expands the muddy middle and tapers the ends,
+  // keeping the whole range usable instead of clipping the strongest bids together.
   //
-  // This is a monotonic S-curve that maps [0,10] onto [0,10] exactly: 0 stays 0, 10 stays 10,
-  // 5 stays 5, and no two different inputs share an output. It still expands the muddy middle
-  // (slope ~1.4x at the centre, close to the old 1.5x) but tapers toward the ends instead of
-  // clipping, so the whole range stays usable and every value remains reachable.
-  const K = 1.2;
+  // The VERDICT reads this calibrated score (thresholds 7.0 / 6.0 in computeDecisiveVerdict), so the
+  // severity below is a real dial: a stronger curve lifts middling bids toward pursue, a gentler one is
+  // stricter. BNA_SPREAD_K is that dial - 0 -> near-linear, higher -> more bite (currently 0.7, was 1.2).
+  const K = BNA_SPREAD_K;
   const y = 5 + 5 * Math.tanh(K * (x - 5) / 5) / Math.tanh(K);
   return Math.max(0, Math.min(10, y));
 }
@@ -19636,6 +19766,7 @@ function bnaSpreadScore(x) {
 // describing the old arithmetic under a correct number.
 const PX_FIT_BLEND = 0.70;      // weight on the whole-picture weighted average
 const PX_FIT_HEADROOM = 3.0;    // how far above the weakest critical factor the score may reach
+const BNA_SPREAD_K = 0.7;       // spread-curve severity (0 = linear, higher = more bite); softened from 1.2. The verdict reads the post-spread fit, so this dial DOES move borderline recommendations - see FIT_PRIME/FIT_GAPS.
 
 function computeDecisiveVerdict() {
   const w = getEffectiveWeights();
@@ -19667,20 +19798,23 @@ function computeDecisiveVerdict() {
   });
   const base = wsum > 0 ? acc / wsum : 5; // 0–10 weighted average of fit factors
 
-  // Weakest-link: one genuinely weak delivery factor should drag the verdict.
-  const criticalKeys = ['technical_capability', 'past_performance', 'scope_clarity'];
+  // Weakest-link: one genuinely weak DELIVERY factor should drag (and cap) the verdict. Past performance
+  // is deliberately NOT here - a weak score there means thin references, not an inability to do the work
+  // (addressable by teaming, and a light factor on many RFPs). It still counts in `base` at its full 10%
+  // weight, but it no longer caps an otherwise-strong bid. Technical capability and scope clarity - the
+  // two execution factors - are what drag and cap.
+  const criticalKeys = ['technical_capability', 'scope_clarity'];
   const criticalScores = criticalKeys.map(k => bna_tier1_scores[k]).filter(v => v != null);
   const minCritical = criticalScores.length ? Math.min(...criticalScores) : base;
   const blended = PX_FIT_BLEND * base + (1 - PX_FIT_BLEND) * minCritical; // decisive blend — weighted toward the whole picture
   const ceiling = Math.min(10, minCritical + PX_FIT_HEADROOM);            // weakest-link cap: a genuinely BAD critical factor still caps the upside, a merely thin one does not
   const ceilingBinding = blended > ceiling;         // true when the cap (not the blend) is what limits the score
-  let fit = Math.min(blended, ceiling);             // apply the weakest-link ceiling
-  // Spread calibration pushes muddy-middle scores toward a clear decision. Skip it when the
-  // ceiling is binding: a ceiling-capped score is ALREADY decisive, and re-spreading it would
-  // compress the same critical-factor gap a second time and over-penalize the displayed number.
+  let fit = Math.max(0, Math.min(10, Math.min(blended, ceiling)));       // weakest-link ceiling
+  // Spread calibration reshapes the score toward the ends (severity = BNA_SPREAD_K, the display dial).
+  // The VERDICT reads this SAME calibrated fit, so tuning K CAN move a borderline recommendation as the
+  // displayed number crosses a threshold. Skip the curve when the ceiling is binding (already decisive).
   const spreadApplied = !ceilingBinding;
-  if (spreadApplied) fit = bnaSpreadScore(fit);
-  fit = Math.max(0, Math.min(10, fit));
+  if (spreadApplied) fit = Math.max(0, Math.min(10, bnaSpreadScore(fit)));
 
   // Scope coverage drives the subcontract calculus.
   if (scopeCov == null) scopeCov = gates.perfConstraints.length ? 40 : 80;
@@ -19689,8 +19823,10 @@ function computeDecisiveVerdict() {
   }
 
   // ---- Verdict ----
-  // Thresholds on the calibrated 0-10 fit: anything under 6.0 is a PASS (full stop),
-  // 6.0-7.0 is a close call worth pursuing only if the gap is closed, 7.0+ is a clear prime pursuit.
+  // Thresholds on the DISPLAYED (post-spread) 0-10 fit, so the number shown IS what the recommendation
+  // reads: fit >= 7.0 -> pursue as prime; 6.0-7.0 -> pursue if gaps closed; < 6.0 -> pass (prime path).
+  // Because the verdict reads the displayed fit, tuning BNA_SPREAD_K moves borderline calls across these
+  // lines - a stronger curve lifts middling bids toward pursue, a gentler one is stricter.
   const FIT_PRIME = 7.0, FIT_GAPS = 6.0, COV_MIN_SUB = 25;
   const LOS_SELF_PERFORM_MIN = 50; // FAR Limitations on Subcontracting: set-aside services prime must self-perform >=50% of cost
   const PRIME_DEPENDENCY_MIN = 40; // off-set-aside: below this, prime is heavily sub-dependent
@@ -22001,6 +22137,7 @@ async function runBnaCombined() {
   const intelCard = document.getElementById('bnaIntelCard');
   const intelBody = document.getElementById('bnaIntelBody');
   if (intelCard) { intelCard.style.display = 'block'; intelCard.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  if (typeof bnaCollapseSteps === 'function') bnaCollapseSteps();   // fold Step 1 & Step 2 so the opportunity details sit at the top
   if (intelBody) intelBody.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px"><span class="spinner-dark" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span>Extracting opportunity details…</div>';
   // Put the Analyze button into a loading state for the WHOLE run (extraction + scoring),
   // not just the scoring phase — otherwise it looks idle while details are being extracted.
@@ -22873,6 +23010,18 @@ function refreshBnaCapStatementPanel() {
   var body = document.getElementById('bnaCapStatementText');
   if (body) body.textContent = txt;
 }
+function bnaToggleStep(bodyId, caretId) {
+  var b = document.getElementById(bodyId); if (!b) return;
+  var hide = b.style.display !== 'none';
+  b.style.display = hide ? 'none' : '';
+  var c = document.getElementById(caretId); if (c) c.textContent = hide ? '\u25b8 Show' : '\u25be Hide';
+}
+function bnaCollapseSteps() {
+  [['bnaStep1Body', 'bnaStep1Caret'], ['bnaStep2Body', 'bnaStep2Caret']].forEach(function (p) {
+    var b = document.getElementById(p[0]);
+    if (b && b.style.display !== 'none') { b.style.display = 'none'; var c = document.getElementById(p[1]); if (c) c.textContent = '\u25b8 Show'; }
+  });
+}
 function toggleBnaCapStatement() {
   var body = document.getElementById('bnaCapStatementText');
   var tog = document.getElementById('bnaCapStatementToggle');
@@ -23041,58 +23190,55 @@ Respond with ONLY a raw JSON object. No markdown. No backticks. Start with { end
       try {
         const _inc = String(intel.incumbent || '').trim();
         const _uncertain = !_inc || /^not stated|^\[inferred\]|^unknown/i.test(_inc);
+        const _docNamed = !_uncertain;   // the documents named a real incumbent - that name is the SINGLE SOURCE OF TRUTH
         const _recompete = /recompete|re-compete|follow.?on/i.test(String(intel.new_or_recompete || ''));
+        // Run to FIND the name when the docs gave none, or to ENRICH a doc-named incumbent on a recompete
+        // with a confirming source link + real award $. The web lookup NEVER overrides or contradicts the docs.
         if ((_uncertain || _recompete) && (intel.requirement_name || intel.id_number)) {
-          intel.incumbent_lookup = 'searching';        // surfaced in the UI so a silent run is distinguishable from a no-find
-          window._lastBnaIntel = intel;
-          renderOpportunityIntel(intel, body);
+          var _gen = (window._bnaIncGen = (window._bnaIncGen || 0) + 1);   // stale-lookup guard: a lookup from an earlier Analyze must not clobber a newer render
+          if (_uncertain) { intel.incumbent_lookup = 'searching'; window._lastBnaIntel = intel; renderOpportunityIntel(intel, body); }
           lookupIncumbentViaWeb(intel, apiKey).then(function (found) {
+            if (window._bnaIncGen !== _gen || window._lastBnaIntel !== intel) return;   // superseded by a newer Analyze - drop this stale result
             if (found && found.incumbent) {
               var _weak = !found.source_url || _isWeakIncumbentSource(found.source_url);
-              if (_weak) {
-                // No stable, authoritative source (e.g. only a job posting): show the name as a
-                // labeled inference rather than a blue link to an unreliable / expiring page.
-                intel.incumbent = '[Inferred] ' + found.incumbent;
-                intel.incumbent_source_url = '';
-                intel.incumbent_source_name = '';
+              var _match = _incumbentNamesMatch(intel.incumbent, found.incumbent);
+              if (_docNamed) {
+                // AUTHORITATIVE document name stays; attach a source link ONLY when the web result names the SAME company.
+                if (_match && !_weak) { intel.incumbent_source_url = found.source_url; intel.incumbent_source_name = found.source_name || ''; }
+                intel.incumbent_lookup = 'confirmed';   // never 'none'/'error' when the documents named the incumbent
+              } else if (_weak) {
+                intel.incumbent = '[Inferred] ' + found.incumbent; intel.incumbent_source_url = ''; intel.incumbent_source_name = ''; intel.incumbent_lookup = 'found';
               } else {
-                intel.incumbent = found.incumbent;
-                intel.incumbent_source_url = found.source_url;
-                intel.incumbent_source_name = found.source_name || '';
+                intel.incumbent = found.incumbent; intel.incumbent_source_url = found.source_url; intel.incumbent_source_name = found.source_name || ''; intel.incumbent_lookup = 'found';
               }
-              intel.incumbent_lookup = 'found';
-              // Real award figures from a credible source override inferred/missing dollar values.
-              if (!_weak && found.source_url) {
+              // Real award $ overrides inferred/missing values - only from a credible source that pertains to THIS
+              // incumbent (always when we just adopted the name; match-gated when the docs already named it).
+              if (!_weak && found.source_url && (_docNamed ? _match : true)) {
                 var _hasNum = function (s) { return /\d/.test(String(s == null ? '' : s)); };
                 var _infOrMiss = function (v) {
                   var s = String(v == null ? '' : v).trim();
                   return !s || /^\[inferred\]/i.test(s) || /^(not stated( in documents)?|n\/a|none|tbd|unknown)$/i.test(s);
                 };
                 var _vApplied = false;
-                if (_hasNum(found.total_contract_value) && _infOrMiss(intel.total_contract_value)) {
-                  intel.total_contract_value = String(found.total_contract_value).trim(); _vApplied = true;
-                }
-                if (_hasNum(found.base_year_value) && _infOrMiss(intel.base_year_value)) {
-                  intel.base_year_value = String(found.base_year_value).trim(); _vApplied = true;
-                }
+                if (_hasNum(found.total_contract_value) && _infOrMiss(intel.total_contract_value)) { intel.total_contract_value = String(found.total_contract_value).trim(); _vApplied = true; }
+                if (_hasNum(found.base_year_value) && _infOrMiss(intel.base_year_value)) { intel.base_year_value = String(found.base_year_value).trim(); _vApplied = true; }
                 if (_vApplied) {
                   intel.value_source_url = found.source_url;
                   intel.value_source_name = found.source_name || '';
                   var _vb = String(found.value_basis || '').trim();
                   intel.award_value_rationale = 'Actual figure(s) from the incumbent\'s prior/current award via ' + (found.source_name || 'federal award records') + (_vb ? ' \u2014 ' + _vb : '') + '. Overrides the earlier estimate.';
-                  // Re-reconcile so the team (LCATs + FTEs) stays consistent with the incumbent-sourced
-                  // value (tier B): a proposed team scales to it; a government workload table stays fixed.
                   if (typeof reconcileStaffing === 'function') reconcileStaffing(intel);
                 }
               }
             } else {
-              intel.incumbent_lookup = 'none';          // ran cleanly, but no credible federal-award source named the incumbent
+              intel.incumbent_lookup = _docNamed ? '' : 'none';   // only surface "no credible source" when the docs named no incumbent either
             }
             window._lastBnaIntel = intel;
             renderOpportunityIntel(intel, body);
           }).catch(function (e) {
+            if (window._bnaIncGen !== _gen || window._lastBnaIntel !== intel) return;
             console.warn('incumbent web lookup failed', e);
-            intel.incumbent_lookup = 'error';           // the lookup could not run (e.g. web search not enabled on this key)
+            intel.incumbent_lookup = _docNamed ? '' : 'error';   // don't alarm when the documents named the incumbent
             window._lastBnaIntel = intel;
             renderOpportunityIntel(intel, body);
           });
@@ -23207,6 +23353,25 @@ function extractIntelFields(jsonStr) {
 // A source URL that does not reliably establish federal incumbency: job boards, recruiting / ATS
 // pages, or a raw search results page. These expire (causing dead links) and a job posting does not
 // prove who holds the contract. Such results are kept as a labeled inference, never a blue link.
+// Loose company-name match: do two incumbent names (one from the documents, one from a web award record)
+// refer to the SAME firm? Strips corporate suffixes + punctuation, then checks equality, containment, or a
+// shared distinctive lead token. Used so a web lookup only ENRICHES a doc-named incumbent (adds a source
+// link) when it actually confirms the same company - never to override the authoritative document name.
+function _incumbentNamesMatch(a, b) {
+  var norm = function (s) {
+    return String(s == null ? '' : s).toLowerCase()
+      .replace(/\[inferred\]/g, ' ')
+      .replace(/\b(incorporated|inc|llc|llp|lp|corp|corporation|company|co|ltd|limited|group|holdings|technologies|technology|solutions|services|systems|enterprises|international|federal|the)\b/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ').trim();
+  };
+  var an = norm(a), bn = norm(b);
+  if (!an || !bn) return false;
+  if (an === bn) return true;
+  if (an.indexOf(bn) >= 0 || bn.indexOf(an) >= 0) return true;
+  var at = an.split(' ').filter(Boolean), bt = bn.split(' ').filter(Boolean);
+  return !!(at.length && bt.length && at[0] === bt[0] && at[0].length >= 3);
+}
+
 function _isWeakIncumbentSource(url) {
   return /paylocity|indeed\.com|linkedin\.com\/jobs|glassdoor|ziprecruiter|greenhouse\.io|lever\.co|myworkdayjobs|workday|icims|smartrecruiters|jobvite|recruiting\.|careers?\.|\/jobs?\/|google\.com\/search|bing\.com\/search|duckduckgo/i.test(String(url || ''));
 }
@@ -23877,6 +24042,34 @@ function _fmtOppDate(v) {
 }
 const _OPP_DATE_KEYS = { next_due_date: 1, pop_start_date: 1, pop_end_date: 1, last_possible_performance_date: 1, response_due_date: 1, due_date: 1 };
 
+// ── Field-origin taxonomy for the opportunity intel: every field shows where its value came from ──
+// govstated (blue, the solicitation's own word) | govest (teal, a Government-stated estimate) |
+// inferred (amber, the tool reasoned it) | proposed (orange, an AI-proposed figure or team) | ai
+// (orange, 'AI summary' — AI-authored prose) | missing (grey). AI-origin content is uniformly orange; AI-authored fields are prose
+// the tool WRITES rather than a fact it extracts, so an unprefixed value there is not "stated".
+const _BNA_AI_AUTHORED = { description: 1, award_value_rationale: 1, pursuit_recommendation: 1 };
+function _bnaOriginBadge(kind) {
+  const M = { govstated: ['Gov stated', '#eff6ff', '#93c5fd', '#1d4ed8'],
+              govest: ['Gov. estimate', '#ecfeff', '#67e8f9', '#0e7490'],
+              inferred: ['Inferred', '#fef9c3', '#fde047', '#92400e'],
+              proposed: ['Proposed', '#ffedd5', '#fdba74', '#9a3412'],
+              ai: ['AI summary', '#ffedd5', '#fdba74', '#9a3412'] };
+  const c = M[kind]; if (!c) return '';
+  return '<span style="font-size:10px;font-weight:700;background:' + c[1] + ';border:1px solid ' + c[2] + ';border-radius:8px;padding:1px 6px;color:' + c[3] + ';margin-left:6px">' + c[0] + '</span>';
+}
+// Period of Performance often arrives as a run-on ("Base Period: ...; Option Period 1: ...; ...").
+// With 2+ ';'-separated period segments, break it into a readable per-period list; otherwise (single
+// period or free-form) return null and let it render as plain text.
+function _bnaFormatPoP(s) {
+  const txt = String(s == null ? '' : s).replace(/^\[(GovEst|Inferred|Proposed)\]\s*/i, '').trim();
+  if (!txt) return null;
+  const segs = txt.split(/\s*;\s*/).map(function (x) { return x.trim(); }).filter(Boolean);
+  if (segs.length < 2) return null;
+  return segs.map(function (seg) {
+    const m = seg.match(/^([^:]+?):\s*(.+)$/);
+    return m ? { label: m[1].trim(), range: m[2].trim() } : { label: '', range: seg };
+  });
+}
 function renderOpportunityIntel(intel, container) {
   try { if (typeof window !== 'undefined') window._bnaIntelBody = container; } catch (e) {}
   const SECTIONS = [
@@ -24101,7 +24294,10 @@ function renderOpportunityIntel(intel, container) {
       if (_OPP_DATE_KEYS[f.key] && !isMissing) displayVal = _fmtOppDate(displayVal);   // #33
       const isUrl = /^https?:\/\//i.test(displayVal);
       const valStyle = isGovEst ? 'color:#0e7490;font-style:italic' : (isInferred || isProposed) ? 'color:#92400e;font-style:italic' : isMissing ? 'color:var(--muted);font-style:italic' : 'color:var(--text)';
-      const badge = isGovEst ? `<span style="font-size:10px;font-weight:700;background:#ecfeff;border:1px solid #67e8f9;border-radius:8px;padding:1px 6px;color:#0e7490;margin-left:6px">Gov. estimate</span>` : isInferred ? `<span style="font-size:10px;font-weight:700;background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:1px 6px;color:#92400e;margin-left:6px">Inferred</span>` : isProposed ? `<span style="font-size:10px;font-weight:700;background:#ffedd5;border:1px solid #fdba74;border-radius:8px;padding:1px 6px;color:#9a3412;margin-left:6px">Proposed</span>` : '';
+      const _aiField = !!_BNA_AI_AUTHORED[f.key];
+      const isAiSummary = !isGovEst && !isInferred && !isProposed && !isMissing && _aiField;
+      const isStated = !isGovEst && !isInferred && !isProposed && !isMissing && !_aiField;
+      const badge = _bnaOriginBadge(isGovEst ? 'govest' : isInferred ? 'inferred' : isProposed ? 'proposed' : isAiSummary ? 'ai' : isStated ? 'govstated' : '');
       const valContent = isUrl
         ? `<a href="${escHtml(displayVal)}" target="_blank" style="color:var(--blue)">${escHtml(displayVal)}</a>`
         : `<span style="${valStyle}">${escHtml(displayVal)}</span>`;
@@ -24115,6 +24311,13 @@ function renderOpportunityIntel(intel, container) {
         const _vn = escHtml(intel.value_source_name || String(intel.value_source_url).replace(/^https?:\/\/(www\.)?/i, '').split('/')[0] || 'web');
         displayHtml = '<span style="color:var(--text);font-weight:600">' + escHtml(displayVal) + '</span>' +
           '<a href="' + _vu + '" target="_blank" style="text-decoration:none"><span style="font-size:10px;font-weight:700;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;padding:1px 6px;color:#047857;margin-left:6px">Actual \u00B7 ' + _vn + '</span></a>';
+      } else if (f.key === 'period_of_performance' && !isMissing && typeof _bnaFormatPoP === 'function' && _bnaFormatPoP(displayVal)) {
+        const _pp = _bnaFormatPoP(displayVal);
+        displayHtml = '<div style="display:flex;flex-direction:column;gap:4px">' + _pp.map(function (r, _i) {
+          return '<div style="display:flex;gap:10px;align-items:baseline">'
+            + (r.label ? '<span style="min-width:132px;max-width:132px;flex-shrink:0;font-weight:600;color:var(--text);font-size:12px">' + escHtml(r.label) + '</span>' : '')
+            + '<span style="color:var(--text);font-size:12.5px">' + escHtml(r.range) + (_i === 0 ? badge : '') + '</span></div>';
+        }).join('') + '</div>';
       } else {
         displayHtml = valContent + badge;
         if (f.key === 'incumbent' && intel) {
@@ -24130,9 +24333,10 @@ function renderOpportunityIntel(intel, container) {
     const isWide = f.key === 'labor_categories' || f.key === 'certifications_required';
 
     if (isWide) {
+      const _wideKind = /Not stated|None specified/.test(displayHtml) ? '' : (f.key === 'labor_categories' ? (String((intel && intel.loe_basis) || '').toLowerCase() === 'quoter' ? 'proposed' : 'govstated') : 'govstated');
       // Full-width layout — label on top, content below
       return `<div style="padding:10px 4px;${f.key !== 'labor_categories' ? 'border-bottom:1px solid #f1f5f9;' : ''}">
-        <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px">${escHtml(f.label)}:</div>
+        <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px">${escHtml(f.label)}:${_bnaOriginBadge(_wideKind)}</div>
         <div style="font-size:13px;line-height:1.5">${displayHtml}</div>
       </div>`;
     }
