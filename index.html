@@ -1980,9 +1980,11 @@
     <!-- Tag legend (2nd row): chips mirror the badges shown against extracted values below. -->
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:9px 16px;border-bottom:1px solid var(--border);background:#fafbfc">
       <span style="font-size:11px;font-weight:600;color:var(--muted);margin-right:2px">Tags:</span>
+      <span style="font-size:10.5px;font-weight:700;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:1px 7px;color:#1d4ed8">Gov stated</span>
       <span style="font-size:10.5px;font-weight:700;background:#ecfeff;border:1px solid #67e8f9;border-radius:8px;padding:1px 7px;color:#0e7490">Gov. estimate</span>
       <span style="font-size:10.5px;font-weight:700;background:#ffedd5;border:1px solid #fdba74;border-radius:8px;padding:1px 7px;color:#9a3412">Proposed</span>
       <span style="font-size:10.5px;font-weight:700;background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:1px 7px;color:#92400e">Inferred</span>
+      <span style="font-size:10.5px;font-weight:700;background:#ffedd5;border:1px solid #fdba74;border-radius:8px;padding:1px 7px;color:#9a3412">AI summary</span>
     </div>
     <div class="card-body" id="bnaIntelBody">
       <div style="text-align:center;padding:20px;color:var(--muted);font-size:13px"><span class="spinner-dark" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span>Extracting opportunity details…</div>
@@ -2335,6 +2337,7 @@
         </div>
         <div id="pxRateLegend"></div>
         <div id="pricingWrapBanner"></div>
+        <div id="pricingBulkBasis"></div>
         <div id="pricingLcatHeader"></div>
         <div id="pricingLcatsList" style="display:flex;flex-direction:column;gap:8px"></div>
         <div id="pricingScaByLcat" style="margin-top:10px"></div>
@@ -3272,7 +3275,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live from the Settings-tab footer, or by searching
 // the page source for the APP_VERSION value below.
-const APP_VERSION = '285';
+const APP_VERSION = '299';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -12307,7 +12310,7 @@ function pricingClinBuildFromStated(opts) {
     let nte = null;
     if (sc.nte != null && sc.nte !== '') { const v = parseFloat(String(sc.nte).replace(/[^0-9.]/g, '')); if (!isNaN(v)) nte = v; }
     const label = String(sc.period_label != null ? sc.period_label : '');
-    const optional = (sc.optional === true) || (String(sc.optional).toLowerCase() === 'true') || /\boptional\b/i.test(label + ' ' + String(sc.track != null ? sc.track : ''));
+    const optional = _pxClinIsTrulyOptional(sc);
     const line = { id: _prId('clin_'), clinNo: num, title: String(sc.title != null ? sc.title : (sc.description != null ? sc.description : ('CLIN ' + num))).trim(), type: type, nte: nte, stated: true, optional: optional, periodLabel: label, taskIds: [] };
     const scopeFor = h => (h.indexOf('travel') >= 0) ? 'travelodc' : (h.indexOf('material') >= 0) ? 'materials' : 'labor';
     if (optional) {
@@ -12402,7 +12405,15 @@ function _pxPeriodMatchesClin(periodIdx, periodLabel) {
   var nums = s.match(/\d+/g);
   return !!(nums && nums.indexOf(String(periodIdx | 0)) >= 0);     // option period k: label mentions option AND the number k
 }
-function pricingClinForRow(scope, periodIdx, explicitTie) {
+function _pxClinIsTrulyOptional(sc) {
+  if (!sc) return false;
+  var label = String(sc.period_label != null ? sc.period_label : '').toLowerCase();
+  // A standard base or option YEAR/PERIOD (base + up to 4 options) is EXPECTED scope, never "optional" -
+  // even if the extraction tagged it so - UNLESS its own label calls it an optional/alternate track.
+  if (/^\s*(base|option\s*(year|period)\s*\d)/.test(label) && !/optional/.test(label)) return false;
+  return (sc.optional === true) || (String(sc.optional).toLowerCase() === 'true') || /\boptional\b/i.test(label + ' ' + String(sc.track != null ? sc.track : ''));
+}
+function pricingClinForRow(scope, periodIdx, explicitTie, roleName) {
   var i = periodIdx | 0;
   var tie = String(explicitTie == null ? '' : explicitTie).trim();
   // 1) an explicit labor->CLIN tie from the solicitation wins (option-year number derived from the base tie)
@@ -12412,19 +12423,28 @@ function pricingClinForRow(scope, periodIdx, explicitTie) {
   var want = scope === 'labor' ? 'labor' : scope === 'travel' ? 'travel' : scope === 'materials' ? 'materials' : 'other';
   var ofScope = scs.filter(function (sc) { return sc && (String(sc.scope_hint || '').toLowerCase() || 'labor') === want; });
   if (!ofScope.length) return '';
-  // 2) exact period + scope match
-  for (var k = 0; k < ofScope.length; k++) { if (_pxPeriodMatchesClin(i, ofScope[k].period_label)) return String(ofScope[k].number == null ? '' : ofScope[k].number).trim(); }
-  // 3) option period with only a base CLIN stated for this scope: derive the option number from the base
-  if (i > 0) {
-    for (var j = 0; j < ofScope.length; j++) {
-      if (_pxPeriodMatchesClin(0, ofScope[j].period_label)) {
-        var baseNo = String(ofScope[j].number == null ? '' : ofScope[j].number).trim();
-        return (baseNo && typeof pricingDeriveClinNo === 'function') ? pricingDeriveClinNo(baseNo, i) : '';
-      }
+  var numOf = function (sc) { return String(sc && sc.number != null ? sc.number : '').trim(); };
+  // Candidates whose PERIOD matches this row. For an option period with no per-period CLINs stated, fall
+  // back to the base-period CLINs of this scope and derive the option number from them.
+  var pool = ofScope.filter(function (sc) { return _pxPeriodMatchesClin(i, sc.period_label); });
+  var deriveFromBase = false;
+  if (!pool.length && i > 0) { pool = ofScope.filter(function (sc) { return _pxPeriodMatchesClin(0, sc.period_label); }); deriveFromBase = true; }
+  if (!pool.length) return '';
+  var out = function (sc) { var n = numOf(sc); return (deriveFromBase && n && typeof pricingDeriveClinNo === 'function') ? pricingDeriveClinNo(n, i) : n; };
+  // 2) PER-ROLE: when the period has MORE THAN ONE labor CLIN (a per-role schedule: 0001=role A, 0002=role
+  //    B, ...), match this row's ROLE to the CLIN whose title is that role. CLIN is role x period, never by
+  //    task. If the role matches none well enough, leave it blank (never guess a wrong CLIN).
+  if (scope === 'labor' && roleName && pool.length > 1 && typeof _pxWdMatchScore === 'function') {
+    var best = null, bestScore = 0;
+    for (var k = 0; k < pool.length; k++) {
+      var t = String(pool[k].title != null ? pool[k].title : '').trim();
+      var s = t ? _pxWdMatchScore(roleName, t) : 0;
+      if (s > bestScore) { bestScore = s; best = pool[k]; }
     }
+    return (best && bestScore >= 0.55) ? out(best) : '';
   }
-  // 4) genuinely no CLIN tied to this row -> blank (the caller flags it)
-  return '';
+  // 3) PER-SCOPE: a single CLIN for this scope+period (all labor -> one CLIN; travel -> one; etc.).
+  return out(pool[0]);
 }
 function pricingFlatRows() {
   const M = pricingModel, P = M.periods || [], rows = [];
@@ -12436,7 +12456,7 @@ function pricingFlatRows() {
   const pName = i => (P[i] && P[i].name) || ('Period ' + (i + 1));
   const gsaYear = i => (typeof pricingGsaScheduleYearForPeriod === 'function') ? pricingGsaScheduleYearForPeriod(i) : 1;
   // CLIN derived per row straight from the stated CLINs (period + scope, or an explicit labor->CLIN tie).
-  const clinL = (lc, tid, i) => pricingClinForRow('labor', i, (typeof _lcatClinRaw === 'function' ? _lcatClinRaw(lc) : (lc && lc.clin)));
+  const clinL = (lc, tid, i) => pricingClinForRow('labor', i, (typeof _lcatClinRaw === 'function' ? _lcatClinRaw(lc) : (lc && lc.clin)), lc && lc.name);
   const clinS = (sc, i) => pricingClinForRow(sc, i, null);
   // Every LCAT x task x period row carries the FULL attribute set so the pivot can slice by any of
   // them. Rate/salary/discount are per-role-per-period; for GSA roles the paid rate is implied back
@@ -12470,6 +12490,31 @@ function pricingFlatRows() {
     if ((_mp[i] || 0) > 0) rows.push(_nl('Materials', _mp[i], i, 'materials'));
   });
   return rows;
+}
+function _pxByClinAgg(nPeriods) {
+  // Aggregate the single pricing fact table (pricingFlatRows) by CLIN for the "By CLIN" workbook tab.
+  // Returns an ordered list of { clin, title, type, baseHours, price:[per period] }. Priced rows the
+  // solicitation tied to no CLIN roll up under "(unmapped)" (sorted last) so nothing is hidden and the
+  // per-period column sums still equal the grand total.
+  var flat = (typeof pricingFlatRows === 'function') ? pricingFlatRows() : [];
+  var stated = (typeof pricingStatedClins === 'function') ? pricingStatedClins() : [];
+  var meta = {};
+  stated.forEach(function (sc) { if (sc && sc.number != null) { var k = String(sc.number).trim(); if (k && !meta[k]) meta[k] = { title: String(sc.title != null ? sc.title : '').trim(), type: String(sc.clin_type != null ? sc.clin_type : '').trim() }; } });
+  var agg = {}, ord = [];
+  flat.forEach(function (r) {
+    if (!r) return;
+    var raw = String(r.clin != null ? r.clin : '').trim();
+    var k = raw || '(unmapped)';
+    if (!agg[k]) {
+      agg[k] = { clin: k, title: (meta[k] && meta[k].title) || (k === '(unmapped)' ? 'Priced rows the solicitation tied to no CLIN' : ''), type: (meta[k] && meta[k].type) || '', baseHours: 0, price: [] };
+      for (var z = 0; z < nPeriods; z++) agg[k].price.push(0);
+      ord.push(k);
+    }
+    if (r.periodIdx === 0) agg[k].baseHours += (r.hours || 0);
+    if (typeof r.periodIdx === 'number' && r.periodIdx >= 0 && r.periodIdx < nPeriods) agg[k].price[r.periodIdx] += (r.price || 0);
+  });
+  ord.sort(function (a, b) { return ((a === '(unmapped)') - (b === '(unmapped)')) || (a < b ? -1 : a > b ? 1 : 0); });
+  return ord.map(function (k) { return agg[k]; });
 }
 var _PX_DIMS = { category: 'Category', lcat: 'Labor Category', gsaLcat: 'GSA LCAT', task: 'PWS Task', clin: 'CLIN', period: 'Period' };
 var _PX_MEAS = { price: 'Price ($)', hours: 'Hours', fte: 'FTE', baseRate: 'Base rate ($/hr)', burdenedRate: 'Burdened rate ($/hr)', listRate: 'List rate ($/hr, pre-discount)', salary: 'Salary ($/yr)', discount: 'Discount (%)', escalation: 'Escalation (% vs base yr)' };
@@ -13343,6 +13388,44 @@ async function marketLookupRole(id, btn) {
     setTimeout(function () { res.style.animation = ''; }, 1500);
   }, 120);
 }
+function pricingLcatLookup(id) {
+  // Mirror the Market Rates per-role lookup from Step 4: jump to the Market Rates tab so the search is
+  // visible there, then run the SAME lookup (marketLookupRole with a null button spins the Market Rates
+  // run button). The Step-4 button toggles 'Look up ->' / 'Look up again' on l.evaluated exactly like the
+  // Market Rates one, and re-renders researched once the lookup lands.
+  try { if (typeof switchTab === 'function') switchTab('market'); } catch (e) {}
+  if (typeof marketLookupRole === 'function') setTimeout(function () { marketLookupRole(id, null); }, 0);
+}
+function pricingSetAllRateBasis(val) {
+  // QoL (Step 4): set the rate basis for EVERY labor category at once, instead of changing each row's
+  // dropdown by hand. Mirrors pricingSetLcatRate('rateBasis') per role - it re-expresses each role's
+  // current rate in the new basis, so no figure changes, only which input you are editing.
+  if (!val) return;
+  (pricingModel.lcats || []).forEach(function (l) {
+    if (!l) return;
+    l.rateInput = (typeof pricingRateInBasis === 'function') ? pricingRateInBasis(l, val) : l.rateInput;
+    l.rateBasis = val;
+    if (typeof pricingSyncBaseRate === 'function') pricingSyncBaseRate(l);
+  });
+  if (typeof pricingRenderAll === 'function') pricingRenderAll();
+}
+function pricingRenderBulkBasis() {
+  var el = document.getElementById('pricingBulkBasis'); if (!el) return;
+  var M = pricingModel;
+  // Only meaningful in non-GSA mode (the rate basis governs what you enter); in GSA mode the rate comes
+  // from the Schedule, so hide it. Also hide when there are no roles yet.
+  if ((typeof pricingIsGsa === 'function' && pricingIsGsa()) || !M || !(M.lcats || []).length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = '';
+  el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:12px;flex-wrap:wrap">' +
+    '<label style="color:var(--muted);white-space:nowrap">Set <strong>all</strong> rate inputs to:</label>' +
+    '<select onchange="if(this.value){pricingSetAllRateBasis(this.value);this.selectedIndex=0;}" title="Apply one rate basis to every labor category at once. Each role is re-expressed in the new basis - no dollar amount changes." style="padding:6px 26px 6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:white">' +
+      '<option value="">\u2014 choose a basis to apply to every role \u2014</option>' +
+      '<option value="paid">Company Paid Hourly Rate</option>' +
+      '<option value="salary">Company Paid Annualized Salary</option>' +
+      '<option value="loaded">Fully Burdened Hourly Rate</option>' +
+      '<option value="annual">Fully Burdened Annualized Salary</option>' +
+    '</select></div>';
+}
 function pricingAddLcat() { pricingModel.lcats.push({ id: _prId('l_'), name: '', baseRate: '', hpf: '', advertised: '', gsaLcat: '' }); pricingRenderAll(); }
 function pricingRemoveLcat(id) { pricingModel.lcats = pricingModel.lcats.filter(l => l.id !== id); delete pricingModel.hours[id]; delete pricingModel.mask[id]; pricingRenderAll(); }
 function pricingSetLcat(id, field, val) { const l = pricingModel.lcats.find(x => x.id === id); if (l) { l[field] = val; pricingRenderAll(); } }
@@ -13546,6 +13629,28 @@ function pricingToggleMask(lid, tid) {
   const cur = pricingModel.mask[lid][tid];
   pricingModel.mask[lid][tid] = (cur === false) ? true : false;   // toggle locked state
   pricingRenderAll();
+}
+function pricingEnsureOptionPeriods() {
+  // Auto-create the base + option-year periods from the solicitation's total term (contract_years:
+  // N total years => 1 base + (N-1) option years) when the model still has only the base period. This is
+  // idempotent: it does nothing if option periods already exist (e.g. the RFP pull built them) or the term
+  // is unknown. Option-year COSTS come from escalating the base matrix, so the periods only need to EXIST
+  // for Step 6's "Different per year" / "Per option period" controls and the option-year pricing.
+  try {
+    var M = pricingModel; if (!M) return;
+    var P = M.periods || [];
+    if (P.length >= 2) return;
+    var intel = (typeof window !== 'undefined' && window._lastBnaIntel) || {};
+    var cy = parseInt(String(intel.contract_years == null ? '' : intel.contract_years).replace(/[^0-9]/g, ''), 10);
+    if (!isNaN(cy) && cy > 11 && typeof _bnaContractPeriods === 'function') cy = _bnaContractPeriods(intel);
+    if (isNaN(cy) || cy < 2) return;
+    var nOpt = Math.min(cy - 1, 12);
+    var base = P[0] || { id: 'p_base', name: 'Base Year', escalation: 0, months: 12 };
+    var baseMonths = base.months || 12;
+    var optName = (baseMonths === 12) ? 'Option Year ' : 'Option Period ';
+    M.periods = [base];
+    for (var i = 1; i <= nOpt; i++) M.periods.push({ id: _prId('p_'), name: optName + i, escalation: 3, months: baseMonths });
+  } catch (e) {}
 }
 function pricingAddPeriod() { pricingModel.periods.push({ id: _prId('p_'), name: 'Option Year', escalation: 3, months: 12 }); pricingRenderAll(); }
 function pricingRemovePeriod(id) { pricingModel.periods = pricingModel.periods.filter(p => p.id !== id); if (!pricingModel.periods.length) pricingModel.periods = [{ id: 'p_base', name: 'Base Year', escalation: 0, months: 12 }]; pricingRenderAll(); }
@@ -14784,6 +14889,7 @@ function pricingApplyAutoBuild(a) {
   pricingModel.lcats = lcats;
   pricingModel.hours = hours;
   pricingModel.mask = mask;
+  if (typeof pricingEnsureOptionPeriods === 'function') pricingEnsureOptionPeriods();   // Phase 1.1: base + option-year periods from contract_years
   // CLIN is a derived column on the single pricing fact table (pricingClinForRow): each role's `clin`
   // (stamped above from the analysis) plus the stated CLINs are all the pivot/export read - no parallel
   // clins.lines structure is built. Keep only the legacy per-role clin normalization.
@@ -14805,7 +14911,7 @@ function pricingRenderAutoBuildPanel() {
   // space ('in range'), so it never matched and fell through to the grey default -- the one
   // assessment that should have been green rendered as an unstyled lowercase pill. Spaces
   // normalise to underscores so both spellings land on the same badge.
-  const assess = s => badge(String(s == null ? '' : s).replace(/\s+/g, '_'), { in_range: ['#065f46', '#d1fae5', 'In range'], below: ['#92400e', '#fef3c7', 'Below'], above: ['#92400e', '#fef3c7', 'Above'], far_below: ['#991b1b', '#fee2e2', 'Far below'], far_above: ['#991b1b', '#fee2e2', 'Far above'] });
+  const assess = s => badge(String(s == null ? '' : s).replace(/\s+/g, '_'), { in_range: ['#065f46', '#d1fae5', 'In market range'], below: ['#92400e', '#fef3c7', 'Below market'], above: ['#92400e', '#fef3c7', 'Above market'], far_below: ['#991b1b', '#fee2e2', 'Far below market'], far_above: ['#991b1b', '#fee2e2', 'Far above market'] });
   const gsa = pricingIsGsa();
   let h = '';
   if (a.fte_basis) h += `<div style="font-size:12px;color:var(--text);margin-bottom:8px"><strong>Team sizing:</strong> ${pricingEsc(a.fte_basis)}</div>`;
@@ -14825,7 +14931,7 @@ function pricingRenderAutoBuildPanel() {
   if ((cr.per_role && cr.per_role.length) || cr.overall) {
     h += `<div style="margin-top:10px;font-weight:700;font-size:12px">Cost-realism check</div>`;
     if (cr.per_role && cr.per_role.length) {
-      h += `<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11.5px;width:100%"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:3px 6px">Role</th><th style="padding:3px 6px">Our burdened rate</th><th style="padding:3px 6px">Market range \u2014 fully burdened (est.)</th><th style="padding:3px 6px">Assessment</th><th style="padding:3px 6px">Note</th></tr></thead><tbody>`;
+      h += `<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11.5px;width:100%"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:3px 6px">Role</th><th style="padding:3px 6px">Our burdened rate</th><th style="padding:3px 6px">Market range \u2014 fully burdened (est.)</th><th style="padding:3px 6px">Rate vs market</th><th style="padding:3px 6px">Note</th></tr></thead><tbody>`;
       const _lcatByName = {};
       (pricingModel.lcats || []).forEach(l => { _lcatByName[String(l.name || '').toLowerCase().trim()] = l; });
       cr.per_role.forEach(r => {
@@ -14852,7 +14958,7 @@ function pricingRenderAutoBuildPanel() {
         const _disagrees = _verdict && _claimed && _claimed.indexOf(_verdict) < 0;
         const _assessCell = _verdict
           ? (assess(_verdict) + (_disagrees
-              ? '<span title="The arithmetic says ' + _verdict + '; the AI called it ' + _human(r.assessment) + '." style="display:block;margin-top:3px;font-size:9.5px;font-weight:700;color:#9a3412;background:#ffedd5;border:1px solid #fdba74;border-radius:4px;padding:1px 5px;white-space:nowrap">AI said ' + pricingEsc(_human(r.assessment)) + '</span>'
+              ? '<span title="Badge = your loaded rate vs the market range (arithmetic, authoritative). The AI holistic note differed: ' + _human(r.assessment) + '." style="display:block;margin-top:3px;font-size:9.5px;font-weight:700;color:#9a3412;background:#ffedd5;border:1px solid #fdba74;border-radius:4px;padding:1px 5px;white-space:nowrap">AI note: ' + pricingEsc(_human(r.assessment)) + '</span>'
               : ''))
           : assess(r.assessment);
         h += `<tr style="border-top:1px solid var(--border)"><td style="padding:3px 6px;font-weight:600">${pricingEsc(r.role_name || '')}</td><td style="padding:3px 6px">${ourCell}</td><td style="padding:3px 6px">${lo} \u2013 ${hi}/hr</td><td style="padding:3px 6px">${_assessCell}</td><td style="padding:3px 6px;color:var(--muted)">${pricingEsc(r.note || '')}</td></tr>`;
@@ -14860,6 +14966,7 @@ function pricingRenderAutoBuildPanel() {
       h += `</tbody></table></div>`;
     }
     if (cr.overall) h += `<div style="font-size:11.5px;color:var(--text);margin-top:6px"><strong>Overall:</strong> ${pricingEsc(cr.overall)}</div>`;
+    h += `<div style="font-size:10.5px;color:var(--muted);margin-top:6px">The <strong>Rate vs market</strong> badge is your fully-burdened rate versus the market range: <em>Below market</em> means more price-competitive, <em>Above market</em> is a price-realism risk. When the AI holistic note disagrees with that arithmetic, it shows as a secondary \u201cAI note\u201d pill.</div>`;
     h += `<div style="font-size:10.5px;color:var(--muted);margin-top:4px;font-style:italic">Market figures are AI estimates for a sanity check only \u2014 verify against GSA CALC+, BLS OES, and SCA wage determinations before relying on them. A sourced rate-research engine is planned.</div>`;
   }
   const asm = Array.isArray(a.assumptions) ? a.assumptions.filter(Boolean) : [];
@@ -15043,6 +15150,7 @@ function pricingRenderLcats() {
       var _pts = (Math.abs(_hi - _lo) < 0.0005) ? (Math.round(_lo * 1000) / 10).toFixed(1) : ((Math.round(_lo * 1000) / 10).toFixed(1) + '\u2013' + (Math.round(_hi * 1000) / 10).toFixed(1));
       _effTxt = ' <strong>Applied to your roles: ' + _shown + '</strong> \u2014 the base factor plus ' + _pts + ' points carried on fringe from the per-role work location (state employer payroll tax: SUTA/FUTA and workers\u2019 comp), and from SCA Health &amp; Welfare wherever it beats standard fringe. The base factor above is the company default; the applied factor is what each rate below actually uses.';
     } _wb.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px"><span>Company <strong>wrap factor ' + _W.toFixed(3) + '×</strong> <span style="color:var(--muted)">(fringe ' + (_p.fringe || 0) + '% · OH ' + (_p.overhead || 0) + '% · G&amp;A ' + (_p.ga || 0) + '% · fee ' + (_p.fee || 0) + '%, ' + _mode + ')</span> — derives fully burdened rate, salary, and gov cost from whatever you enter below.' + _effTxt + '</span><button onclick="pricingGotoWrapSettings()" style="font-size:11.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;white-space:nowrap">Change wrap rate →</button></div>'; } })();
+  if (typeof pricingRenderBulkBasis === 'function') pricingRenderBulkBasis();
   if (!pricingModel.lcats.length) {
     el.innerHTML = pricingIsGsa()
       ? '<div style="font-size:12px;color:var(--muted)">No labor categories yet. Add each role you\u2019ll bill, then map it to a category on your GSA Schedule (the rate fills in automatically). <em>(AI mapping of PWS tasks to your Schedule LCATs is coming next.)</em></div>'
@@ -15069,7 +15177,7 @@ function pricingRenderLcats() {
         <select title="${l.gsaLcat ? pricingEsc(l.gsaLcat) : 'Map this role to a GSA Schedule labor category'}" onchange="pricingSetGsaLcat('${l.id}',this.value)" style="min-width:0;width:100%;padding:6px 26px 6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:white;text-overflow:ellipsis;box-sizing:border-box">${opts}</select>
         <input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" title="Full-time-equivalent staffing you propose for this role (base year)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
         ${pricingRateMatrixHtml(l)}
-        <button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px;padding:0;line-height:1">✕</button>
+        <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><button class="mkt-lookup-btn" onclick="pricingLcatLookup('${l.id}')" title="Look up prevailing pay for this role on Market Rates" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;min-width:104px;text-align:center">${l.evaluated ? 'Look up again' : 'Look up \u2192'}</button><button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px;padding:0;line-height:1">✕</button></div>
         <div style="grid-column:1/-1;font-size:10.5px;color:var(--muted);line-height:1.45;padding-left:2px">${rateNote}</div>
       </div>`;
     }).join('');
@@ -15101,7 +15209,7 @@ function pricingRenderLcats() {
       ${pricingRateMatrixHtml(l)}
       <input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" title="Proposed FTE" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
       <input type="number" min="0" step="1" value="${l.hpf}" onchange="pricingSetLcat('${l.id}','hpf',this.value)" placeholder="${defaultHpf()}" title="Billable hours per FTE for this role; blank = company default" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
-      <div style="display:flex;align-items:center;gap:5px;justify-content:flex-end">${_chip}<button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px">✕</button></div>
+      <div style="display:flex;align-items:center;gap:5px;justify-content:flex-end"><button class="mkt-lookup-btn" onclick="pricingLcatLookup('${l.id}')" title="Look up prevailing pay for this role on Market Rates" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;min-width:104px;text-align:center">${l.evaluated ? 'Look up again' : 'Look up \u2192'}</button>${_chip}<button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px">✕</button></div>
       ${_warn}
     </div>`;
   }).join('');
@@ -15508,7 +15616,7 @@ function pricingRenderStatedClinPreview() {
     var title = String(sc.title != null ? sc.title : (sc.description != null ? sc.description : '')).trim();
     var type = String(sc.clin_type != null ? sc.clin_type : (sc.type != null ? sc.type : '')).trim();
     var period = String(sc.period_label != null ? sc.period_label : '').trim();
-    var opt = (sc.optional === true) || (String(sc.optional).toLowerCase() === 'true');
+    var opt = _pxClinIsTrulyOptional(sc);
     var nteRaw = (sc.nte != null && sc.nte !== '') ? String(sc.nte).replace(/[^0-9.]/g, '') : '';
     var nte = (nteRaw && !isNaN(parseFloat(nteRaw))) ? ('NTE $' + parseFloat(nteRaw).toLocaleString('en-US')) : '';
     var meta = [type, period, nte].filter(function (x) { return x; }).join(' \u00b7 ');
@@ -16220,7 +16328,9 @@ function pricingBuildWorkbook() {
   // dataset has to carry it or it cannot be pivoted by CLIN. Appended as the LAST
   // column, which keeps every existing column index, number format and SUMIFS
   // reference exactly where it was.
-  const _clinDim = pricingClinDim();
+  // CLIN column reads the deterministic per-row derivation (pricingClinForRow), the SAME source the
+  // pivot uses - not the old clins.enabled structure (retired v283), which is why this column was blank.
+  const _clinDim = { forRow: function (l, tid, i) { return (typeof pricingClinForRow === 'function') ? pricingClinForRow('labor', i, (typeof _lcatClinRaw === 'function' ? _lcatClinRaw(l) : (l && l.clin)), l && l.name) : ''; }, forScope: function (sc, i) { return (typeof pricingClinForRow === 'function') ? pricingClinForRow(sc === 'travelodc' ? 'travel' : sc, i, null, null) : ''; } };
   // Labor and non-labor now escalate on separate rates, so the workbook names the basis on
   // every non-labor row rather than leaving the reader to assume the labor rate applied.
   const _odcBasisLabel = 'Materials \u00b7 escalation ' + ((typeof _pxStreamEscLabel === 'function') ? _pxStreamEscLabel(pricingMaterials()) : 'held flat');
@@ -16322,6 +16432,19 @@ function pricingBuildWorkbook() {
   wsBL['!cols'] = [{ wch: 26 }, { wch: 16 }, { wch: 12 }, { wch: 8 }, { wch: 20 }].concat(pNames.map(() => ({ wch: 14 }))).concat([{ wch: 18 }]);
   pxStyle(wsBL, { money: (gsa ? [4] : [1, 4]).concat(P.map((_, i) => 5 + i)).concat([5 + P.length]), hours: [2], fte: [3] });
   XLSX.utils.book_append_sheet(wb, wsBL, 'By Labor Category');
+  // ---- TAB: By CLIN ---- (mirrors By Labor Category, grouped by the CLIN dimension of the one fact table
+  // so the workbook can be read by contract line item; values are as-priced. The TOTAL row uses the
+  // authoritative period costs, and CLIN-less rows appear under "(unmapped)" so nothing is hidden.)
+  {
+    const _rowsC = (typeof _pxByClinAgg === 'function') ? _pxByClinAgg(P.length) : [];
+    const bc = [['CLIN', 'Description', 'Type', 'Base-Year Hours', ...pNames, 'Total all periods ($)']];
+    _rowsC.forEach(rc => { bc.push([rc.clin, rc.title, rc.type, Math.round(rc.baseHours), ...rc.price.map(x => r2(x)), r2(rc.price.reduce((s, x) => s + x, 0))]); });
+    bc.push(['TOTAL', '', '', '', ...P.map((p, i) => r2(pricingPeriodCost(i))), r2(pricingGrandTotal())]);
+    const wsBC = XLSX.utils.aoa_to_sheet(bc);
+    wsBC['!cols'] = [{ wch: 12 }, { wch: 34 }, { wch: 10 }, { wch: 14 }].concat(pNames.map(() => ({ wch: 14 }))).concat([{ wch: 18 }]);
+    pxStyle(wsBC, { money: P.map((_, i) => 4 + i).concat([4 + P.length]), hours: [3] });
+    XLSX.utils.book_append_sheet(wb, wsBC, 'By CLIN');
+  }
 
   // ---- Fully Burdened Rate Table (fully-burdened hourly rate per labor category, per period) ----
   // In GSA mode the discount is shown explicitly: the schedule (ceiling) rate, the discount %, and the
@@ -18038,6 +18161,24 @@ function _anaDiscard(reason) {
   }
 }
 
+function bnaResetForNewOpportunity() {
+  // A new opportunity is being sent from Triage to OVERWRITE whatever sits in Bid/No-Bid. Reset the tab to
+  // a clean, analyzable state: drop the previous opportunity's saved analysis + rendered intel (_anaDiscard
+  // clears the state and hides the Opportunity Details card), hide the old scoring + PDF buttons, re-expand
+  // Step 1 & Step 2 so the Analyze button is visible again (not folded away by bnaCollapseSteps), and refresh
+  // the button state. Without this the old details linger and the Analyze button stays hidden, forcing a
+  // manual "Clear everything for this opportunity".
+  try { if (typeof _anaDiscard === 'function') _anaDiscard(); } catch (e) {}
+  try { var r = document.getElementById('bnaResults'); if (r) r.style.display = 'none'; } catch (e) {}
+  try { ['bnaPdfBtnWrap', 'bnaPdfBtnWrapBottom'].forEach(function (id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; }); } catch (e) {}
+  try {
+    [['bnaStep1Body', 'bnaStep1Caret'], ['bnaStep2Body', 'bnaStep2Caret']].forEach(function (p) {
+      var b = document.getElementById(p[0]); if (b) b.style.display = '';
+      var c = document.getElementById(p[1]); if (c) c.textContent = '\u25be Hide';
+    });
+  } catch (e) {}
+  try { if (typeof updateBnaBtn === 'function') updateBnaBtn(); } catch (e) {}
+}
 // Called after every extraction that produces something worth keeping.
 function _anaSave() {
   try {
@@ -18623,7 +18764,8 @@ function _triageVerdictHtml(z) {
   const v = z.verdict;
   if (!v) return '';
   if (v.error) return '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--error)">' + escHtml(v.error) + '</div>';
-  const elig = (v.eligible === true) ? ' <span style="color:#166534;font-weight:700">\u2713 eligible</span>' : (v.eligible === false) ? ' <span style="color:#991b1b;font-weight:700">\u2717 not eligible</span>' : (v.set_aside && /not stated/i.test(v.set_aside) ? ' <span style="color:#92400e;font-weight:600">\u26a0 set-aside unverified</span>' : '');
+  const _er = (typeof escHtml === 'function') ? escHtml(v.eligible_reason || '') : '';
+  const elig = (v.eligible === true) ? ' <span title="' + _er + '" style="color:#166534;font-weight:700">\u2713 eligible</span>' : (v.eligible === false) ? ' <span title="' + _er + '" style="color:#991b1b;font-weight:700">\u2717 not eligible</span>' : (v.set_aside && /not stated/i.test(v.set_aside) ? ' <span style="color:#92400e;font-weight:600">\u26a0 set-aside unverified</span>' : '') + (v.set_aside_unverified && v.eligible !== null ? ' <span style="color:#92400e;font-weight:600" title="Set-aside could not be read from the document; defaulted to the broadest reading - verify on SAM.gov">\u26a0 verify set-aside</span>' : '');
   const fit = v.naics_fit ? (' <span style="color:var(--muted)">(' + escHtml(v.naics_fit) + ' fit)</span>') : '';
   const days = (v.days_remaining != null && v.days_remaining !== '') ? (' <span style="color:var(--muted)">(' + escHtml(String(v.days_remaining)) + ' days left)</span>') : '';
   return '<div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:12px 14px">'
@@ -18631,7 +18773,7 @@ function _triageVerdictHtml(z) {
     + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;margin-bottom:8px">'
     +   _triageField('Agency', v.agency) + _triageField('eBuy Request ID', z.ebuyId || v.ebuy_request_id) + _triageField('Solicitation #', v.solicitation_number) + _triageField('Type', v.notice_type)
     +   _triageField('Set-aside', v.set_aside, elig) + _triageField('NAICS', v.naics, fit) + _triageField('Response due', v.response_date, days)
-    +   _triageField('Value', v.value) + _triageField('Place of perf.', v.place_of_performance)
+    +   _triageField('Value', v.value) + _triageField('Contract vehicle', v.contract_vehicle) + _triageField('Place of perf.', v.place_of_performance)
     + '</div>'
     + (v.rationale ? ('<div style="font-size:12.5px;line-height:1.5;color:var(--text);margin-bottom:10px"><span style="color:var(--muted)">Why:</span> ' + escHtml(v.rationale) + '</div>') : '')
     + '<button onclick="triageDeepDive(' + z.id + ')" style="padding:7px 14px;font-size:12.5px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">Deep-dive in Bid/No-Bid \u2192</button>'
@@ -18663,6 +18805,61 @@ async function _triageExtract(files) {
   const realText = text.replace(/\[File:[^\]]*\]/g, '').trim();
   return { text: text.slice(0, 14000), docBlocks: (realText.length > 200 ? [] : docBlocks), readable: readable, failed: failed };
 }
+function _triageOtherGates(v) {
+  // Phase 4b: the HARD bid gates OTHER than the set-aside - so they surface as their OWN reasons instead of
+  // masquerading as a set-aside failure. Deterministic against the company profile where possible (contract
+  // vehicle via cap.contractVehicles + _vehicleMatch; facility clearance via _clearanceRank), and factual for
+  // sole-source / already-awarded. Returns [{ gate, reason }] (empty when nothing bars a prime pursuit).
+  var gates = [];
+  if (!v || v.error) return gates;
+  var cap = (typeof CLIENT_CONFIG !== 'undefined' && CLIENT_CONFIG && CLIENT_CONFIG.capacity) || {};
+  var co = cap.legalName || 'the company';
+  // Already awarded / sole-source to a named firm -> competing is moot (a hard bar).
+  if (v.already_awarded === true) {
+    var who = (v.awardee && !/not stated|unknown/i.test(String(v.awardee))) ? String(v.awardee).trim() : '';
+    gates.push({ gate: 'Already awarded', reason: (who ? 'Appears sole-source / already awarded to ' + who : 'Appears sole-source or already awarded to another firm') + ' - competitive pursuit is moot.' });
+  }
+  // A specific mandatory contract vehicle the company does not hold.
+  var veh = String(v.contract_vehicle == null ? '' : v.contract_vehicle).trim();
+  if (veh && !/^(not stated|none|open|n\/?a|unknown)$/i.test(veh) && v.vehicle_is_open !== true) {
+    var held = cap.contractVehicles || [];
+    var has = held.some(function (h) { return (typeof _vehicleMatch === 'function') ? _vehicleMatch(h, veh) : (String(h).toLowerCase() === veh.toLowerCase()); });
+    if (!has) gates.push({ gate: 'Contract vehicle', reason: 'Requires the ' + veh + ' contract vehicle, which ' + co + ' does not hold.' });
+  }
+  // A facility clearance beyond what the company holds.
+  var clr = String(v.required_clearance == null ? '' : v.required_clearance).trim();
+  if (clr && !/^(not stated|none|n\/?a|unknown)$/i.test(clr) && typeof _clearanceRank === 'function') {
+    if (_clearanceRank(clr) > _clearanceRank(cap.facilityClearance)) {
+      gates.push({ gate: 'Security clearance', reason: 'Requires a ' + clr + ' facility clearance; ' + co + ' holds ' + (cap.facilityClearance || 'none') + '.' });
+    }
+  }
+  return gates;
+}
+function _triageApplyEligibility(v) {
+  // Phase 4(a): deterministic set-aside eligibility from the company's held certifications + the SBA
+  // nesting hierarchy (via _bnaSetAsideFit) OVERRIDES the screening model's eligibility guess. Holding a
+  // cert qualifies for that set-aside and every broader one it nests into (SDVOSB -> VOSB -> Total Small
+  // Business; EDWOSB -> WOSB -> Total SB; any small-business cert -> Total SB). A set-aside the company
+  // cannot hold is a HARD prime bar -> Pass. Other hard gates (vehicle, sole-source, clearance) are handled
+  // separately (Phase 4b), so a wrong set-aside no longer masks the real reason.
+  if (!v || v.error || typeof _bnaSetAsideFit !== 'function') return v;
+  try {
+    var cap = (typeof CLIENT_CONFIG !== 'undefined' && CLIENT_CONFIG && CLIENT_CONFIG.capacity) || {};
+    var fit = _bnaSetAsideFit(v.set_aside, cap);
+    if (fit) {
+      v.eligible = fit.eligible;
+      v.eligible_reason = fit.rationale;
+      if (fit.eligible === false) v.verdict = 'Pass';
+    }
+  } catch (e) {}
+  // Phase 4b: the OTHER hard gates (sole-source/awarded, contract vehicle, clearance) surface as their
+  // own distinct reasons - not as a set-aside failure. Any hard gate bars a prime pursuit -> Pass.
+  try {
+    var _gates = (typeof _triageOtherGates === 'function') ? _triageOtherGates(v) : [];
+    if (_gates && _gates.length) { v.hard_gates = _gates; v.verdict = 'Pass'; v.rationale = _gates.map(function (g) { return g.reason; }).join(' '); }
+  } catch (e) {}
+  return v;
+}
 async function triageScreenZone(id) {
   const z = triageZones.find(x => x.id === id);
   if (!z) return;
@@ -18674,6 +18871,8 @@ async function triageScreenZone(id) {
     const ex = await _triageExtract(z.files);
     if (!z.ebuyId) { const _eb = _triageDetectEbuyId(z.files, ex.text); if (_eb) { z.ebuyId = _eb; const _ein = document.getElementById('triageEbuy-' + z.id); if (_ein) _ein.value = _eb; } }
     if (!ex.text && !ex.docBlocks.length) { z.verdict = { error: 'Could not read text from these files (they may be scanned images). Deep-dive to analyze them directly.' }; return; }
+    let _saDet = null;
+    try { _saDet = await detectSetAside(z.files, apiKey, ex.text); } catch (e) {}   // run-first set-aside detector (form field -> text -> vision -> flag)
     const capText = (typeof CLIENT_CONFIG !== 'undefined' && CLIENT_CONFIG.capabilityStatementText) ? CLIENT_CONFIG.capabilityStatementText : 'No company capability profile is configured; assess general merits and note that company fit could not be personalized.';
     const today = new Date().toDateString();
     const promptText =
@@ -18683,8 +18882,9 @@ async function triageScreenZone(id) {
       + 'verdict (one of "Pursue","Maybe","Pass"), title, solicitation_number, ebuy_request_id (a GSA eBuy / Unison portal Request ID like "RFQ1827479" if one appears in the text - the portal tracking number, NOT the agency solicitation number; "not stated" if absent), agency, notice_type (e.g. "Sources Sought","RFP","RFQ","Presolicitation","RFI"), set_aside (the OPERATIVE set-aside from the excerpt: the SAM.gov Set-Aside Type, a "Set-Aside:" line, or the controlling FAR clause - 52.219-6 = Total Small Business, 52.219-27 = SDVOSB, 52.219-30 = WOSB, 52.219-29 = EDWOSB, 52.219-3 = HUBZone, 52.219-18 = 8(a); these categories are DISTINCT, never substitute one for another. Cross-check the required certifications - if offerors must hold a specific certification, the set-aside MUST match it. Do NOT infer a socioeconomic set-aside from small-business subcontracting goals or NAICS size alone. If the excerpt does not state or clearly establish the set-aside, use "not stated" and do not guess), '
       + 'eligible (boolean: does the company\u2019s socioeconomic status qualify it to compete? true ONLY if it clearly qualifies - full-and-open, OR the set-aside type matches a certification the company holds per its profile; false if the set-aside is a socioeconomic type the company does NOT hold; null if the set-aside is "not stated" or cannot be determined - NEVER default to true when the set-aside is unknown), '
       + 'naics, naics_fit (one of "strong","partial","weak","unknown"), response_date (the date offers/quotes are DUE; when the base solicitation AND one or more amendments each carry a due/close date, return the LATEST one - an amendment pushes the deadline out and supersedes the earlier date; "not stated" if absent), days_remaining (integer days from today to that response_date, or null), '
-      + 'value (rough dollar value or "not stated"), place_of_performance, rationale (ONE short sentence: the single biggest reason for the verdict). '
+      + 'value (rough dollar value or "not stated"), place_of_performance, contract_vehicle (the specific contract vehicle/IDIQ that quotes must be submitted under - e.g. "GSA MAS", "SeaPort-NxG", "CIO-SP4", "DISA SETI" - or "not stated"; "open" if explicitly open to any vehicle/open-market), vehicle_is_open (boolean: true if any vehicle or open-market is allowed, false if a specific vehicle is mandatory, null if not stated), already_awarded (boolean: true ONLY if the document shows the work is sole-source or already awarded to a NAMED contractor - e.g. an SF1449 pre-filled with a company as the contractor/offeror, or a sole-source/limited-sources justification naming a firm - else false), awardee (the named awardee/incumbent if already_awarded is true, else "not stated"), required_clearance (the facility or personnel security clearance required to perform - e.g. "Secret", "Top Secret", "TS/SCI" - or "none"/"not stated"), rationale (ONE short sentence: the single biggest reason for the verdict). '
       + 'Decision guidance: Pursue ONLY when the company is clearly eligible AND the work fits its capabilities AND the timeline is workable; Pass when it is ineligible (a socioeconomic set-aside the company cannot hold), clearly outside its capabilities, or the deadline is past/impossible; Maybe when mixed or uncertain - INCLUDING when the set-aside is not stated (eligibility is unverified, so never Pursue; flag verifying the set-aside). A specific socioeconomic set-aside the company does not hold is an ELIGIBILITY BAR - return Pass, not Maybe.\n\n'
+      + (_saDet && _saDet.source !== 'default' ? 'AUTHORITATIVE SET-ASIDE (read directly from the document via ' + _saDet.source + '): ' + _saDet.type + '. Use this EXACT value for set_aside; do not re-derive it from the text.\n\n' : '')
       + 'COMPANY PROFILE:\n' + capText + '\n\n'
       + 'SOLICITATION EXCERPT:\n' + ex.text;
     const content = [{ type: 'text', text: promptText }].concat(ex.docBlocks);
@@ -18709,6 +18909,12 @@ async function triageScreenZone(id) {
     const a = rawTxt.indexOf('{'), b2 = rawTxt.lastIndexOf('}');
     try { z.verdict = JSON.parse(a >= 0 && b2 >= 0 ? rawTxt.slice(a, b2 + 1) : rawTxt); }
     catch (err) { z.verdict = { error: 'Could not parse the screen result. Try again, or deep-dive.' }; }
+    if (_saDet && z.verdict && !z.verdict.error) {
+      if (_saDet.source !== 'default') { z.verdict.set_aside = _saDet.type; z.verdict.set_aside_evidence = _saDet.evidence; }
+      else if (!z.verdict.set_aside || /not stated|unknown|not determinable/i.test(String(z.verdict.set_aside))) { z.verdict.set_aside = _saDet.type; z.verdict.set_aside_evidence = _saDet.evidence; z.verdict.set_aside_unverified = true; }
+      else { z.verdict.set_aside_unverified = true; }
+    }
+    _triageApplyEligibility(z.verdict);   // 4a: deterministic set-aside eligibility overrides the model's guess
     if (!z.ebuyId && z.verdict && z.verdict.ebuy_request_id && z.verdict.ebuy_request_id !== 'not stated') z.ebuyId = String(z.verdict.ebuy_request_id).trim();
   } catch (e) {
     z.verdict = { error: 'Something went wrong: ' + (e && e.message ? e.message : e) };
@@ -18748,6 +18954,7 @@ function triageDeepDive(id) {
   if (_bnaTxt) _bnaTxt.value = '';
   if (typeof addFilesToArray === 'function' && typeof bnaFiles !== 'undefined') addFilesToArray(z.files.slice(), bnaFiles, 'fileListBNA');
   if (typeof updateBnaBtn === 'function') updateBnaBtn();
+  if (typeof bnaResetForNewOpportunity === 'function') bnaResetForNewOpportunity();   // 3.5: clean, analyzable BNA for the new opportunity
   z.sentToBna = true;
   triageRenderZones();
   if (typeof switchTab === 'function') switchTab('bidnobid');
@@ -18963,6 +19170,7 @@ async function triageScreenList() {
     const a = txt.indexOf('['), b = txt.lastIndexOf(']');
     let rows = null;
     try { rows = JSON.parse(a >= 0 && b >= 0 ? txt.slice(a, b + 1) : txt); } catch (e) { rows = null; }
+    if (Array.isArray(rows)) rows.forEach(_triageApplyEligibility);   // 4a: deterministic set-aside eligibility
     if (!Array.isArray(rows) || !rows.length) { status('warn', 'No opportunities found', 'Couldn\u2019t find any opportunities in that text \u2014 paste the list rows themselves, not just a subject line.', false); return; }
     _triageListRows = rows;
     _triageRenderList();
@@ -19648,6 +19856,144 @@ function _bnaSetAsideFit(setAside, cap) {
              + '. Not eligible to prime \u2014 a teaming or subcontract route is the only way in.' };
 }
 
+function _saClassifyStr(str) {
+  // Map an arbitrary string (a form field name, its export value, or a checked value) to a set-aside TYPE
+  // using the same hierarchy patterns the rest of the tool uses. Most-specific first; a bare small-business
+  // signal maps to Total Small Business; no match -> null.
+  var s = String(str == null ? '' : str).toLowerCase();
+  if (!s.trim()) return null;
+  if (typeof _BNA_SA_SPECIFIC !== 'undefined') {
+    for (var i = 0; i < _BNA_SA_SPECIFIC.length; i++) { if (_BNA_SA_SPECIFIC[i].re.test(s)) return _BNA_SA_SPECIFIC[i].label; }
+  }
+  if (/(small.?business)[^a-z]{0,4}(set.?aside)|(set.?aside)[^a-z]{0,4}(small.?business)|total small business|52\.219-6/.test(s)) return 'Total Small Business';
+  return null;
+}
+function _saReduceFieldHits(fields) {
+  // Given a pdf.js getFieldObjects() map, return { type, evidence } when EXACTLY ONE set-aside type has a
+  // checkbox/radio definitively ON. Zero matches, or two different set-aside types both on (an ambiguous
+  // form), returns null so the later text/vision layers decide rather than guessing.
+  if (!fields) return null;
+  var types = {};
+  Object.keys(fields).forEach(function (name) {
+    var arr = fields[name]; if (!Array.isArray(arr)) arr = [arr];
+    arr.forEach(function (f) {
+      if (!f) return;
+      var v = f.value;
+      var on = (v != null && v !== false && String(v).trim() !== '' && String(v).toLowerCase() !== 'off' && String(v).toLowerCase() !== 'false');
+      if (!on) return;
+      var probe = [name, f.exportValue, (typeof v === 'string' ? v : '')].join(' ');
+      var t = _saClassifyStr(probe);
+      if (t && !types[t]) types[t] = name;
+    });
+  });
+  var keys = Object.keys(types);
+  return (keys.length === 1) ? { type: keys[0], evidence: 'PDF form field "' + types[keys[0]] + '" is checked', source: 'form-field' } : null;
+}
+async function _setAsideFromPdfFields(file) {
+  // Layer 1 of set-aside detection: read the PDF's AcroForm checkbox/radio FIELD VALUES - the real On/Off
+  // state that getTextContent() (text extraction) discards. This recovers the checked box on standard
+  // SF-1449/SF-33/SF-1442 forms with certainty. Returns { type, evidence, source } or null (defer).
+  try {
+    if (typeof pdfjsLib === 'undefined' || !file) return null;
+    var buf = await file.arrayBuffer();
+    var pdf = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
+    var fields = null;
+    try { fields = await pdf.getFieldObjects(); } catch (e) { fields = null; }
+    return _saReduceFieldHits(fields);
+  } catch (e) { return null; }
+}
+function _saHit(type, ev) { return { type: type, evidence: 'Text: "' + (String(ev == null ? '' : ev).replace(/\s+/g, ' ').trim().slice(0, 90)) + '"', source: 'text' }; }
+function _setAsideFromText(text) {
+  // Layer 2 of set-aside detection: authoritative signals in the extracted TEXT (deterministic). Reads the
+  // SAM-style "Set-Aside Type" field, an explicit "set aside for X" statement, or a "Set-Aside:" line - the
+  // places a solicitation states the type in words. Returns { type, evidence, source:'text' } or null. Does
+  // NOT key off the bare FAR-clause list (every solicitation cites many 52.219-x clauses that aren't the type).
+  var s = String(text == null ? '' : text);
+  if (!s.trim()) return null;
+  // 1) An explicit Set-Aside field/label + value (most authoritative).
+  var field = s.match(/(?:type\s+of\s+set[-\s]?aside|set[-\s]?aside\s*type|set[-\s]?aside\s+status)\s*[:\-]\s*([^\n\r]{1,90})/i)
+           || s.match(/\bset[-\s]?aside\s*[:\-]\s*([^\n\r]{1,90})/i);
+  if (field && field[1]) {
+    var v = field[1].trim();
+    if (/^(none|n\/?a|not\s+applicable|not\s+set|un-?restricted|full\s+and\s+open)\b/i.test(v)) return _saHit('Unrestricted', field[0]);
+    var t1 = _saClassifyStr(v);
+    if (!t1 && /small.?business/i.test(v)) t1 = 'Total Small Business';   // value already sits under a Set-Aside label
+    if (t1) return _saHit(t1, field[0]);
+  }
+  // 2) An explicit "set aside (100%) for X" statement.
+  var stmt = s.match(/set[-\s]?aside\s+(?:100%\s+)?for\s+([^\n\r.;()]{2,90})/i);
+  if (stmt && stmt[1]) { var t2 = _saClassifyStr(stmt[1]); if (t2) return _saHit(t2, stmt[0]); }
+  // 3) A plain unrestricted / full-and-open statement.
+  if (/\b(?:this\s+(?:acquisition|requirement|procurement)\s+is\s+(?:un-?restricted|full\s+and\s+open)|not\s+(?:a\s+)?set[-\s]?aside|no\s+set[-\s]?aside\s+applies)\b/i.test(s)) return _saHit('Unrestricted', 'unrestricted / full-and-open');
+  return null;
+}
+function _saParseVisionResult(data) {
+  // Interpret the vision model's JSON. Only trust a box it reports as clearly MARKED; map the reported type
+  // via the shared classifier; 'unclear' or unmarked -> null (defer to the conservative flag). Never infer
+  // from printed labels - the whole point of this layer is to read the actual mark.
+  if (!data || data.marked !== true) return null;
+  var v = String(data.set_aside == null ? '' : data.set_aside).trim();
+  if (!v || /unclear|unknown|not\s+visible/i.test(v)) return null;
+  if (/un-?restricted|full\s+and\s+open|not\s+(?:a\s+)?set[-\s]?aside/i.test(v)) return { type: 'Unrestricted', evidence: 'Vision: a full-and-open / not-set-aside box is marked', source: 'vision' };
+  var t = _saClassifyStr(v) || (/small.?business/i.test(v) ? 'Total Small Business' : null);
+  return t ? { type: t, evidence: 'Vision: "' + v.slice(0, 60) + '" box is marked', source: 'vision' } : null;
+}
+async function _setAsideFromVision(file, apiKey) {
+  // Layer 3 of set-aside detection: for a flattened/scanned PDF whose checkbox is a drawn/imaged mark (no
+  // form field, not in the text), render the cover page(s) to an image and have the model READ which box is
+  // visibly checked. Only fires when the cheaper layers cannot answer (it costs a model call), and only
+  // trusts a box the model reports as clearly MARKED. Returns { type, evidence, source:'vision' } or null.
+  try {
+    if (typeof pdfjsLib === 'undefined' || typeof document === 'undefined' || !file || !apiKey) return null;
+    if (typeof callClaudeForJson !== 'function') return null;
+    var buf = await file.arrayBuffer();
+    var pdf = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
+    var nPages = Math.min(pdf.numPages || 1, 2);   // the set-aside sits on the cover of standard forms
+    var images = [];
+    for (var i = 1; i <= nPages; i++) {
+      var page = await pdf.getPage(i);
+      var base = page.getViewport({ scale: 1 });
+      var scale = Math.min(2, 1600 / Math.max(1, base.width));
+      var vp = page.getViewport({ scale: scale });
+      var canvas = document.createElement('canvas');
+      canvas.width = vp.width; canvas.height = vp.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+      var b64 = canvas.toDataURL('image/png').split(',')[1];
+      if (b64) images.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: b64 } });
+    }
+    if (!images.length) return null;
+    var prompt = 'This is the cover of a U.S. Government solicitation form (SF-1449, SF-33, SF-1442, or a synopsis). Look ONLY at the set-aside section and its checkboxes. Identify which set-aside box, if any, is visibly CHECKED or MARKED (an X, checkmark, filled/darkened box, or circled option). Respond with ONLY this JSON and nothing else: {"marked": <true if a set-aside box is clearly checked, else false>, "set_aside": "<the checked type verbatim (SDVOSB, VOSB, WOSB, EDWOSB, HUBZone, 8(a), Total Small Business), or Unrestricted if a full-and-open / not-set-aside box is marked, or unclear>"}. Report ONLY what is visibly marked; do NOT infer from the printed labels when no box is checked.';
+    var content = images.concat([{ type: 'text', text: prompt }]);
+    var data = await callClaudeForJson(apiKey, content, 300, 60000, 'set-aside vision');
+    return _saParseVisionResult(data);
+  } catch (e) { return null; }
+}
+async function detectSetAside(files, apiKey, preExtractedText) {
+  // The run-first set-aside orchestrator. In order of certainty: (1) AcroForm checkbox VALUES, (2)
+  // authoritative TEXT signals, (3) VISION on the rendered cover - then a conservative "Total Small
+  // Business, unverified" fallback (never a guessed socioeconomic type). Returns { type, evidence, source,
+  // unverified? }. preExtractedText (when the caller already has it) is reused for Layer 2 to avoid re-work.
+  var arr = (files || []).filter(Boolean);
+  var pdfs = arr.filter(function (f) { return /pdf/i.test((f.type || '') + ' ' + (f.name || '')); });
+  // Layer 1: AcroForm checkbox field VALUES (deterministic, ~free), across every PDF.
+  for (var i = 0; i < pdfs.length; i++) {
+    try { var f1 = await _setAsideFromPdfFields(pdfs[i]); if (f1 && f1.type) return f1; } catch (e) {}
+  }
+  // Layer 2: authoritative TEXT signals (deterministic). Prefer the caller's already-extracted text.
+  try { if (preExtractedText) { var f2a = _setAsideFromText(preExtractedText); if (f2a && f2a.type) return f2a; } } catch (e) {}
+  for (var j = 0; j < pdfs.length; j++) {
+    try {
+      var txt = (typeof extractPdfText === 'function') ? await extractPdfText(pdfs[j]) : '';
+      var f2 = _setAsideFromText(txt); if (f2 && f2.type) return f2;
+    } catch (e) {}
+  }
+  // Layer 3: VISION on the primary PDF only (one model call), when the cheap layers came up empty.
+  if (apiKey && pdfs.length) {
+    try { var f3 = await _setAsideFromVision(pdfs[0], apiKey); if (f3 && f3.type) return f3; } catch (e) {}
+  }
+  // Conservative fallback: broadest reading, explicitly UNVERIFIED (never a guessed socioeconomic type).
+  return { type: 'Total Small Business', evidence: 'No set-aside checkbox, field, or mark could be read - defaulting to the broadest reading; verify on SAM.gov.', source: 'default', unverified: true };
+}
 function evaluateBnaGates(opp, cap) {
   opp = opp || {}; cap = cap || {};
   const primeBlockers = [];   // block PRIME → redirect to sub
@@ -21599,12 +21945,13 @@ function pricingModelReviewCsv() {
   out += 'GRAND TOTAL (all periods): ' + mny(grand) + '\n';
   return out;
 }
-function _constrainedPwsContent(csv, pws) {
+function _constrainedPwsContent(csv, pws, statedFte) {
   return (
     'You are a federal cost/price compliance reviewer. Compare the contractor\'s CURRENT priced model against the PWS/solicitation requirements and flag CONFLICTS \u2014 places where the priced labor structure does NOT comply with what the PWS requires. For each, give: what the PWS requires, how the pricing is non-compliant, and the recommended fix. Base every finding ONLY on the requirements and the pricing below; never invent a requirement.\n\n' +
     'The pricing below is the tool\'s current model — it already reflects the solicitation\'s CLINs (when stated) and computes all totals from ONE consistent source, so do NOT flag missing CLIN codes or internal total mismatches unless they are genuinely absent from what is shown.\n\n' +
     'PWS / SOLICITATION REQUIREMENTS:\n' + pws + '\n\n' +
     'THE PRICING TO REVIEW:\n' + csv + '\n\n' +
+    (statedFte != null ? 'AUTHORITATIVE STAFFING FIGURE: the solicitation states a level of effort of EXACTLY ' + statedFte + ' FTE. This may be fractional (e.g. 10.5) - use it VERBATIM and do NOT round it up or down to a whole number. When you assess staffing level, compare the priced FTE against ' + statedFte + ' EXACTLY; do not assert a different required FTE.\n\n' : '') +
     'Look for conflicts such as: a required labor category, skill, clearance, or certification the pricing does not staff; a required, recurring base-period PWS task with no labor priced against it; a staffing level (FTEs/hours) below what the scope requires; a period-of-performance or option-year mismatch; or scope priced that the PWS does not require (over-scope). Only flag genuine conflicts.\n\n' +
     'IMPORTANT - do NOT raise a task-coverage conflict merely because the base-period pricing does not staff a task. Many PWS tasks are CONDITIONAL (required only if an option period is exercised, or triggered by a specific event), OPTIONAL, surge, or ONE-TIME / single-use, and legitimately carry no base-period labor. Flag an unstaffed task ONLY when it is plainly a required, recurring base-period effort that the pricing omits; when a task is optional, option-year-only, event-triggered, or one-time / single-use, do NOT flag it. When in doubt, do not flag it.\n\n' +
     'Return ONLY JSON (no prose, no markdown fences):\n' +
@@ -21636,7 +21983,9 @@ async function runConstrainedPwsCheck() {
   try {
     const _review = (typeof pricingModelReviewCsv === 'function') ? pricingModelReviewCsv() : '';
     const _pricingText = _review || window._constrainedCsv;
-    const data = await callClaudeForJson(apiKey, [{ type: 'text', text: _constrainedPwsContent(_pricingText, pws) }], 2600, 90000, 'PWS-conflict check');
+    const _recon = (typeof _constrainedFteRecon === 'function') ? _constrainedFteRecon() : null;
+    const _statedFte = (_recon && _recon.solStated && _recon.toolFte != null) ? _recon.toolFte : null;
+    const data = await callClaudeForJson(apiKey, [{ type: 'text', text: _constrainedPwsContent(_pricingText, pws, _statedFte) }], 2600, 90000, 'PWS-conflict check');
     window._constrainedPwsData = data;
     if (status) status.style.display = 'none';
     renderConstrainedPws(data);
@@ -22744,6 +23093,12 @@ function downloadBnaPdf() {
   snap.push(['Solicitation #', fcell('id_number')]);
   snap.push(['Analysis Date', { t: dateStr, color: DARK }]);
   kvTable(snap);
+
+  // Opportunity description - present in the analysis but previously omitted from the PDF.
+  if (intel.description && String(intel.description).trim() && !/^not stated/i.test(String(intel.description).trim())) {
+    heading('Description');
+    para(String(intel.description).replace(/^\[(GovEst|Inferred|Proposed)\]\s*/i, '').trim(), { size: 10 });
+  }
 
   // ---------- Recommendation + Prime vs Sub ----------
   if (v) {
