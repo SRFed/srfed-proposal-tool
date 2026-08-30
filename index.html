@@ -3275,7 +3275,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live from the Settings-tab footer, or by searching
 // the page source for the APP_VERSION value below.
-const APP_VERSION = '299';
+const APP_VERSION = '310';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -4976,7 +4976,8 @@ async function runHsExtract() {
   try {
     const apiKey = getApiKey();
     if (!apiKey) throw new Error('No API key. Enter it on the Proposal tab Step 2.');
-    const { blocks: content, unreadable } = await buildContentBlocks(hsRfpFiles, 6);
+    const { blocks: content, unreadable } = await buildContentBlocks(hsRfpFiles);
+    if (content.length) { const _hc = await _fitOrCondense(apiKey, content, RFP_BUDGET, _DIGEST_BNA); if (_hc !== content) { content.length = 0; _hc.forEach(b => content.push(b)); } }
     const hsText = (document.getElementById('hsTextInput')?.value || '').trim();
     if (hsText.length >= 30) content.push({ type: 'text', text: `PASTED OPPORTUNITY INFORMATION (provided by the user — treat as solicitation source):\n${hsText}` });
     if (hsRfpFiles.length > 0 && unreadable.length === hsRfpFiles.length && hsText.length < 30) {
@@ -5012,6 +5013,8 @@ async function runHsExtract() {
     if (!m) throw new Error('No JSON in response');
     hsExtractedAttrs = JSON.parse(m[0]
       .replace(/[\u2014\u2013]/g,' - ').replace(/[\u2018\u2019]/g,"'").replace(/[\u201C\u201D]/g,'"'));
+    // Uniformity: the deterministic set-aside detector overrides the model's guess here too (as in Triage/BNA).
+    try { if (typeof detectSetAside === 'function' && hsRfpFiles && hsRfpFiles.length) { const _hsSa = await detectSetAside(hsRfpFiles, apiKey, null); if (typeof _bnaApplySetAside === 'function') _bnaApplySetAside(hsExtractedAttrs, _hsSa); } } catch (e) {}
     renderHsAttributes(hsExtractedAttrs);
     document.getElementById('hsAttributesCard').style.display = 'block';
     setProgress(100, [{ text: 'Reading solicitation documents', status: 'done' }, { text: 'Extracting attributes', status: 'done' }]);
@@ -5627,10 +5630,11 @@ async function runCmpExtraction() {
     const apiKey = getApiKey();
     if (!apiKey) throw new Error('No API key. Enter it on the Proposal tab Step 2.');
     const content = [];
-    for (const f of cmpRfpFiles.slice(0, 8)) {
+    for (const f of cmpRfpFiles) {
       const block = await fileToContentBlock(f);
       if (block) content.push(block);
     }
+    if (content.length) { const _c1 = await _fitOrCondense(apiKey, content, RFP_BUDGET, _DIGEST_GEN); if (_c1 !== content) { content.length = 0; _c1.forEach(b => content.push(b)); } }
     content.push({ type: 'text', text:
       `Extract EVERY contractor obligation / required task from these documents — the complete compliance requirement list.\n` +
       `Include sentences with "shall", "must", "should", "will", "required to", or "is responsible for", AND obligations expressed WITHOUT those words (common in a PWS/SOW/SOO): numbered PWS/SOW task paragraphs, imperative task directives in a Scope/Tasks section ("Provide ...", "Perform ...", "Maintain ..."), and rows of a task / workload / deliverables / Performance Requirements Summary (PRS) table (convert each row into one requirement). Walk the whole document section by section, including every subparagraph and every table row.\n` +
@@ -5704,10 +5708,11 @@ async function runStandaloneCompliance() {
     if (!apiKey) throw new Error('No API key. Enter it on the Proposal tab Step 2.');
 
     const content = [];
-    for (const f of cmpDocFiles.slice(0, 10)) {
+    for (const f of cmpDocFiles) {
       const block = await fileToContentBlock(f);
       if (block) content.push(block);
     }
+    if (content.length) { const _c2 = await _fitOrCondense(apiKey, content, RFP_BUDGET, _DIGEST_GEN); if (_c2 !== content) { content.length = 0; _c2.forEach(b => content.push(b)); } }
 
     setProgress(20, [{ text: 'Reading proposal documents', status: 'done' }, { text: 'Checking requirements', status: 'active' }]);
 
@@ -6518,6 +6523,58 @@ async function fileToContentBlockLocal(file) {
   return _block;
 }
 
+function _portfolioAssemble(fileNames, bodies) {
+  // Compose the portfolio extraction: a header naming every embedded document (the filenames are often the
+  // real signal - e.g. a CDRL list of deliverables), then any embedded documents whose text was readable.
+  var out = '[This PDF is a portfolio/package containing ' + fileNames.length + ' embedded document(s): ' + fileNames.join('; ') + ']';
+  if (bodies && bodies.length) out += '\n\n' + bodies.join('\n\n');
+  return out.trim();
+}
+function _portfolioIsNoise(t) {
+  // XFA / dynamic-form PDFs (e.g. DD-1423 templates) extract to a "Please wait..." placeholder, not content.
+  return !t || t.length < 120 || /if this message is not eventually replaced/i.test(t) || /please wait\b.*\bpdf viewer/i.test(t);
+}
+async function _extractPdfPortfolioText(file) {
+  // A PDF portfolio/package (e.g. an assembled CDRL set) is a container whose cover page has almost no text -
+  // the real content is EMBEDDED file attachments. Text extraction on the cover returns nothing, so the file
+  // would fall through to a giant base64 block. Instead, pull the embedded files out: list their filenames
+  // (often the deliverable list) and extract the text of any that are readable (skipping XFA form templates).
+  try {
+    if (typeof pdfjsLib === 'undefined') return '';
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
+    let atts = null;
+    try { atts = await pdf.getAttachments(); } catch (e) { atts = null; }
+    if (!atts) return '';
+    const keys = Object.keys(atts);
+    if (!keys.length) return '';
+    const fileNames = [], bodies = [];
+    for (const key of keys) {
+      const a = atts[key];
+      const content = a && a.content;
+      const fname = (a && a.filename) || key;
+      fileNames.push(fname);
+      if (!content || !content.length) continue;
+      const isPdf = /\.pdf$/i.test(fname) || (content.length > 4 && content[0] === 0x25 && content[1] === 0x50 && content[2] === 0x44 && content[3] === 0x46);
+      if (isPdf) {
+        try {
+          const sub = await pdfjsLib.getDocument({ data: content, isEvalSupported: false }).promise;
+          let t = '';
+          const mp = Math.min(sub.numPages || 1, 300);
+          for (let i = 1; i <= mp; i++) {
+            try { const pg = await sub.getPage(i); const tc = await pg.getTextContent(); t += tc.items.map(it => it.str || '').join(' ') + '\n'; if (pg.cleanup) pg.cleanup(); } catch (e) {}
+          }
+          t = t.replace(/\s+/g, ' ').trim();
+          if (!_portfolioIsNoise(t)) bodies.push('--- ' + fname + ' ---\n' + t);
+        } catch (e) {}
+      } else if (/\.(txt|csv|md|json|xml)$/i.test(fname)) {
+        try { const t = new TextDecoder().decode(content).trim(); if (t) bodies.push('--- ' + fname + ' ---\n' + t); } catch (e) {}
+      }
+      if (bodies.join('').length > 1500000) break;
+    }
+    return _portfolioAssemble(fileNames, bodies);
+  } catch (e) { return ''; }
+}
 async function _fileToContentBlockUncached(file) {
   const mime = getMimeType(file);
 
@@ -6525,7 +6582,12 @@ async function _fileToContentBlockUncached(file) {
   // chunkable). Only fall back to sending the raw PDF for the model to read with vision when the
   // file is scanned/image-only (no extractable text).
   if (mime === 'application/pdf') {
-    const text = await extractPdfText(file);
+    let text = await extractPdfText(file);
+    if (!text || text.length <= 200) {
+      // Thin text layer: this may be a PDF portfolio (a container of embedded PDFs, e.g. a CDRL set)
+      // whose real content is in attachments. Pull those out before falling back to a huge base64 block.
+      try { const emb = await _extractPdfPortfolioText(file); if (emb && emb.length > 200) text = emb; } catch (e) {}
+    }
     if (text && text.length > 200) return { type: 'text', text: `[File: ${file.name}]\n${text}` };
     const b64 = await fileToBase64(file);
     return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } };
@@ -6961,15 +7023,14 @@ function _canonSummaryLine(briefing) {
 async function ensureBriefing(apiKey) {
   if (typeof cachedBriefing !== 'undefined' && cachedBriefing) return cachedBriefing;
   if (!rfpFiles || rfpFiles.length === 0) throw new Error('No RFP/PWS documents are loaded. Add them on the Proposal tab (Step 4).');
-  const blocks = [];
-  let toks = 0;
+  let blocks = [];
   for (const f of [...rfpFiles].sort((a, b) => a.size - b.size)) {
-    const est = estimateTokens(f);
-    if (toks + est > RFP_BUDGET) continue;
     const blk = await fileToContentBlock(f);
-    if (blk && !blk._unreadable) { const { _unreadable, _fileName, ...clean } = blk; blocks.push(clean); toks += est; }
+    if (blk && !blk._unreadable) { const { _unreadable, _fileName, ...clean } = blk; blocks.push(clean); }
   }
   if (!blocks.length) throw new Error('Could not read the RFP documents.');
+  // Read EVERY doc; condense (scope + pricing preserved) instead of skipping when the bundle is large.
+  blocks = await _fitOrCondense(apiKey, blocks, RFP_BUDGET, _DIGEST_GEN);
   const prompt =
     `You are reading a U.S. government solicitation. Extract a concise JSON briefing focused on scope and pricing. Return ONLY JSON:\n` +
     `{"solicitation_number":"","requirement_title":"","agency_name":"","contract_type":"","period_of_performance":"",` +
@@ -8027,6 +8088,9 @@ async function runAnalysis() {
       if (block) msgContent.push(block);
       else msgContent.push({ type: 'text', text: `[Unsupported file: ${file.name}]` });
     }
+    // Never drop a doc: if the bundle is too big for one analysis call, condense it (generation-tuned digest
+    // preserves submission requirements, page limits, Section L/M, set-aside, evaluation factors).
+    if (msgContent.length) { const _cm = await _fitOrCondense(apiKey, msgContent, RFP_BUDGET, _DIGEST_GEN); if (_cm !== msgContent) { msgContent.length = 0; _cm.forEach(b => msgContent.push(b)); } }
     // Note: company documents are NOT sent during analysis to conserve tokens.
     // Company-side assumptions come from CLIENT_CONFIG fallback or are surfaced
     // during generation when company docs are read in full context.
@@ -9401,22 +9465,16 @@ async function runGeneration() {
     let tokensSent = 0;
     let totalBytes = 0;
 
-    for (const file of rfpFiles.slice(0, 10)) {
-      const est = estimateTokens(file);
-      // Also check raw file size contribution to body
-      const projectedBodySize = totalBytes + (file.size * 1.4); // base64 inflation
-      if (tokensSent + est > RFP_BUDGET || projectedBodySize > BODY_LIMIT) {
-        showStatus('warn', 'Skipping large file',
-          `Skipping "${file.name}" (${Math.round(file.size/1024)}KB) — bundle would exceed safe limits. ` +
-          `Include only the core PWS/SOW and main RFP document.`);
-        continue;
-      }
+    // Read EVERY RFP document (no cap, no skip). If the bundle is too big for one briefing call, condense
+    // it in sections with a GENERATION-tuned digest that preserves submission structure, page limits,
+    // Section L/M, pricing methodology, period structure, tasks, and exact dates/amendments - never dropped.
+    for (const file of rfpFiles) {
       const block = await fileToContentBlock(file);
-      if (block) {
-        docContent.push(block);
-        tokensSent += est;
-        totalBytes += file.size * 1.4;
-      }
+      if (block) { docContent.push(block); tokensSent += estimateTokens(file); }
+    }
+    if (docContent.length) {
+      const _cond = await _fitOrCondense(apiKey, docContent, RFP_BUDGET, _DIGEST_GEN);
+      if (_cond !== docContent) { docContent.length = 0; _cond.forEach(b => docContent.push(b)); tokensSent = docContent.reduce((s,b)=>s+(typeof blockTokens==='function'?blockTokens(b):0),0); }
     }
 
     if (docContent.length === 0) {
@@ -9441,12 +9499,16 @@ async function runGeneration() {
     window._testimonialPool = testimonialPool;
     const _genSkippedDocs = [];
     let _genReadDocs = 0;
+    // Read EVERY company document (no skip); condense with a past-performance/capability-tuned digest if the
+    // set is too large, so Vol II is grounded in ALL of them, not just the ones that fit the budget.
     for (const file of sortedCompany) {
-      const est = estimateTokens(file);
-      if (companyTokensSent + est > COMPANY_BUDGET) { _genSkippedDocs.push(file); continue; }
       const block = await fileToContentBlock(file);
-      if (block) { companyDocContent.push(block); companyTokensSent += est; _genReadDocs++; }
+      if (block) { companyDocContent.push(block); companyTokensSent += estimateTokens(file); _genReadDocs++; }
       else { _genSkippedDocs.push(file); }
+    }
+    if (companyDocContent.length) {
+      const _cc = await _fitOrCondense(apiKey, companyDocContent, COMPANY_BUDGET, _DIGEST_COMPANY);
+      if (_cc !== companyDocContent) { companyDocContent.length = 0; _cc.forEach(b => companyDocContent.push(b)); }
     }
     window._genCompanyDocStats = { read: _genReadDocs, total: _allCompany.length,
       skipped: _genSkippedDocs.map(f => ({ name: f.name, kb: Math.round((f.size || 0) / 1024) })) };
@@ -9518,6 +9580,15 @@ async function runGeneration() {
 
     // Briefing extraction — retries once on a network/parse failure (see callClaudeForJson).
     let briefing = await callClaudeForJson(apiKey, docContent, 4000, 300000, 'Document reading');
+    // Uniformity: the deterministic set-aside detector (form field -> text -> vision) overrides the
+    // model's set_aside guess in the PROPOSAL briefing too, exactly as in Triage / BNA / HubSpot - so a
+    // proposal never writes to a set-aside the model guessed while BNA read a different (correct) one.
+    try {
+      if (typeof detectSetAside === 'function' && rfpFiles && rfpFiles.length) {
+        const _saDet = await detectSetAside(rfpFiles, apiKey, null);
+        if (typeof _bnaApplySetAside === 'function') _bnaApplySetAside(briefing, _saDet);
+      }
+    } catch (e) {}
 
     cachedBriefing = briefing;
     // Pin it: the PRICING briefing also writes cachedBriefing and carries neither
@@ -12408,9 +12479,13 @@ function _pxPeriodMatchesClin(periodIdx, periodLabel) {
 function _pxClinIsTrulyOptional(sc) {
   if (!sc) return false;
   var label = String(sc.period_label != null ? sc.period_label : '').toLowerCase();
-  // A standard base or option YEAR/PERIOD (base + up to 4 options) is EXPECTED scope, never "optional" -
-  // even if the extraction tagged it so - UNLESS its own label calls it an optional/alternate track.
-  if (/^\s*(base|option\s*(year|period)\s*\d)/.test(label) && !/optional/.test(label)) return false;
+  // A base period, an option YEAR/PERIOD (the SAME work exercised for another term), or a 52.217-8/-9
+  // extension is EXPECTED scope - NEVER "optional" - even if the extraction tagged it so. The Government
+  // holding the option to exercise another year of the core work is not "optional" scope. It is truly
+  // optional ONLY when the label itself calls it an optional / alternate / additional-scope track
+  // (a dual-track solicitation with separate, distinct optional work).
+  if (/\b(base|option\s*(year|period)|extension|52\.217-8|52\.217-9)\b/.test(label) &&
+      !/\b(optional|alternate|alt\.?\s*track|additional\s+scope|separately\s+priced)\b/.test(label)) return false;
   return (sc.optional === true) || (String(sc.optional).toLowerCase() === 'true') || /\boptional\b/i.test(label + ' ' + String(sc.track != null ? sc.track : ''));
 }
 function pricingClinForRow(scope, periodIdx, explicitTie, roleName) {
@@ -14020,6 +14095,18 @@ function pricingWdDzDrop(e) {
   if (files && files.length) pricingAddWdFiles(files);
 }
 
+function _pricingSizeGuard(blocks, label) {
+  // Pricing docs (Wage Determinations, GSA rate schedules) must NEVER be condensed - a digest would
+  // paraphrase the wage/rate TABLES and corrupt the numbers. So instead of condensing an oversized pricing
+  // file, refuse clearly and tell the user to split it. Returns null when it fits one call, else an
+  // actionable error string. (Unlike Proposal/BNA, there is no digest fallback here - rates go verbatim.)
+  var PRICING_BUDGET = 160000;
+  var toks = (blocks || []).reduce(function (s, b) { return s + ((typeof blockTokens === 'function') ? blockTokens(b) : 0); }, 0);
+  if (toks <= PRICING_BUDGET) return null;
+  return 'The ' + (label || 'pricing file') + ' is too large to read in one request (~' + Math.round(toks / 1000) + 'k tokens). ' +
+    'Rate and wage tables cannot be condensed without corrupting the numbers, so this file will not be summarized. ' +
+    'Please split it - upload only the relevant labor categories or locality / wage area - and read it again.';
+}
 async function pricingParseWd() {
   const apiKey = getApiKey();
   if (!apiKey) { alert('Enter your Anthropic API key on the Proposal tab (Step 2) first.'); return; }
@@ -14030,6 +14117,7 @@ async function pricingParseWd() {
   try {
     const { blocks } = await buildContentBlocks(pricingWdFiles);
     if (!blocks.length) throw new Error('Could not read the WD file. Export a clean PDF or text version and try again.');
+    const _wdGuard = _pricingSizeGuard(blocks, 'wage determination'); if (_wdGuard) throw new Error(_wdGuard);
     const prompt =
       `This is a U.S. Department of Labor Service Contract Act (SCA) Wage Determination (WD). Extract the WD identifier, the Health & Welfare (H&W) hourly rate, and the occupation wage table. Return ONLY JSON:\n` +
       `{"wd_number":"e.g. 2015-4281","wd_revision":"e.g. 23 ('' if none)","locality":"area/county/state the WD covers ('' if not stated)","hw_rate":<H&W dollars per hour as a number, e.g. 5.55>,"occupations":[{"code":"e.g. 01020","title":"exact occupation title","wage":<minimum hourly wage as a number>}]}\n` +
@@ -14169,6 +14257,7 @@ async function pricingParseGsaSchedule(btnEl) {
   try {
     const { blocks, unreadable } = await buildContentBlocks(pricingGsaFiles);
     if (!blocks.length) throw new Error('Could not read the schedule file. If it is a scanned PDF or a protected document, export a clean PDF or an .xlsx price list and try again.');
+    const _gsaGuard = _pricingSizeGuard(blocks, 'GSA schedule'); if (_gsaGuard) throw new Error(_gsaGuard);
     const prompt =
       `This is a U.S. GSA Multiple Award Schedule (MAS) price list / final pricing document for a contractor. ` +
       `Extract (1) the contract PERIOD START date, and (2) the awarded LABOR CATEGORIES — for EACH, its FULLY-BURDENED hourly ceiling rate for EVERY priced year, plus its minimum education, minimum years of experience, and a brief scope description (these qualifications are usually in a "Labor Category Descriptions" section). Return ONLY JSON:\n` +
@@ -22410,8 +22499,7 @@ function blockTokens(b) {
 }
 
 // One map-step: pull only the bid/no-bid-relevant facts out of a slice of source material.
-async function bnaDigestCall(apiKey, contentBlocks) {
-  const digestPrompt =
+const _DIGEST_BNA =
     `Extract ONLY the facts needed for a U.S. Government bid/no-bid decision from the material above. ` +
     `Be comprehensive but compact (terse bullets, plain ASCII, no analysis or scoring). Capture, where present:\n` +
     `- Set-aside type; NAICS; contract type (FFP / T&M / cost-reimbursement); estimated value; period of performance; place of performance; FTE / labor-hour counts.\n` +
@@ -22421,10 +22509,31 @@ async function bnaDigestCall(apiKey, contentBlocks) {
     `- For any COMPANY past-performance/capability material: contract name, agency, scope, size/value, and relevance to this work.\n` +
     `- Mandatory requirements, disqualifiers, or obvious capability gaps.\n` +
     `Preserve specifics (numbers, codes, agency names). Omit anything not present. Keep under 600 words.`;
+const _DIGEST_GEN =
+  `You are condensing a U.S. Government solicitation so a COMPLIANT proposal can be WRITTEN from your digest. ` +
+  `Structure and format matter as much as scope - preserve EVERYTHING needed to produce the proposal. Capture, verbatim where present:\n` +
+  `- Solicitation/RFQ number, requirement title, issuing agency + full address, contracting POC (name, email, phone).\n` +
+  `- ALL dates with exact digits: the proposal/offer DUE date + local time + time zone, the questions/Q&A deadline, PoP start; and EVERY amendment number + its date (a later amendment supersedes the base due date - keep the latest).\n` +
+  `- Set-aside type; NAICS; contract type (FFP/T&M/cost); required contract vehicle/IDIQ; place of performance; period of performance.\n` +
+  `- The FULL SUBMISSION STRUCTURE (Section L): every Volume and every Factor/subfactor within it, the PAGE LIMIT for each volume, font/margin/format rules, the submission method/portal (e.g. GSA eBuy), and exactly what each volume MUST CONTAIN.\n` +
+  `- Section M evaluation: every evaluation factor + subfactor, its relative importance, and its basis (pass/fail vs best-value/tradeoff); any phased evaluation.\n` +
+  `- PRICING: the pricing methodology (rates by labor category / per PWS task / per CLIN / total), the base + option PERIOD structure, any FAR 52.217-8 extension, the pricing-sheet tabs/CLINs, cost/price-volume format instructions, escalation/COLA %, GSA discount %, travel/ODC/materials ceilings, and SCA / Wage-Determination coverage.\n` +
+  `- SCOPE / PWS: the subject-matter domain and EACH major task area WITH its PWS section number (5.1, 5.2, ...); key personnel roles + minimum qualifications; workload/level-of-effort figures (FTEs, hours by labor category) with exact numbers.\n` +
+  `- Any mandatory requirements, certifications, or disqualifiers.\n` +
+  `Keep exact numbers, dates, codes, section references, and page limits - do NOT round or generalize. This digest REPLACES the source for writing, so omit nothing structural. Be thorough; completeness matters more than brevity.`;
+const _DIGEST_COMPANY =
+  `You are condensing a company's OWN materials so its proposal (Past Performance + Technical volumes) can be grounded in them. ` +
+  `Capture, per source document, where present:\n` +
+  `- PAST PERFORMANCE: contract/program name, customer/agency, contract number, period of performance, dollar value, contract type, and a specific description of the work performed + outcomes/results (metrics, awards, CPARS ratings).\n` +
+  `- KEY PERSONNEL: names, roles/titles, relevant experience, certifications, clearances, degrees.\n` +
+  `- CAPABILITIES / DIFFERENTIATORS: technical capabilities, tools/systems, methodologies, certifications (ISO, CMMI, CMMC), quality processes, and any quantified results or client testimonials (with attribution).\n` +
+  `Preserve specifics - names, numbers, dates, dollar values, agency names, quotes verbatim. Attribute each fact to its source document. Omit generic marketing language. Be thorough; completeness over brevity.`;
+async function bnaDigestCall(apiKey, contentBlocks, digestPrompt) {
+  const _dp = digestPrompt || _DIGEST_BNA;
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-    body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 2000, temperature: 0, messages: [{ role: 'user', content: [...contentBlocks, { type: 'text', text: digestPrompt }] }] })
+    body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 2000, temperature: 0, messages: [{ role: 'user', content: [...contentBlocks, { type: 'text', text: _dp }] }] })
   });
   if (!resp.ok) throw new Error(`API error ${resp.status} while condensing documents: ${(await resp.text().catch(() => '')).slice(0, 200)}`);
   const d = await resp.json();
@@ -22433,7 +22542,7 @@ async function bnaDigestCall(apiKey, contentBlocks) {
 
 // Map-reduce: when documents are too large to send whole, read them in sections and return one
 // compact digest the scoring call can consume. Works for any bundle size.
-async function bnaCondenseSources(apiKey, blocks) {
+async function bnaCondenseSources(apiKey, blocks, digestPrompt) {
   const CHUNK_CHARS = 360000;   // ~90k tokens of text per map call
   const textParts = [], docBlocks = [];
   blocks.forEach(b => { if (b.type === 'text' && b.text) textParts.push(b.text); else if (b.type === 'document') docBlocks.push(b); });
@@ -22445,11 +22554,11 @@ async function bnaCondenseSources(apiKey, blocks) {
   let done = 0;
   for (const chunk of chunks) {
     done++; showBnaStatus('info', 'Condensing large documents\u2026', `Reading section ${done} of ${total}\u2026`, true);
-    const dg = await bnaDigestCall(apiKey, [{ type: 'text', text: chunk }]); if (dg) digests.push(dg);
+    const dg = await bnaDigestCall(apiKey, [{ type: 'text', text: chunk }], digestPrompt); if (dg) digests.push(dg);
   }
   for (const db of docBlocks) {
     done++; showBnaStatus('info', 'Condensing large documents\u2026', `Reading section ${done} of ${total}\u2026`, true);
-    const dg = await bnaDigestCall(apiKey, [db]); if (dg) digests.push(dg);
+    const dg = await bnaDigestCall(apiKey, [db], digestPrompt); if (dg) digests.push(dg);
   }
   return `CONDENSED SOURCE DIGEST \u2014 the documents were too large to send whole, so these are the bid/no-bid-relevant facts extracted from the full text. Treat this as the solicitation + company evidence:\n\n` + digests.join('\n\n---\n\n');
 }
@@ -23365,6 +23474,27 @@ function toggleBnaCapStatement() {
   if (tog) tog.textContent = showing ? 'Show \u25be' : 'Hide \u25b4';
 }
 
+async function _fitOrCondense(apiKey, blocks, budget, digestPrompt) {
+  // Fit source blocks into ONE call, or condense them in sections (map-reduce via bnaCondenseSources) when
+  // they exceed the token budget - so a large bundle is READ IN FULL, never trimmed by dropping documents.
+  // Returns the blocks unchanged when they fit, else a single condensed-digest text block derived from ALL
+  // of them. Used by the opportunity-details extraction; the scoring path does the same thing inline.
+  var toks = (blocks || []).reduce(function (s, b) { return s + ((typeof blockTokens === 'function') ? blockTokens(b) : 0); }, 0);
+  if (!blocks || !blocks.length || toks <= budget) return blocks || [];
+  var digest = await bnaCondenseSources(apiKey, blocks, digestPrompt);
+  return [{ type: 'text', text: digest }];
+}
+function _bnaApplySetAside(intel, det) {
+  // Apply the deterministic set-aside detector result to the BNA opportunity intel, authoritative over the
+  // model's guess (uniform with Triage). A confident hit (form field / text / vision) OVERRIDES; the
+  // conservative default only FILLS an unstated value and flags it unverified - it never overwrites a
+  // specific type the model may have read from context.
+  if (!intel || !det || !det.type) return intel;
+  var cur = String(intel.set_aside == null ? '' : intel.set_aside);
+  if (det.source !== 'default') { intel.set_aside = det.type; intel._set_aside_source = det.source; delete intel._set_aside_unverified; }
+  else if (!cur.trim() || /not stated|unknown|not determinable/i.test(cur)) { intel.set_aside = det.type; intel._set_aside_unverified = true; }
+  return intel;
+}
 async function runOpportunityIntel() {
   // No button drives this — it runs from the analysis flow, and bnaIntelBody already shows progress.
   const body = document.getElementById('bnaIntelBody');
@@ -23388,27 +23518,16 @@ async function runOpportunityIntel() {
   // seventh document, and in a real bundle the late documents are the amendments — the ones
   // most likely to change the very fields the verdict then treats as canonical.
   const INTEL_INPUT_BUDGET = 150000;
-  const rfpContent = [];
-  const _intelSkipped = [];
-  let _intelTok = 0;
+  // Read EVERY document - never silently drop one. Build all blocks; if the bundle is too big for a
+  // single extraction call, condense it in sections (map-reduce) instead of skipping files, exactly as
+  // the scoring path does. This lets ANY size bundle extract without the user trimming anything.
+  let rfpContent = [];
   for (const file of bnaFiles) {
     const block = await fileToContentBlock(file);
-    if (!block) continue;
-    const _bt = (typeof blockTokens === 'function') ? blockTokens(block) : 0;
-    // Always send the first document, whatever its size — a bundle of one huge PWS must not
-    // come back empty.
-    if (rfpContent.length && _intelTok + _bt > INTEL_INPUT_BUDGET) { _intelSkipped.push(file.name); continue; }
-    _intelTok += _bt;
-    rfpContent.push(block);
+    if (block) rfpContent.push(block);
   }
-  if (_intelSkipped.length) {
-    // Never silent. The user decides what to trim; the tool only reports what it could not fit.
-    showBnaStatus('warn', 'Some documents were too large to include',
-      _intelSkipped.length + ' document' + (_intelSkipped.length === 1 ? '' : 's') + ' did not fit the extraction request and '
-      + (_intelSkipped.length === 1 ? 'was' : 'were') + ' NOT read: ' + _intelSkipped.join(', ')
-      + '. If any of them is an amendment, re-upload it on its own or paste its key terms into the text box \u2014 '
-      + 'the extracted details below may be out of date without it.', false);
-  }
+  const _saSrcText = rfpContent.filter(b => b && b.type === 'text' && b.text).map(b => b.text).join('\n\n');   // pre-condense text for the set-aside detector
+  if (rfpContent.length) rfpContent = await _fitOrCondense(apiKey, rfpContent, INTEL_INPUT_BUDGET, _DIGEST_BNA);
   const bnaText = (document.getElementById('bnaTextInput')?.value || '').trim();
   if (bnaText.length >= 30) rfpContent.push({ type: 'text', text: `=== USER-PROVIDED CONTEXT (typed directly by the user \u2014 treat as AUTHORITATIVE; map every fact here to its matching field even if the formal documents do not mention it) ===\n${bnaText}\n=== END USER-PROVIDED CONTEXT ===` });
 
@@ -23416,6 +23535,16 @@ async function runOpportunityIntel() {
   // actual solicitation documents (not just the extracted fields). Self-contained — read only.
   window._bnaRfpContent = rfpContent;
   await extractOpportunityIntel(rfpContent, apiKey);
+  // Uniformity fix: the deterministic set-aside detector (Layer 1 form-field VALUES -> Layer 2 text ->
+  // Layer 3 vision) is authoritative over the model's set_aside guess in BNA, exactly as it is in Triage.
+  // It reads the RAW files (real checkbox state), so a checkbox-driven set-aside is READ, not guessed.
+  try {
+    if (typeof detectSetAside === 'function' && bnaFiles && bnaFiles.length && window._lastBnaIntel) {
+      const _saDet = await detectSetAside(bnaFiles, apiKey, _saSrcText || null);
+      if (typeof _bnaApplySetAside === 'function') _bnaApplySetAside(window._lastBnaIntel, _saDet);
+      if (typeof renderOpportunityIntel === 'function' && window._bnaIntelBody) renderOpportunityIntel(window._lastBnaIntel, window._bnaIntelBody);
+    }
+  } catch (e) {}
   if (typeof refreshBnaQaAvailability === 'function') refreshBnaQaAvailability();
   // Persist the analysis, bound to the exact documents it was derived from.
   try { if (typeof _anaSave === 'function') _anaSave(); } catch (e) {}
@@ -24664,6 +24793,11 @@ function renderOpportunityIntel(intel, container) {
     }
 
     const rowBg = f.key === 'pursuit_recommendation' ? 'background:var(--info-bg);border-left:3px solid var(--blue);padding:10px 12px;' : 'border-bottom:1px solid #f1f5f9;';
+    // Phase 6: when the deterministic detector could not read the set-aside and fell back to the broadest
+    // default, flag it here on the BNA card exactly as Triage does - an unverified default is visible, not silent.
+    if (f.key === 'set_aside' && intel && intel._set_aside_unverified) {
+      displayHtml += ' <span style="font-size:10.5px;font-weight:600;color:#92400e;white-space:nowrap" title="Set-aside could not be definitively read from the documents (no checkbox field, authoritative text, or visible mark) - defaulted to the broadest reading. Verify on SAM.gov before bidding.">\u26a0 verify set-aside</span>';
+    }
     const isWide = f.key === 'labor_categories' || f.key === 'certifications_required';
 
     if (isWide) {
