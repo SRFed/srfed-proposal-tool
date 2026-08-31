@@ -3275,7 +3275,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live from the Settings-tab footer, or by searching
 // the page source for the APP_VERSION value below.
-const APP_VERSION = '310';
+const APP_VERSION = '313';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -6955,6 +6955,7 @@ const _CANON_FACTS = [
   { brief: 'sca_coverage',          intel: 'sca_coverage',          label: 'SCA coverage' },
   { brief: 'set_aside',             intel: 'set_aside',             label: 'set-aside' },
   { brief: 'naics_code',            intel: 'naics_code',            label: 'NAICS code' },
+  { brief: 'submission_date',       intel: 'next_due_date',         label: 'proposal due date' },
 ];
 
 function _canonUseful(v) {
@@ -9589,6 +9590,9 @@ async function runGeneration() {
         if (typeof _bnaApplySetAside === 'function') _bnaApplySetAside(briefing, _saDet);
       }
     } catch (e) {}
+    // Inherit the canonical opportunity facts from the Bid/No-Bid analysis (single source of truth),
+    // so the Proposal never states a value/NAICS/date that disagrees with what BNA showed.
+    try { if (typeof _canonApplyToBriefing === 'function') _canonApplyToBriefing(briefing); } catch (e) {}
 
     cachedBriefing = briefing;
     // Pin it: the PRICING briefing also writes cachedBriefing and carries neither
@@ -19993,27 +19997,57 @@ async function _setAsideFromPdfFields(file) {
 }
 function _saHit(type, ev) { return { type: type, evidence: 'Text: "' + (String(ev == null ? '' : ev).replace(/\s+/g, ' ').trim().slice(0, 90)) + '"', source: 'text' }; }
 function _setAsideFromText(text) {
-  // Layer 2 of set-aside detection: authoritative signals in the extracted TEXT (deterministic). Reads the
-  // SAM-style "Set-Aside Type" field, an explicit "set aside for X" statement, or a "Set-Aside:" line - the
-  // places a solicitation states the type in words. Returns { type, evidence, source:'text' } or null. Does
-  // NOT key off the bare FAR-clause list (every solicitation cites many 52.219-x clauses that aren't the type).
-  var s = String(text == null ? '' : text);
-  if (!s.trim()) return null;
-  // 1) An explicit Set-Aside field/label + value (most authoritative).
-  var field = s.match(/(?:type\s+of\s+set[-\s]?aside|set[-\s]?aside\s*type|set[-\s]?aside\s+status)\s*[:\-]\s*([^\n\r]{1,90})/i)
-           || s.match(/\bset[-\s]?aside\s*[:\-]\s*([^\n\r]{1,90})/i);
-  if (field && field[1]) {
-    var v = field[1].trim();
-    if (/^(none|n\/?a|not\s+applicable|not\s+set|un-?restricted|full\s+and\s+open)\b/i.test(v)) return _saHit('Unrestricted', field[0]);
-    var t1 = _saClassifyStr(v);
-    if (!t1 && /small.?business/i.test(v)) t1 = 'Total Small Business';   // value already sits under a Set-Aside label
-    if (t1) return _saHit(t1, field[0]);
+  var s0 = String(text == null ? '' : text);
+  if (!s0.trim()) return null;
+  // Collapse PDF line-wraps so a wrapped phrase ("...for Service\nDisabled Veteran-owned...") isn't truncated.
+  var s = s0.replace(/\s+/g, ' ');
+  // The SF-1449/SF-33 block-10 checkbox GRID extracts as a soup of EVERY set-aside label. Detect it by
+  // counting DISTINCT set-aside FAMILIES near a match (using family regexes so "wosb" inside "edwosb" and
+  // "veteran-owned" inside "service-disabled veteran-owned" don't double-count a single type). 4+ distinct
+  // families clustered => the grid, not a determination - the real choice is the checked box (Layer 1/3).
+  function _isGrid(idx) {
+    var ctx = s.slice(Math.max(0, idx - 240), Math.min(s.length, idx + 320)).toLowerCase();
+    var fams = [/\bsdvosb\b|service.?disabled/, /\bedwosb\b|economically.?disadvantaged/, /\bwosb\b|women.?owned/, /\bhub.?zone\b/, /\b8\s*\(?\s*a\s*\)?\b/, /\bunrestricted\b/, /\bvosb\b|veteran.?owned/];
+    var n = 0; fams.forEach(function (re) { if (re.test(ctx)) n++; });
+    return n >= 4;
   }
-  // 2) An explicit "set aside (100%) for X" statement.
-  var stmt = s.match(/set[-\s]?aside\s+(?:100%\s+)?for\s+([^\n\r.;()]{2,90})/i);
-  if (stmt && stmt[1]) { var t2 = _saClassifyStr(stmt[1]); if (t2) return _saHit(t2, stmt[0]); }
-  // 3) A plain unrestricted / full-and-open statement.
-  if (/\b(?:this\s+(?:acquisition|requirement|procurement)\s+is\s+(?:un-?restricted|full\s+and\s+open)|not\s+(?:a\s+)?set[-\s]?aside|no\s+set[-\s]?aside\s+applies)\b/i.test(s)) return _saHit('Unrestricted', 'unrestricted / full-and-open');
+  function _classifyForCtx(val) { var t = _saClassifyStr(val); if (!t && /small.?business/i.test(val)) t = 'Total Small Business'; return t; }
+  var _hits = [];
+  // (a) an explicit "set aside (100%) for <type>" SENTENCE - skip the grid + negated FAR boilerplate.
+  var re1 = /set[-\s]?aside\s+(?:100%\s+)?for\s+([^\n\r.;()]{2,90})/ig, m1;
+  while ((m1 = re1.exec(s)) !== null) {
+    if (_isGrid(m1.index)) continue;
+    if (/\bnot\s*$/.test(s.slice(Math.max(0, m1.index - 12), m1.index).toLowerCase())) continue;
+    var t1 = _classifyForCtx(m1[1]); if (t1) _hits.push({ t: t1, ev: m1[0] });
+  }
+  // (b) "<known type> set-aside" phrasing (the type immediately before the words "set-aside").
+  var re0 = /\b(total small business|service.?disabled veteran.?owned(?:\s+small business)?|economically.?disadvantaged women.?owned(?:\s+small business)?|women.?owned(?:\s+small business)?|veteran.?owned(?:\s+small business)?|hub.?zone(?:\s+small business)?|8\s*\(?\s*a\s*\)?|\bsdvosb\b|\bedwosb\b|\bwosb\b|\bvosb\b)\s+set[-\s]?aside\b/ig, m0;
+  while ((m0 = re0.exec(s)) !== null) {
+    if (_isGrid(m0.index)) continue;
+    var t0 = _saClassifyStr(m0[1]); if (t0) _hits.push({ t: t0, ev: m0[0] });
+  }
+  if (_hits.length) {
+    var _spec = _hits.filter(function (h) { return h.t !== 'Total Small Business'; });
+    var _pick = _spec.length ? _spec[0] : _hits[0];
+    return _saHit(_pick.t, _pick.ev);
+  }
+  // (c) a SAM-style "Set-Aside Type:" / "Type of Set-Aside:" labeled FIELD.
+  var typed = s.match(/(?:type\s+of\s+set[-\s]?aside|set[-\s]?aside\s*type|set[-\s]?aside\s+status)\s*[:\-]\s*([^\n\r]{1,90})/i);
+  if (typed && typed[1] && !_isGrid(typed.index)) {
+    var v = typed[1].trim();
+    if (/^(none|n\/?a|not\s+applicable|not\s+set|un-?restricted|full\s+and\s+open)\b/i.test(v)) return _saHit('Unrestricted', typed[0]);
+    var tt = _classifyForCtx(v); if (tt) return _saHit(tt, typed[0]);
+  }
+  // (d) a bare "Set-Aside: <type>" line - ONLY when it is NOT the checkbox grid.
+  var re3 = /\bset[-\s]?aside\s*[:\-]\s*([^\n\r]{1,60})/ig, m3;
+  while ((m3 = re3.exec(s)) !== null) {
+    if (_isGrid(m3.index)) continue;
+    var val = String(m3[1]).trim();
+    if (/^(none|n\/?a|not\s+applicable|not\s+set|un-?restricted|full\s+and\s+open)\b/i.test(val)) return _saHit('Unrestricted', m3[0]);
+    var tv = _classifyForCtx(val); if (tv) return _saHit(tv, m3[0]);
+  }
+  // (e) a plain unrestricted / full-and-open STATEMENT (narrow - must NOT fire on FAR boilerplate).
+  if (/\b(?:this\s+(?:acquisition|requirement|procurement|solicitation|award)\s+is\s+(?:being\s+)?(?:conducted\s+|solicited\s+)?(?:as\s+)?(?:un-?restricted|full\s+and\s+open)|full\s+and\s+open\s+competition|unrestricted\s+competition)\b/i.test(s)) return _saHit('Unrestricted', 'unrestricted / full-and-open');
   return null;
 }
 function _saParseVisionResult(data) {
@@ -22971,6 +23005,11 @@ async function runBidNoBid() {
 
     document.getElementById('bnaResults').style.display = 'block';
     document.getElementById('bnaResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Correct any set-aside the scoring model named in prose to the authoritative (detector) value.
+    if (window._lastBnaIntel && window._lastBnaIntel._set_aside_source && window._lastBnaIntel.set_aside && typeof _correctSetAsideEverywhere === 'function') {
+      _correctSetAsideEverywhere(result, window._lastBnaIntel.set_aside);
+      if (result && result.opportunity) _correctSetAsideEverywhere(result.opportunity, window._lastBnaIntel.set_aside);
+    }
     window._lastBnaResult  = result;
     window._lastBnaContent = content.slice(0, -1);
     window._lastBnaApiKey  = apiKey;
@@ -23484,6 +23523,45 @@ async function _fitOrCondense(apiKey, blocks, budget, digestPrompt) {
   var digest = await bnaCondenseSources(apiKey, blocks, digestPrompt);
   return [{ type: 'text', text: digest }];
 }
+function _correctSetAsideEverywhere(obj, type) {
+  // Correct EVERY prose field on an object to the authoritative set-aside: rewrites any "<wrong type>
+  // set-aside" phrase the model wrote (description, pursuit_recommendation, risks, win_strategy, summary,
+  // ineligibility reason, ...). Conservative - _bnaCorrectSetAsideProse only touches explicit
+  // "<type> set-aside" phrases, so structured fields (agency, NAICS, dates) are never altered.
+  if (!obj || !type || typeof _bnaCorrectSetAsideProse !== 'function') return obj;
+  var skip = { set_aside: 1, set_aside_evidence: 1, _set_aside_source: 1, set_aside_unverified: 1, _set_aside_unverified: 1 };
+  Object.keys(obj).forEach(function (k) {
+    if (skip[k]) return;
+    var val = obj[k];
+    if (typeof val === 'string') obj[k] = _bnaCorrectSetAsideProse(val, type);
+    else if (Array.isArray(val)) obj[k] = val.map(function (x) { return typeof x === 'string' ? _bnaCorrectSetAsideProse(x, type) : x; });
+  });
+  return obj;
+}
+function _bnaCorrectSetAsideProse(text, correctType) {
+  // After the deterministic detector fixes the set-aside, correct any set-aside TYPE the model named in
+  // prose (e.g. the Opportunity description) that disagrees - so a description/summary/proposal never states
+  // a different set-aside than the authoritative one. Conservative: only rewrites an explicit
+  // "<type> set-aside" phrase, and only when the model named a DIFFERENT type than the detector read.
+  if (!text || !correctType) return text;
+  var phras = {
+    'SDVOSB': 'Service-Disabled Veteran-Owned Small Business (SDVOSB)',
+    'VOSB': 'Veteran-Owned Small Business (VOSB)',
+    'WOSB': 'Women-Owned Small Business (WOSB)',
+    'EDWOSB': 'Economically Disadvantaged Women-Owned Small Business (EDWOSB)',
+    'HUBZone': 'HUBZone Small Business',
+    '8(a)': '8(a)',
+    'Total Small Business': 'Total Small Business',
+    'Unrestricted': 'unrestricted (full and open)'
+  };
+  var target = phras[correctType] || correctType;
+  var alt = 'Service-Disabled Veteran-Owned Small Business \\(SDVOSB\\)|Women-Owned Small Business \\(WOSB\\)|Economically Disadvantaged Women-Owned Small Business \\(EDWOSB\\)|Veteran-Owned Small Business \\(VOSB\\)|HUBZone Small Business|Total Small Business|\\bSDVOSB\\b|\\bEDWOSB\\b|\\bWOSB\\b|\\bVOSB\\b|\\bHUBZone\\b|\\b8\\(a\\)';
+  var re = new RegExp('(' + alt + ')(\\s+set[-\\s]?aside)', 'gi');
+  return String(text).replace(re, function (whole, typ) {
+    if (new RegExp(correctType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(typ)) return whole; // already correct
+    return target + whole.slice(typ.length);
+  });
+}
 function _bnaApplySetAside(intel, det) {
   // Apply the deterministic set-aside detector result to the BNA opportunity intel, authoritative over the
   // model's guess (uniform with Triage). A confident hit (form field / text / vision) OVERRIDES; the
@@ -23491,7 +23569,7 @@ function _bnaApplySetAside(intel, det) {
   // specific type the model may have read from context.
   if (!intel || !det || !det.type) return intel;
   var cur = String(intel.set_aside == null ? '' : intel.set_aside);
-  if (det.source !== 'default') { intel.set_aside = det.type; intel._set_aside_source = det.source; delete intel._set_aside_unverified; }
+  if (det.source !== 'default') { intel.set_aside = det.type; intel._set_aside_source = det.source; delete intel._set_aside_unverified; if (typeof _correctSetAsideEverywhere === 'function') _correctSetAsideEverywhere(intel, det.type); }
   else if (!cur.trim() || /not stated|unknown|not determinable/i.test(cur)) { intel.set_aside = det.type; intel._set_aside_unverified = true; }
   return intel;
 }
