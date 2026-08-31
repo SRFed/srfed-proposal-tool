@@ -3275,7 +3275,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live from the Settings-tab footer, or by searching
 // the page source for the APP_VERSION value below.
-const APP_VERSION = '313';
+const APP_VERSION = '314';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -20127,26 +20127,39 @@ function evaluateBnaGates(opp, cap) {
   const sa = String(opp.set_aside || '').toLowerCase();
   const restrictive = sa && !/unrestricted|full.and.open|open competition|not stated|none|n\/a/.test(sa);
   const totalSB = /total small business|small business set.?aside/.test(sa);
+  // The deterministic set-aside taxonomy is authoritative for the set-aside / certification
+  // eligibility dimension (same doctrine as triage's _triageApplyEligibility). Computed once
+  // and reused by both the set-aside gate and the AI holistic override below.
+  const _saFit = _bnaSetAsideFit(opp.set_aside, cap);
   if (restrictive) {
     // #2: ONE implementation of this rule, not two. The gate previously ran its own
     // substring matching against the raw strings while the score used the regex taxonomy
     // plus certification implication (SDVOSB satisfies VOSB, EDWOSB satisfies WOSB). Two
     // independent implementations of the same rule can only drift apart, and they did.
-    const _fit = _bnaSetAsideFit(opp.set_aside, cap);
-    if (_fit.eligible === false) {
+    if (_saFit.eligible === false) {
       primeBlockers.push(`set-aside (${opp.set_aside}) — ${co} doesn't hold a qualifying certification`);
-    } else if (_fit.eligible === null && _fit.category === 'unknown-profile') {
+    } else if (_saFit.eligible === null && _saFit.category === 'unknown-profile') {
       // Missing configuration is not a bar. Flag it as something to confirm instead.
       perfConstraints.push(`set-aside (${opp.set_aside}) — no certifications are recorded in Settings, so prime eligibility could not be verified. Confirm before bidding.`);
     }
   }
-  // AI holistic eligibility judgment — catches amendments and nuances the structured
-  // set-aside field can miss (e.g. an 8(a) set-aside added by amendment in free text).
+  // AI holistic eligibility judgment — catches barriers the structured fields can miss
+  // (clearance, vehicle, DCAA, capacity, a sole-source justification in free text). It is
+  // NOT allowed to re-litigate the set-aside: when the deterministic taxonomy has
+  // AFFIRMATIVELY cleared the company for the extracted set-aside (_saFit.eligible === true),
+  // an AI reason framed as a set-aside / certification objection is discarded. That is the
+  // Total-Small-Business-read-as-WOSB false negative — the classifier 'agrees' it is a small
+  // business set-aside, then wrongly demands WOSB. The v311 detector owns the set-aside value,
+  // so a set-aside-framed AI override here can only be stale or wrong; a genuinely restrictive
+  // set-aside the company cannot hold is already blocked by the taxonomy above.
   if (opp.prime_eligible === false &&
       !primeBlockers.some(b => /set-aside|eligib/i.test(b))) {
     const reason = (opp.prime_ineligibility_reason || '').trim()
       || `${co} is not eligible to compete as the prime on this`;
-    primeBlockers.push(reason);
+    const _reasonIsSetAside = /set.?aside|\bwosb\b|\bedwosb\b|hubzone|8\(a\)|\bsdvosb\b|\bvosb\b|women.?owned|veteran.?owned|service.?disabled|socioeconomic|small business/i.test(reason);
+    if (!(_saFit && _saFit.eligible === true && _reasonIsSetAside)) {
+      primeBlockers.push(reason);
+    }
   }
   if (opp.contract_vehicle && opp.vehicle_is_open === false) {
     const heldV = cap.contractVehicles || [];
