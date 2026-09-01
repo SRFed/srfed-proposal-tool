@@ -2128,13 +2128,13 @@
     <!-- ── Coverage-Gap Analysis (Phase 7) — additive readout; does NOT read or change the fit score ── -->
     <div class="card" style="margin-bottom:24px" id="bnaGapCard">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-        <span><span class="icon">🧭</span> Coverage-Gap Analysis</span>
+        <span><span class="icon">📊</span> Coverage-Gap Analysis</span>
         <button id="bnaGapCopyBtn" onclick="copyBnaGap()" style="display:none;padding:4px 10px;font-size:11px;font-weight:600;border:1px solid rgba(255,255,255,0.4);border-radius:6px;background:rgba(255,255,255,0.15);cursor:pointer;color:white">⎘ Copy</button>
       </div>
       <div class="card-body">
         <p style="font-size:13px;color:var(--muted);margin:0 0 14px;line-height:1.6">A requirement-by-requirement read of where <strong id="bnaGapCo">your company</strong> covers this solicitation and where the gaps are — each with a recommended fix. This is a planning view; it does not change the fit score above, but when you run it, it is included in the Bid/No-Bid PDF.</p>
         <div id="bnaGapEmpty" style="text-align:center;padding:6px 0 4px">
-          <button id="bnaGapRunBtn" onclick="runBnaCoverageGap()" style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;font-size:14px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,0.12)">🧭 Run coverage-gap analysis</button>
+          <button id="bnaGapRunBtn" onclick="runBnaCoverageGap()" style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;font-size:14px;font-weight:700;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,0.12)">📊 Run coverage-gap analysis</button>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">Reads the analyzed opportunity against your capability profile — about 15–30 seconds.</div>
         </div>
         <div id="bnaGapStatus" style="display:none;font-size:13px;color:var(--muted);text-align:center;padding:12px 0"></div>
@@ -2422,7 +2422,7 @@
            "Analyze Pricing & Suggest Improvements" pricing-improvement suggestions further down. -->
       <div style="border-top:2px solid #e2e8f0;margin:28px 0 16px"></div>
       <div style="margin-bottom:16px">
-        <div style="font-weight:700;font-size:13px;margin-bottom:2px">🧭 Check pricing against the PWS</div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:2px">📋 Check pricing against the PWS</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Run this once your pricing is built — labor, rates, hours, discount, travel, and (if the solicitation states them) the CLINs applied above. This is a <strong>compliance / coverage check</strong>: it compares your current priced model against the PWS / solicitation requirements (coverage, required roles, stated CLINs). For suggestions on improving the price itself, use <strong>🔎 Analyze Pricing &amp; Suggest Improvements</strong> below instead.</div>
         <button id="constrainedPwsBtn" onclick="runConstrainedPwsCheck()" style="padding:9px 18px;font-size:13px;font-weight:700;background:#fff;color:var(--blue);border:1.5px solid var(--mid-blue);border-radius:8px;cursor:pointer;box-shadow:0 1px 3px rgba(0,68,153,0.12)">Check pricing against the PWS</button>
         <div id="constrainedPwsProgress" style="display:none;margin-top:12px"></div>
@@ -3275,7 +3275,7 @@ let CLAUDE_MODEL = 'claude-sonnet-4-6';
 // Bump this by 1 on every deploy. Rendered into #appVersionText on load, so you
 // can confirm which build is live from the Settings-tab footer, or by searching
 // the page source for the APP_VERSION value below.
-const APP_VERSION = '314';
+const APP_VERSION = '318';
 
 // Compute the loaded-cost wrap factor from the configured rate components.
 // 'compounded' nests each rate on the running subtotal (the DCAA-style buildup);
@@ -3819,6 +3819,45 @@ function _pptProposalDigest() {
   return L.join('\n');
 }
 
+// Recover a deck object from a model response that may be fenced, prefixed, or TRUNCATED (a large
+// proposal can push the deck JSON past the token budget mid-array). Returns a parsed deck with a
+// .slides array, or null if nothing usable can be salvaged. Mirrors the assumptions-panel repair:
+// trim to the last complete object and balance any arrays/objects left open, then as a last resort
+// rebuild {deck_title, subtitle, slides} from the slides array up to its last complete slide.
+function _pptRepairDeckJson(raw) {
+  if (raw == null) return null;
+  var s = String(raw).trim()
+    .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '').trim();
+  var tries = [s];
+  var lb = s.lastIndexOf('}');
+  if (lb > 0) {
+    var t = s.slice(0, lb + 1);
+    var oa = (t.match(/\[/g) || []).length - (t.match(/\]/g) || []).length;
+    for (var i = 0; i < oa; i++) t += ']';
+    var ob = (t.match(/\{/g) || []).length - (t.match(/\}/g) || []).length;
+    for (var j = 0; j < ob; j++) t += '}';
+    tries.push(t);
+  }
+  for (var k = 0; k < tries.length; k++) {
+    try { var o = JSON.parse(tries[k]); if (o && Array.isArray(o.slides)) return o; } catch (e) {}
+  }
+  // Last resort: salvage the slides array up to its last complete slide object.
+  try {
+    var m = s.match(/"slides"\s*:\s*\[([\s\S]*)$/);
+    if (m) {
+      var body = m[1], lo = body.lastIndexOf('}');
+      if (lo > 0) {
+        var slides = JSON.parse('[' + body.slice(0, lo + 1) + ']');
+        if (Array.isArray(slides) && slides.length) {
+          var tm = s.match(/"deck_title"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          var sm = s.match(/"subtitle"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          return { deck_title: tm ? tm[1] : '', subtitle: sm ? sm[1] : '', slides: slides };
+        }
+      }
+    }
+  } catch (e) {}
+  return null;
+}
 async function createPresentation() {
   const btn = document.getElementById('pptCreateBtn');
   if (typeof PptxGenJS === 'undefined') {
@@ -3859,6 +3898,10 @@ async function createPresentation() {
     if (useDocs) {
       docBlocks = (await Promise.all(pptDocFiles.map(f => fileToContentBlock(f).catch(() => null)))).filter(Boolean);
       if (!docBlocks.length) throw new Error('None of the uploaded files could be read. Try a PDF or Word export of the proposal.');
+      // A big uploaded proposal (e.g. all five volumes) can overflow the model's context and force it
+      // to TRUNCATE the deck JSON, which then fails to parse. Condense to a budget first (map-reduce
+      // digest when over), exactly as the RFP reads do, so the model always has room for a full deck.
+      if (typeof _fitOrCondense === 'function') { try { docBlocks = await _fitOrCondense(apiKey, docBlocks, RFP_BUDGET, _DIGEST_GEN); } catch (e) {} }
       steps[0].status = 'done'; steps[1].status = 'active'; _setSteps(steps);
       showStatus('info', 'Building your presentation', 'Designing your slides\u2026', true);
     }
@@ -3893,21 +3936,30 @@ async function createPresentation() {
       'Return ONLY raw JSON (no markdown, no backticks, no preamble), starting with { and ending with }:\n' +
       '{"deck_title":"punchy title, <= 8 words","subtitle":"e.g. Oral Presentation to ' + agency + '","slides":[{"layout":"bullets|metrics|process|two_column|chart","title":"Slide Title","bullets":["..."],"metrics":[{"value":"","label":""}],"steps":[{"name":"","desc":""}],"left":{"heading":"","points":["..."]},"right":{"heading":"","points":["..."]},"chart":{"type":"bar","categories":["..."],"series":[{"name":"","values":[]}]},"context":"","intro":"","takeaway":"","notes":"what to say aloud"}]}';
 
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 4500,
-        messages: [{ role: 'user', content: useDocs ? [...docBlocks, { type: 'text', text: prompt }] : [{ type: 'text', text: prompt }] }] })
-    });
-    if (!resp.ok) { const t = await resp.text().catch(() => ''); throw new Error('API error ' + resp.status + ': ' + t.slice(0, 160)); }
-    const d = await resp.json();
-    let raw = d.content.map(c => c.text || '').join('').trim()
-      .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '').trim();
-    if (!raw.endsWith('}')) { const lb = raw.lastIndexOf('}'); if (lb > 0) raw = raw.slice(0, lb + 1); }
-    let deck;
-    try { deck = JSON.parse(raw); } catch (e) { throw new Error('Could not parse the generated deck - please try again.'); }
-    if (!deck || !Array.isArray(deck.slides) || deck.slides.length === 0) throw new Error('The generated deck was empty - please try again.');
+    const _msgContent = useDocs ? [...docBlocks, { type: 'text', text: prompt }] : [{ type: 'text', text: prompt }];
+    let deck = null, _lastErr = '';
+    // Up to two attempts. The deck JSON can truncate (recovered by _pptRepairDeckJson) or a call can
+    // hit a transient error; a single retry plus the repair pass makes a hard parse failure unlikely.
+    for (let _attempt = 0; _attempt < 2 && !deck; _attempt++) {
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 8000,
+          messages: [{ role: 'user', content: _msgContent }] })
+      });
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => ''); _lastErr = 'API error ' + resp.status + ': ' + t.slice(0, 160);
+        if (resp.status === 429 || resp.status >= 500) continue;   // transient - retry once
+        throw new Error(_lastErr);
+      }
+      const d = await resp.json();
+      const raw = d.content.map(c => c.text || '').join('').trim();
+      const cand = _pptRepairDeckJson(raw);
+      if (cand && Array.isArray(cand.slides) && cand.slides.length) { deck = cand; break; }
+      _lastErr = 'the generated deck could not be parsed';
+    }
+    if (!deck) throw new Error('The deck could not be generated' + (_lastErr ? ' (' + _lastErr + ')' : '') + '. If you uploaded a large proposal, try fewer or smaller files, or remove the upload to use the generated proposal instead.');
 
     const di = useDocs ? 2 : 1; steps[di - 1].status = 'done'; steps[di].status = 'active'; _setSteps(steps);
     showStatus('info', 'Building your presentation', 'Assembling slides, charts, and branding\u2026', true);
@@ -7047,7 +7099,7 @@ async function ensureBriefing(apiKey) {
     `"pricing_methodology":"exactly one of 'lcat','pws_task','product','simple' — how pricing must be STRUCTURED per Section L/B; '' if unstated",` +
     `"pricing_unit_basis":"'monthly' if the solicitation requires a PER-MONTH unit price or a monthly-priced CLIN structure (e.g. a firm-fixed monthly rate, 'price per month', a monthly services CLIN, or a CLIN quantity expressed in months); 'period' if pricing is per year/lot/period; '' if not specified",` +
     `"pricing_instructions":"any cost/price-volume format instructions from Section L/B/M; '' if none",` +
-    `"pws_task_areas":["list EVERY distinct PWS task/section, prefixed with the PWS's own numbering, e.g. '2.1: Credit card reconciliation'"]}\n` +
+    `"pws_task_areas":["list EVERY distinct PWS/SOW WORK task or subtask, each prefixed with the PWS's own numbering AND its REAL title read from the PWS narrative, e.g. '2.1: Credit card reconciliation'. Never emit a generic placeholder like 'Program Support Task Area' for a numbered task - use the actual section title. EXCLUDE anything that is NOT a PWS work task: no evaluation factors, no Volume II/III factors, no Section L/M instructions or evaluation criteria, no CLIN lines, and not the labor-mix/pricing-table rows themselves"]}\n` +
     `Be exact. Do not invent an FTE count the solicitation does not give. When a workload / level-of-effort hours table IS given, base the FTEs on the BASE-YEAR hours column ONLY - never the base and option columns added together.`;
   const briefing = await callClaudeForJson(apiKey, [...blocks, { type: 'text', text: prompt }], 4000, 240000, 'Reading the PWS');
   // The opportunity-details pass owns the facts both extractions produce. Applying it here
@@ -8099,7 +8151,7 @@ async function runAnalysis() {
     msgContent.push({ type: 'text', text:
       `Analyze this government RFP/solicitation for ${CLIENT_CONFIG.companyShortName}.\n` +
       `Return JSON with EXACTLY these four arrays — nothing else:\n\n` +
-      `"confirmed": up to 10 RFP items present but worth human verification. Focus on: submission deadline/timezone, place of performance, FTE count, estimated contract value, page limits per volume, required clearance level, evaluation factor weights, set-aside type, incumbent contractor, any unusual or atypical requirements. Each: {"id":"rfp_N","category":"rfp","label":"short label","value":"extracted value"}\n\n` +
+      `"confirmed": up to 10 RFP items present but worth human verification. Focus on: submission deadline/timezone, place of performance, FTE count, estimated contract value, page limits per volume, required clearance level, evaluation factor weights, incumbent contractor, any unusual or atypical requirements. Do NOT surface the set-aside type or any set-aside conflict; it is determined separately and injected. Each: {"id":"rfp_N","category":"rfp","label":"short label","value":"extracted value"}\n\n` +
       `"clarify": up to 5 items genuinely missing or unclear in the RFP that the proposal team needs to address. Each: {"id":"q_N","category":"rfp","label":"short label","question":"specific question"}\n\n` +
       `"company_confirmed": up to 6 company-side items worth confirming — most relevant past performance references, key certifications, applicable clearance levels. Each: {"id":"co_N","category":"company","label":"short label","value":"value"}\n\n` +
       `"company_clarify": up to 3 company-side questions. Each: {"id":"cq_N","category":"company","label":"short label","question":"question"}\n\n` +
@@ -8230,6 +8282,29 @@ async function runAnalysis() {
 
     assumptions         = [...rfpItems, ...companyConfirmed];
     clarifyingQuestions = [...rfpClarify, ...companyClar];
+
+    // ── Set-aside: ONE canonical determination, never an AI-surfaced guess or conflict ──────────
+    // The assumptions model reads condensed digests and can surface a WOSB/SDVOSB "conflict" from
+    // SF-1449 checkbox-label soup. Strip any set-aside item it produced and inject the single
+    // canonical set-aside (the same value BNA/Proposal already use), so this panel never disagrees.
+    try {
+      const _saTok = ['set-aside','set aside','wosb','edwosb','sdvosb','vosb','hubzone','8(a)','women-owned','women owned','veteran-owned','veteran owned','service-disabled','service disabled','socioeconomic'];
+      const _isSa = (it) => { const s = String((((it && it.label) || '') + ' ' + ((it && it.value) || '') + ' ' + ((it && it.question) || '')).toLowerCase()); return _saTok.some(t => s.indexOf(t) >= 0); };
+      assumptions = assumptions.filter(a => !_isSa(a));
+      clarifyingQuestions = clarifyingQuestions.filter(q => !_isSa(q));
+      // Canonical value: prefer the Bid/No-Bid determination; else run the deterministic detector on
+      // the RFP files (the same ladder BNA uses). Never let this panel re-derive it via the model.
+      let _saType = '', _saConf = false;
+      const _intelSa = (typeof window !== 'undefined' && window._lastBnaIntel) || null;
+      if (_intelSa && _intelSa.set_aside && _intelSa._set_aside_source) { _saType = String(_intelSa.set_aside); _saConf = true; }
+      else if (typeof detectSetAside === 'function' && rfpFiles && rfpFiles.length) {
+        try { const _d = await detectSetAside(rfpFiles, apiKey, null); if (_d && _d.type) { _saType = _d.type; _saConf = (_d.source !== 'default'); } } catch (e) {}
+      }
+      if (_saType) {
+        if (_saConf) assumptions.unshift({ id: 'rfp_setaside', category: 'rfp', type: 'confirm', status: 'pending', correction: '', label: 'Set-aside type', value: _saType });
+        else clarifyingQuestions.unshift({ id: 'q_setaside', category: 'rfp', type: 'clarify', answer: '', label: 'Set-aside type', question: 'The set-aside could not be read unambiguously from the documents (' + _saType + ' assumed, the biddable default). Verify the operative set-aside on SAM.gov before committing.' });
+      }
+    } catch (e) {}
 
     setProgress(100, [{ text: 'Reading RFP documents', status: 'done' }, { text: 'Analyzing with AI', status: 'done' }, { text: 'Building review panels', status: 'done' }]);
     document.getElementById('analysisResults').style.display = 'block';
@@ -9567,7 +9642,7 @@ async function runGeneration() {
       `"amendment_notes":"anything about the amendment set as a whole \u2014 an amendment referenced but NOT present in the uploaded bundle (say so explicitly and name it), amendments that conflict with each other, or an acknowledgment requirement. '' if nothing to note",` +
       `"evaluation_factors":[{"factor":"Technical Approach","weight":"40%","subfactors":["..."]}],` +
       `"highest_weight_factor":"name of highest-weighted eval factor",` +
-      `"pws_task_areas":["task: description"],` +
+      `"pws_task_areas":["EVERY distinct PWS/SOW work task or subtask as 'number: real title' from the PWS narrative (e.g. '2.1: Credit card reconciliation'); never a generic placeholder name; EXCLUDE evaluation factors, Volume II/III factors, Section L/M criteria, CLIN lines, and pricing-table rows - those are not PWS work tasks"],` +
       `"key_requirements":["critical PWS requirements — every shall/must that drives proposal content"],` +
       `"relevant_past_perf":["the TYPES of past performance / experience this solicitation values most, and why — derived from the RFP itself, NOT the offeror's actual record"],` +
       `"technical_themes":["3-5 key themes to run through all volumes based on what the government values most"],` +
@@ -11446,7 +11521,7 @@ function buildMandatoryItems(briefing) {
 function renderMandatoryItems(briefing) {
   const cl = buildMandatoryItems(briefing);
   if (!cl.total) return '';
-  const ICON = { form: '\uD83D\uDCDD', repscerts: '\u2696\uFE0F', attachment: '\uD83D\uDCCE',
+  const ICON = { form: '\uD83D\uDCDD', repscerts: '\u2696\uFE0F', attachment: '\uD83D\uDCC4',
                  mechanics: '\uD83D\uDCE4', deadline: '\u23F0', structure: '\uD83D\uDCDA' };
   const row = i =>
     '<li style="padding:7px 10px;border-bottom:1px solid #f1f5f9;display:flex;gap:9px;align-items:flex-start;' +
@@ -13840,6 +13915,46 @@ function _pxApplySolicitationPricing(M, src, isGsa, parseMoney) {
   return applied;
 }
 
+// Clean a raw task list before it becomes pricing-matrix columns. Accepts strings ("2.1: Title")
+// or {code,name}. Drops entries that are NOT PWS work tasks - evaluation factors, Volume II/III
+// factors, Section L/M criteria (those belong to Compliance, not the pricing matrix) - drops empty
+// or "..." placeholders, clears a placeholder code echoed onto 2+ rows (the prompt's "1.1" example
+// leaking), and de-dupes exact repeats. Shared by the briefing apply and the auto-build so the
+// matrix never carries eval factors or duplicate junk regardless of which extraction produced it.
+function _pxCleanTasks(raw) {
+  function _isFactor(name) {
+    var s = String(name || '').toLowerCase();
+    return /\bfactor\s*\d/.test(s) || /\bsub\s*factor\b/.test(s) ||
+           /\bvolume\s+(?:[ivx]+|\d+|one|two|three|four|five|0)\b/.test(s) ||
+           /\bsection\s+[lm]\b/.test(s) || /\bevaluation\s+(?:factor|criteri)/.test(s);
+  }
+  function _isEmpty(name) {
+    var s = String(name || '').trim();
+    return !s || s === '...' || /^(?:tbd|n\/?a|none|placeholder)$/i.test(s);
+  }
+  var items = (raw || []).map(function (t) {
+    if (t && typeof t === 'object') return { code: String(t.code || '').trim(), name: String(t.name == null ? '' : t.name).trim() };
+    var str = String(t == null ? '' : t);
+    var cm = str.match(/^\s*(?:tasks?\s+)?(\d+(?:\.\d+)*)\s*[:.\-\u2013)]\s*(.+)$/i);
+    return cm ? { code: cm[1], name: cm[2].trim() } : { code: '', name: str.trim() };
+  });
+  // Keep only real work tasks first (drop factors/empties), THEN judge placeholder-code leaks over
+  // what survives - so an exact duplicate of a real task never makes its real code look "leaked".
+  var kept0 = items.filter(function (t) { return !_isEmpty(t.name) && !_isFactor(t.name); });
+  // A code carried by 2+ DISTINCT names among real tasks is a placeholder leak (e.g. "1.1" copied
+  // onto several rows); a code repeated with the SAME name is just a duplicate to collapse.
+  var codeNames = {};
+  kept0.forEach(function (t) { if (t.code) { (codeNames[t.code] || (codeNames[t.code] = {}))[t.name.toLowerCase()] = 1; } });
+  var out = [], seen = {};
+  kept0.forEach(function (t) {
+    if (t.code && Object.keys(codeNames[t.code]).length > 1) t.code = '';   // placeholder-code leak
+    var key = (t.code + '\u0001' + t.name).toLowerCase();
+    if (seen[key]) return;                              // drop exact (code+name) duplicates
+    seen[key] = 1;
+    out.push({ id: (typeof _prId === 'function' ? _prId('t_') : 't_' + Math.random().toString(36).slice(2)), code: t.code, name: t.name });
+  });
+  return out;
+}
 function pricingApplyBriefing(b) {
   if (!b) return;
   // Methodology
@@ -13900,11 +14015,7 @@ function pricingApplyBriefing(b) {
   if (tasks.length) {
     const doReplace = !pricingModel.tasks.length || confirm('Replace the current PWS task columns with the ' + tasks.length + ' tasks from the analysis? This clears the hours matrix.');
     if (doReplace) {
-      pricingModel.tasks = tasks.map(t => {
-        const str = String(t);
-        const cm = str.match(/^\s*(?:tasks?\s+)?(\d+(?:\.\d+)*)\s*[:.\-–)]\s*(.+)$/i);
-        return cm ? { id: _prId('t_'), code: cm[1], name: cm[2].trim() } : { id: _prId('t_'), code: '', name: str.trim() };
-      });
+      pricingModel.tasks = _pxCleanTasks(tasks);   // drop eval factors / dupes / placeholder codes
       pricingModel.hours = {}; pricingModel.mask = {};
     }
   }
@@ -14638,7 +14749,7 @@ Return ONLY JSON, no prose:
  "hours_per_fte": <the billable hours that equal ONE FTE for a 12-month period IF the solicitation explicitly states a productive-hours or FTE-hour basis (e.g. 1920, 2080); null if it does not state one>,
  "directed_hours_note":"if the RFP explicitly mandates hours/LOE/staffing for any task, state what you used as-is; '' if none",
  "directed_labor":[{"lcat":"position / labor-category title EXACTLY as the Government wrote it","count": <the exact quantity the Government directs — usually whole, but may be fractional (e.g. 0.5, 2.5) for a partial FTE; copy it verbatim, do NOT round>}],
- ${tasks.length ? '' : '"proposed_tasks":[{"code":"1.1","name":"..."}],'}
+ ${tasks.length ? '' : '"proposed_tasks":[{"code":"<real PWS task number, e.g. 2.1>","name":"<real PWS task title; NO evaluation factors / Volume II-III / Section L-M>"}],'}
  "labor_mix":[
    {"role_name":"role as it will appear in the proposal",
     "headcount": <integer 1 or more>,
@@ -14868,7 +14979,7 @@ function pricingApplyAutoBuild(a) {
   // company default. Only set when the model reports an explicit figure from the solicitation.
   { const _h = parseFloat(a.hours_per_fte); pricingModel.hoursPerFte = (_h > 0) ? _h : null; }
   if (!pricingModel.tasks.length && Array.isArray(a.proposed_tasks) && a.proposed_tasks.length) {
-    pricingModel.tasks = a.proposed_tasks.map(t => ({ id: _prId('t_'), code: String(t.code || '').trim(), name: String(t.name || t).trim() }));
+    pricingModel.tasks = _pxCleanTasks(a.proposed_tasks);   // same cleaning as the briefing path
   }
   const gsa = pricingIsGsa();
   const card = pricingModel.gsaRateCard || [];
@@ -15168,7 +15279,7 @@ function pricingRenderTasks() {
 
 // The header banner. Column widths mirror the row below so labels sit over their controls. Rendered
 // once, above the list, and only when there is at least one non-GSA role to label.
-const PX_GSA_TRACKS = 'minmax(150px,2fr) 210px 78px 188px 26px';
+const PX_GSA_TRACKS = 'minmax(120px,1.2fr) 210px 72px 172px 112px 26px';
 
 // Schedule mode has different columns from the off-schedule build-up: there is no rate to
 // type, so "Paid Rate" is replaced by the Schedule LCAT the role maps to.
@@ -15180,6 +15291,7 @@ function pricingGsaLcatHeaderBanner() {
     + th('GSA Schedule LCAT', 'min-width:0;text-align:center', 'The Schedule labor category this role is priced from. The rate is fixed by the Schedule \u2014 there is nothing to type.')
     + th('Proposed FTE', 'min-width:0;text-align:center', 'Full-time-equivalent staffing you propose for this role (base year)')
     + th('Rate Detail', 'min-width:0;text-align:center', 'Company-implied vs fully-burdened, hourly vs annual. In Schedule mode the burdened rate comes from the Schedule and the company figure is implied back out of it.')
+    + th('Market', 'min-width:0;text-align:center', 'Look up prevailing pay for this role on Market Rates')
     + '<div></div>'
     + '</div>';
 }
@@ -15189,12 +15301,13 @@ function pricingLcatHeaderBanner() {
     + ';font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)">' + txt + '</div>';
   // GRID, not flex: the header and every row share ONE track definition, so a
   // column sits in the same place on every row whatever its contents measure.
-  return '<div style="display:grid;grid-template-columns:minmax(150px,2fr) 210px 188px 64px 64px auto;gap:6px 8px;align-items:center;padding:2px 10px 4px;border-bottom:1px solid #e5e7eb;margin-bottom:2px">'
+  return '<div style="display:grid;grid-template-columns:minmax(120px,1.4fr) 210px 172px 60px 60px 112px auto;gap:6px 8px;align-items:center;padding:2px 10px 4px;border-bottom:1px solid #e5e7eb;margin-bottom:2px">'
     + th('Labor Category', 'min-width:0;text-align:center')
     + th('Paid Rate', 'min-width:0;text-align:center', 'What you enter, and in which basis. The other three derive from it.')
     + th('Rate Detail', 'min-width:0;text-align:center', 'Company-paid vs fully-burdened, hourly vs annual. Company annual is at 2,080 payroll hours; burdened annual is at this role\u2019s billable Hrs/FTE. All calculated \u2014 not editable.')
     + th('Proposed FTE', 'min-width:0;text-align:center', 'Full-time-equivalent staffing you propose for this role (base year)')
     + th('Hrs/FTE', 'min-width:0;text-align:center', 'Billable hours per FTE for this role; blank = company default')
+    + th('Market', 'min-width:0;text-align:center', 'Look up prevailing pay for this role on Market Rates')
     + '<div></div>'
     + '</div>';
 }
@@ -15270,7 +15383,7 @@ function pricingRenderLcats() {
         <select title="${l.gsaLcat ? pricingEsc(l.gsaLcat) : 'Map this role to a GSA Schedule labor category'}" onchange="pricingSetGsaLcat('${l.id}',this.value)" style="min-width:0;width:100%;padding:6px 26px 6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:white;text-overflow:ellipsis;box-sizing:border-box">${opts}</select>
         <input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" title="Full-time-equivalent staffing you propose for this role (base year)" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
         ${pricingRateMatrixHtml(l)}
-        <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><button class="mkt-lookup-btn" onclick="pricingLcatLookup('${l.id}')" title="Look up prevailing pay for this role on Market Rates" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;min-width:104px;text-align:center">${l.evaluated ? 'Look up again' : 'Look up \u2192'}</button><button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px;padding:0;line-height:1">✕</button></div>
+        <div style="display:flex;align-items:center;justify-content:center"><button class="mkt-lookup-btn" onclick="pricingLcatLookup('${l.id}')" title="Look up prevailing pay for this role on Market Rates" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;min-width:104px;text-align:center">${l.evaluated ? 'Look up again' : 'Look up \u2192'}</button></div><div style="display:flex;align-items:center;justify-content:center"><button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px;padding:0;line-height:1">✕</button></div>
         <div style="grid-column:1/-1;font-size:10.5px;color:var(--muted);line-height:1.45;padding-left:2px">${rateNote}</div>
       </div>`;
     }).join('');
@@ -15293,7 +15406,7 @@ function pricingRenderLcats() {
     const _warn = paid > 0 ? '' : '<div style="grid-column:1/-1;font-size:10.5px;color:var(--warn);padding-left:2px">enter a rate to derive the burdened figures</div>';
     const _clinOn = false;   // retired: CLIN is a derived column on the fact table (pricingClinForRow), not entered per row
     const _clinInput = _clinOn ? ('<input value="' + pricingEsc(_lcatClinRaw(l)) + '" onchange="pricingSetLcat(\'' + l.id + '\',\'clin\',this.value)" placeholder="CLIN" title="Base-period CLIN this role bills under (from the solicitation). Option-year CLINs derive automatically. Blank uses the stated labor CLIN." style="width:62px;flex-shrink:0;padding:6px 6px;border:1px solid var(--border);border-radius:6px;font-size:11px;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums"/>') : '';
-    return `<div id="pxLcat_${l.id}" style="display:grid;grid-template-columns:minmax(150px,2fr) 210px 188px 64px 64px auto;gap:6px 8px;align-items:center;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
+    return `<div id="pxLcat_${l.id}" style="display:grid;grid-template-columns:minmax(120px,1.4fr) 210px 172px 60px 60px 112px auto;gap:6px 8px;align-items:center;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px">
       <div style="min-width:0;display:flex;gap:4px;align-items:center"><input value="${pricingEsc(l.name)}" onchange="pricingSetLcat('${l.id}','name',this.value)" placeholder="Labor category (e.g. Registered Nurse)" style="flex:1;min-width:0;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;box-sizing:border-box"/>${_clinInput}</div>
       <div style="min-width:0;display:flex;align-items:center;gap:3px">
         <select onchange="pricingSetLcatRate('${l.id}','rateBasis',this.value)" title="What are you entering? The other three figures derive from it." style="flex:1;min-width:0;padding:6px 16px 6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:white;text-overflow:ellipsis">${opt('paid','Company Paid Hourly Rate')}${opt('salary','Company Paid Annualized Salary')}${opt('loaded','Fully Burdened Hourly Rate')}${opt('annual','Fully Burdened Annualized Salary')}</select>
@@ -15302,7 +15415,7 @@ function pricingRenderLcats() {
       ${pricingRateMatrixHtml(l)}
       <input type="number" min="0" step="0.1" value="${l.advertised}" onchange="pricingSetLcat('${l.id}','advertised',this.value)" title="Proposed FTE" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
       <input type="number" min="0" step="1" value="${l.hpf}" onchange="pricingSetLcat('${l.id}','hpf',this.value)" placeholder="${defaultHpf()}" title="Billable hours per FTE for this role; blank = company default" style="min-width:0;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;text-align:center;box-sizing:border-box"/>
-      <div style="display:flex;align-items:center;gap:5px;justify-content:flex-end"><button class="mkt-lookup-btn" onclick="pricingLcatLookup('${l.id}')" title="Look up prevailing pay for this role on Market Rates" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;min-width:104px;text-align:center">${l.evaluated ? 'Look up again' : 'Look up \u2192'}</button>${_chip}<button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px">✕</button></div>
+      <div style="display:flex;align-items:center;justify-content:center"><button class="mkt-lookup-btn" onclick="pricingLcatLookup('${l.id}')" title="Look up prevailing pay for this role on Market Rates" style="font-size:11px;font-weight:700;background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;min-width:104px;text-align:center">${l.evaluated ? 'Look up again' : 'Look up \u2192'}</button></div><div style="display:flex;align-items:center;gap:5px;justify-content:flex-end">${_chip}<button onclick="pricingRemoveLcat('${l.id}')" title="Remove labor category" style="background:none;border:none;color:var(--error);cursor:pointer;font-size:16px">✕</button></div>
       ${_warn}
     </div>`;
   }).join('');
@@ -17642,7 +17755,10 @@ function _pxGapMoveActionHtml(m, i) {
   }
   const from = (r.from != null && !isNaN(r.from)) ? esc(String(r.from)) : null;
   const to   = (r.to != null && !isNaN(r.to)) ? esc(String(r.to)) : null;
-  const delta = (from != null && to != null) ? (' <span style="color:var(--muted);font-weight:400">' + from + ' \u2192 ' + to + '</span>') : '';
+  // The delta rides INSIDE the move button; on a 'write' move that button is solid blue, where
+  // muted grey is unreadable - so light text on blue, muted grey only on the white 'run' button.
+  const _deltaCol = (r.kind === 'write') ? 'rgba(255,255,255,.85)' : 'var(--muted)';
+  const delta = (from != null && to != null) ? (' <span style="color:' + _deltaCol + ';font-weight:400">' + from + ' \u2192 ' + to + '</span>') : '';
   const style = r.kind === 'write'
     ? 'background:var(--blue);color:#fff;border:1px solid var(--blue)'
     : 'background:#fff;color:var(--blue);border:1px solid var(--blue)';
@@ -17707,7 +17823,7 @@ function pricingRenderGapPanel() {
   }
   el.innerHTML = '<div style="border:1px solid #c7d2fe;background:#f8fafc;border-radius:10px;padding:13px 15px">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
-    + '<div style="font-weight:800;font-size:13px;color:#3730a3">\uD83D\uDD0E Gap analysis \u2014 ' + g.moves.length + ' ranked move' + (g.moves.length === 1 ? '' : 's') + '</div>'
+    + '<div style="font-weight:800;font-size:13px;color:var(--blue)">\uD83D\uDD0E Gap analysis \u2014 ' + g.moves.length + ' ranked move' + (g.moves.length === 1 ? '' : 's') + '</div>'
     + '<div style="display:flex;gap:7px">'
     + ((_nWrite + _nRun) ? '<button onclick="pricingGapApplyAll()" style="font-size:11px;font-weight:800;background:var(--blue);color:#fff;border:1px solid var(--blue);border-radius:6px;padding:5px 11px;cursor:pointer">Accept all \u2014 ' + _nWrite + ' change' + (_nWrite === 1 ? '' : 's') + (_nRun ? (' + ' + _nRun + ' lookup' + (_nRun === 1 ? '' : 's')) : '') + '</button>' : '')
     + (_pxGapUndoSnap ? '<button onclick="pricingGapUndo()" style="font-size:11px;font-weight:700;background:#fff;color:#92400e;border:1px solid #fdba74;border-radius:6px;padding:5px 11px;cursor:pointer">\u21A9 Revert</button>' : '')
@@ -18965,7 +19081,11 @@ async function triageScreenZone(id) {
     if (!z.ebuyId) { const _eb = _triageDetectEbuyId(z.files, ex.text); if (_eb) { z.ebuyId = _eb; const _ein = document.getElementById('triageEbuy-' + z.id); if (_ein) _ein.value = _eb; } }
     if (!ex.text && !ex.docBlocks.length) { z.verdict = { error: 'Could not read text from these files (they may be scanned images). Deep-dive to analyze them directly.' }; return; }
     let _saDet = null;
-    try { _saDet = await detectSetAside(z.files, apiKey, ex.text); } catch (e) {}   // run-first set-aside detector (form field -> text -> vision -> flag)
+    // Detect on the FULL files (per-PDF text + vision), not the 14000-char triage snippet, which
+    // can stop before the attachment that actually names the set-aside (e.g. DES Attachment 1).
+    // Passing null forces the deterministic per-PDF ladder - the SAME robust basis BNA and the
+    // Proposal briefing use - so all three agree on one opportunity's set-aside.
+    try { _saDet = await detectSetAside(z.files, apiKey, null); } catch (e) {}   // run-first set-aside detector (form field -> text -> vision -> flag)
     const capText = (typeof CLIENT_CONFIG !== 'undefined' && CLIENT_CONFIG.capabilityStatementText) ? CLIENT_CONFIG.capabilityStatementText : 'No company capability profile is configured; assess general merits and note that company fit could not be personalized.';
     const today = new Date().toDateString();
     const promptText =
@@ -19003,9 +19123,14 @@ async function triageScreenZone(id) {
     try { z.verdict = JSON.parse(a >= 0 && b2 >= 0 ? rawTxt.slice(a, b2 + 1) : rawTxt); }
     catch (err) { z.verdict = { error: 'Could not parse the screen result. Try again, or deep-dive.' }; }
     if (_saDet && z.verdict && !z.verdict.error) {
-      if (_saDet.source !== 'default') { z.verdict.set_aside = _saDet.type; z.verdict.set_aside_evidence = _saDet.evidence; }
-      else if (!z.verdict.set_aside || /not stated|unknown|not determinable/i.test(String(z.verdict.set_aside))) { z.verdict.set_aside = _saDet.type; z.verdict.set_aside_evidence = _saDet.evidence; z.verdict.set_aside_unverified = true; }
-      else { z.verdict.set_aside_unverified = true; }
+      if (_saDet.source !== 'default') { z.verdict.set_aside = _saDet.type; z.verdict.set_aside_evidence = _saDet.evidence; delete z.verdict.set_aside_unverified; }
+      else {
+        // Detector fell back (no marked box readable on any layer). The screening model's OWN
+        // set-aside guess is exactly the unreliable signal here - SF-1449 checkbox-label soup makes
+        // it read WOSB or Unrestricted - so discard it and use the conservative, biddable default
+        // (Total Small Business) flagged to verify. Fail safe: biddable + verify, never a wrong type.
+        z.verdict.set_aside = _saDet.type; z.verdict.set_aside_evidence = _saDet.evidence; z.verdict.set_aside_unverified = true;
+      }
     }
     _triageApplyEligibility(z.verdict);   // 4a: deterministic set-aside eligibility overrides the model's guess
     if (!z.ebuyId && z.verdict && z.verdict.ebuy_request_id && z.verdict.ebuy_request_id !== 'not stated') z.ebuyId = String(z.verdict.ebuy_request_id).trim();
@@ -21852,7 +21977,7 @@ function _constrainedSolveContent(csv, det, taskList, ctx) {
     '- SOLVE only the BLANK stages. Blank task allocation: distribute each role\u2019s base-period hours across the PWS task areas above, proportional to how much of each task that role performs. Blank GSA mapping: map each role to the best-fit Schedule labor category. Blank FTEs: size them from the scope. \n' +
     '- NEVER invent an hourly rate. base_rate is the spreadsheet\u2019s exact rate for that role, or null if the spreadsheet has none.\n\n' +
     'Return ONLY JSON (no prose, no markdown fences):\n' +
-    '{"labor_mix":[{"role_name":"exact labor-category name from the spreadsheet","fte":<the FIXED FTE echoed exactly, or a solved value if FTEs were blank>,"base_rate":<the FIXED hourly rate echoed EXACTLY from the spreadsheet, or null if the spreadsheet has no rate for this role>,"gsa_lcat":"the FIXED GSA LCAT echoed from the spreadsheet, or the best-fit Schedule LCAT if that mapping was blank, or null","hours_by_task":{"<task code or name exactly as listed above>":<hours over the base period>},"allowed_tasks":["<task code or name>"]}],"proposed_tasks":[{"code":"1.1","name":"..."}],"hours_per_fte":<number if the spreadsheet or context states a productive-hours/FTE basis, else null>,"preserved":["one short line per FIXED stage carried verbatim"],"solved":["one short line per BLANK stage solved, and how"],"assumptions":["..."],"notes":"any caveat, or an empty string"}\n\n' +
+    '{"labor_mix":[{"role_name":"exact labor-category name from the spreadsheet","fte":<the FIXED FTE echoed exactly, or a solved value if FTEs were blank>,"base_rate":<the FIXED hourly rate echoed EXACTLY from the spreadsheet, or null if the spreadsheet has no rate for this role>,"gsa_lcat":"the FIXED GSA LCAT echoed from the spreadsheet, or the best-fit Schedule LCAT if that mapping was blank, or null","hours_by_task":{"<task code or name exactly as listed above>":<hours over the base period>},"allowed_tasks":["<task code or name>"]}],"proposed_tasks":[{"code":"<real PWS task number, e.g. 2.1>","name":"<real PWS task title; NO evaluation factors / Volume II-III / Section L-M>"}],"hours_per_fte":<number if the spreadsheet or context states a productive-hours/FTE basis, else null>,"preserved":["one short line per FIXED stage carried verbatim"],"solved":["one short line per BLANK stage solved, and how"],"assumptions":["..."],"notes":"any caveat, or an empty string"}\n\n' +
     'Rules:\n' +
     '- Preserve FIXED values EXACTLY \u2014 never change labor categories, FTEs, GSA mapping, or rates already in the spreadsheet.\n' +
     '- NEVER invent an hourly rate. base_rate is either the spreadsheet\u2019s exact figure or null.\n' +
@@ -22053,9 +22178,19 @@ function pricingModelReviewCsv() {
   if (!rows.length) return '';
   const mny = n => '$' + Math.round(n).toLocaleString('en-US');
   let out = "THE TOOL'S CURRENT PRICED MODEL (already built from the solicitation and the user's inputs; it SUPERSEDES any earlier uploaded sheet — review THIS).\n\n";
-  out += 'LABOR CATEGORIES (role | GSA Schedule LCAT | advertised FTE | base rate):\n';
+  out += 'LABOR CATEGORIES (role | GSA Schedule LCAT | advertised FTE | priced rate - base rate, or the GSA Schedule/loaded rate in GSA mode):\n';
   M.lcats.forEach(l => {
-    out += '- ' + (l.name || '(unnamed)') + ' | GSA: ' + (l.gsaLcat || '(unmapped)') + ' | FTE: ' + (l.advertised != null && l.advertised !== '' ? l.advertised : '(blank)') + ' | rate: ' + (parseFloat(l.baseRate) ? ('$' + parseFloat(l.baseRate).toFixed(2) + '/hr') : '(no rate)') + '\n';
+    // Report the EFFECTIVE priced rate, not the raw baseRate. In GSA mode baseRate is deliberately
+    // blank (the Schedule sets the rate), so reading baseRate alone made every GSA-priced role report
+    // "(no rate)" and the reviewer flag a non-compliance the tool itself had priced correctly (issue 6).
+    let _effRate = parseFloat(l.baseRate), _rateSrc = '';
+    if (!(_effRate > 0) && l.gsaLcat) {
+      const _y = (typeof pricingGsaScheduleYearForPeriod === 'function') ? pricingGsaScheduleYearForPeriod(0) : 1;
+      const _g = (typeof pricingGsaRateFor === 'function') ? pricingGsaRateFor(l, _y) : 0;
+      if (_g > 0) { _effRate = _g; _rateSrc = ' (GSA Schedule rate)'; }
+    }
+    if (!(_effRate > 0) && typeof pricingBilledRate === 'function') { const _b = pricingBilledRate(l, 0); if (_b > 0) { _effRate = _b; _rateSrc = ' (loaded rate)'; } }
+    out += '- ' + (l.name || '(unnamed)') + ' | GSA: ' + (l.gsaLcat || '(unmapped)') + ' | FTE: ' + (l.advertised != null && l.advertised !== '' ? l.advertised : '(blank)') + ' | rate: ' + (_effRate > 0 ? ('$' + _effRate.toFixed(2) + '/hr' + _rateSrc) : '(no rate)') + '\n';
   });
   if (M.clins && M.clins.enabled && typeof pricingClinScheduleRows === 'function') {
     out += '\nCLIN SCHEDULE (CLIN | description | period | type | extended) — populated from the solicitation:\n';
@@ -23019,9 +23154,19 @@ async function runBidNoBid() {
     document.getElementById('bnaResults').style.display = 'block';
     document.getElementById('bnaResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
     // Correct any set-aside the scoring model named in prose to the authoritative (detector) value.
-    if (window._lastBnaIntel && window._lastBnaIntel._set_aside_source && window._lastBnaIntel.set_aside && typeof _correctSetAsideEverywhere === 'function') {
-      _correctSetAsideEverywhere(result, window._lastBnaIntel.set_aside);
-      if (result && result.opportunity) _correctSetAsideEverywhere(result.opportunity, window._lastBnaIntel.set_aside);
+    // The set-aside is ONE canonical fact from the Opportunity-Details detector. The SCORING model
+    // re-guesses it (SF-1449 checkbox-label soup can read WOSB), and _bnaOpp OVERRIDES _lastBnaIntel
+    // in the merged opp that Step 3 / the eligibility gate consume - so OVERWRITE the structured
+    // field here, not just the prose, or Step 3 keeps classifying a Total-SB/SDVOSB opp as the
+    // model's guess. (This is the issue-9 fix: Step 3 was reading the un-corrected scoring field.)
+    if (window._lastBnaIntel && window._lastBnaIntel._set_aside_source && window._lastBnaIntel.set_aside) {
+      const _canonSa = window._lastBnaIntel.set_aside;
+      if (result && result.opportunity) { result.opportunity.set_aside = _canonSa; result.opportunity._set_aside_source = window._lastBnaIntel._set_aside_source; delete result.opportunity._set_aside_unverified; delete result.opportunity.set_aside_unverified; }
+      if (window._bnaOpp) { window._bnaOpp.set_aside = _canonSa; window._bnaOpp._set_aside_source = window._lastBnaIntel._set_aside_source; }
+      if (typeof _correctSetAsideEverywhere === 'function') {
+        _correctSetAsideEverywhere(result, _canonSa);
+        if (result && result.opportunity) _correctSetAsideEverywhere(result.opportunity, _canonSa);
+      }
     }
     window._lastBnaResult  = result;
     window._lastBnaContent = content.slice(0, -1);
